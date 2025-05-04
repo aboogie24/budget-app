@@ -38,9 +38,12 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "login successful",
-		"user_id": user.ID,
-		"email":   user.Email,
+	json.NewEncoder(w).Encode(map[string]any{
+		"status": "login successful",
+		"user": map[string]any{
+			"id":           user.ID,
+			"email":        user.Email,
+			"isFirstLogin": false,
+		},
 	})
 }

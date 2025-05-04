@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { authenticateUser } from '@/utils/auth';
 import { setUserSession } from '../utils/storage';
 import { useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function BudgetAppLogin() {
   const [email, setEmail] = useState('');
@@ -12,18 +13,40 @@ export default function BudgetAppLogin() {
   const router = useRouter();
 
   const handleLogin = async () => {
-    console.log(`Attempting login with ${email}`);
+		try {
+			const response = await fetch('http://10.0.20.204:8080/users/login', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ email, password }),
+			});
+			
+			if (!response.ok) {
+				alert('Login failed');
+				return;
+			}
+	
+			const data = await response.json();
+			const user = data.user;
+			console.log('User logging in:', user)
+			await AsyncStorage.setItem('budgetAppSession', JSON.stringify(user));
+	
+			router.replace(user.isFirstLogin ? '/setup' : '/dashboard');
+		} catch (err) {
+			console.error('Login error:', err);
+			alert('Unable to login. Check your connection.');
+		}
+    // console.log(`Attempting login with ${email}`);
 
     
-		const result = await authenticateUser(email, password);
-		console.log('result =' + result.success)
-		console.log('first login =' + result.isFirstLogin)
-		if (result.success) {
-			await setUserSession(email);
-			router.replace(result.isFirstLogin ? '/setup' : '/login'); 
-		} else {
-			alert('Invalid login')
-		}
+		// const result = await authenticateUser(email, password);
+		// console.log('result =' + result.success)
+		// console.log('first login =' + result.isFirstLogin)
+		// if (result.success) {
+		// 	await setUserSession(email);
+		// 	router.replace(result.isFirstLogin ? '/setup' : '/login'); 
+		// } else {
+		// 	alert('Invalid login')
+		// }
   
   
   };

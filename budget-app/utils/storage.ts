@@ -51,12 +51,19 @@ export async function setUserSession(email: string): Promise<void> {
 }
 
 export async function findUserSession(): Promise<UserData | null> {
-  const email = await AsyncStorage.getItem(SESSION_KEY);
-  if (!email) return null;
-  const existing = await AsyncStorage.getItem(USERS_KEY);
-  if (!existing) return null;
-  const users: UserData[] = JSON.parse(existing);
-  return users.find(u => u.email === email) || null;
+	try {
+    const json = await AsyncStorage.getItem('budgetAppSession');
+    return json ? JSON.parse(json) : null;
+  } catch (err) {
+    console.error('Failed to read user session:', err);
+    return null;
+  }
+  // const email = await AsyncStorage.getItem(SESSION_KEY);
+  // if (!email) return null;
+  // const existing = await AsyncStorage.getItem(USERS_KEY);
+  // if (!existing) return null;
+  // const users: UserData[] = JSON.parse(existing);
+  // return users.find(u => u.email === email) || null;
 }
 
 export async function clearUserSession(): Promise<void> {

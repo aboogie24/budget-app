@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
@@ -15,12 +16,29 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := user.HashPassword(); err != nil {
+		http.Error(w, "Error hashing password", http.StatusInternalServerError)
+		return
+	}
+
 	conn, err := db.Init()
 	if err != nil {
 		http.Error(w, "Database connection error", http.StatusInternalServerError)
 		return
 	}
 	defer conn.Close()
+
+	// Check for existing user
+	var existingID string
+	err = conn.QueryRow("SELECT id FROM users WHERE email = $1", user.Email).Scan(&existingID)
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, "Database query error", http.StatusInternalServerError)
+		return
+	}
+	if existingID != "" {
+		http.Error(w, "Email already registered", http.StatusConflict)
+		return
+	}
 
 	_, err = conn.Exec(`
 		INSERT INTO users (id, email, password)
@@ -32,5 +50,12 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "user registered"})
+	json.NewEncoder(w).Encode(map[string]any{
+		"status": "user registered",
+		"user": map[string]any{
+			"id":           user.ID,
+			"email":        user.Email,
+			"isFirstLogin": true,
+		},
+	})
 }

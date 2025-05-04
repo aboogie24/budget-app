@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS calendar_events;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS budgets;
+DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS users;

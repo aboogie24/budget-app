@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: budget_db
+      POSTGRES_USER: budget_user
+      POSTGRES_PASSWORD: budget_pass
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: .
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+    environment:
+      PG_HOST: db
+      PG_PORT: 5432
+      PG_USER: budget_user
+      PG_PASS: budget_pass
+      PG_DB: budget_db
+
+  migrate:
+    image: migrate/migrate
+    depends_on:
+      - db
+    network_mode: service:db
+    volumes:
+      - ./migrations:/migrations
+    command: [
+      "-path", "/migrations",
+      "-database", "postgres://budget_user:budget_pass@db:5432/budget_db?sslmode=disable",
+      "up"
+    ]
+    restart: on-failure
+
+volumes:
+  pg_data:

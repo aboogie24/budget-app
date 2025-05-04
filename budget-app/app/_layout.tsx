@@ -16,10 +16,12 @@ export default function AppLayout() {
     const checkSession = async () => {
       //const clear = await clearUserSession();
       const user = await findUserSession();
+      const publicPaths = ['/login', '/register'];
       console.log('User session:', user); 
-      if (user && pathname === '/login') {
-        router.replace('/dashboard');
-      } 
+      if (!user && !publicPaths.includes(pathname)) {
+        router.replace('/login');
+      }
+     
       setLoading(false);
     };
 
