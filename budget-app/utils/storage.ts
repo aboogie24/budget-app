@@ -66,3 +66,45 @@ export async function clearUserSession(): Promise<void> {
 export async function logout(): Promise<void> {
     await AsyncStorage.removeItem(SESSION_KEY);
   }
+
+export interface Transaction {
+id: string;
+type: 'income' | 'expense';
+amount: number;
+category: string;
+note?: string;
+date: string; // ISO format
+}
+
+const TRANSACTIONS_KEY = 'budgetAppTransactions';
+
+// Save a transaction
+export async function addTransaction(tx: Transaction): Promise<void> {
+    const data = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+    console.log(data)
+    const existing: Transaction[] = data ? JSON.parse(data) : [];
+    existing.push(tx);
+    await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(existing));
+}
+
+export async function getAllTransactions() {
+	try {
+		const jsonValue = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+		return jsonValue != null ? JSON.parse(jsonValue) : [];
+	} catch (e) {
+		console.error('Failed to fetch transactions:', e);
+		return [];
+	}
+}
+
+export async function removeTransaction(id: string) {
+  try {
+    const stored = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+    const transactions = stored ? JSON.parse(stored) : [];
+
+    const filtered = transactions.filter((t: any) => t.id !== id);
+    await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(filtered));
+  } catch (e) {
+    console.error('Error removing transaction:', e);
+  }
+}

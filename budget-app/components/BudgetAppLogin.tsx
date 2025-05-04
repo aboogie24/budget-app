@@ -28,7 +28,6 @@ export default function BudgetAppLogin() {
   
   };
 
-
   const handleRegister = () => {
     // Navigate to registration screen
     router.push('/register');
