@@ -115,3 +115,13 @@ export async function removeTransaction(id: string) {
     console.error('Error removing transaction:', e);
   }
 }
+
+export async function getCurrentUser() {
+  try {
+    const json = await AsyncStorage.getItem('budgetAppSession');
+    return json ? JSON.parse(json) : null;
+  } catch (e) {
+    console.error('Failed to load user:', e);
+    return null;
+  }
+}

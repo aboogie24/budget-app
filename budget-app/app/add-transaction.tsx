@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { addTransaction } from '../utils/storage';
+import { addTransaction, getCurrentUser } from '../utils/storage';
 
 const frequencyOptions = ['one-time', 'weekly', 'biweekly', 'monthly'];
 
@@ -21,6 +21,12 @@ export default function AddTransactionScreen() {
   const handleSave = async () => {
     console.log('handleSave triggered');
 
+		const currentUser = await getCurrentUser();
+		if (!currentUser || !currentUser.id) {
+			Alert.alert('User error', 'No user session found.');
+			return;
+		}
+
     if (!amount || isNaN(Number(amount))) {
       Alert.alert('Invalid amount', 'Please enter a valid number.');
       return;
@@ -35,25 +41,38 @@ export default function AddTransactionScreen() {
     }
 
     const transaction = {
-      id: generateId(),
-      type: type === 'income' ? 'income' : 'expense',
-      amount: parseFloat(amount),
-      category,
-      note,
-      date: new Date().toISOString(),
-      frequency,
-      dueDay: frequency === 'monthly' && type === 'expense' ? parseInt(dueDay) : undefined,
-    };
-
+			id: generateId(),
+			user_id: currentUser.id, // from session
+			type,
+			amount: parseFloat(amount),
+			category,
+			note,
+			date: new Date().toISOString(),
+			frequency,
+			due_day: frequency === 'monthly' && type === 'expense' ? parseInt(dueDay) : null,
+		};
+		console.log(transaction)
     try {
-      console.log('Attempting to save transaction:', transaction);
-      await addTransaction(transaction);
-      console.log('Transaction saved. Redirecting to /budget.');
-      router.replace('/budget');
-    } catch (err) {
-      console.error('Error saving transaction:', err);
-      Alert.alert('Save Failed', 'Unable to save transaction.');
-    }
+      const response = await fetch('http://10.0.20.204:8080/transactions', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(transaction),
+			});
+	
+			if (!response.ok) {
+				const err = await response.text();
+				console.log(response)
+				console.error('Failed to save:', err);
+				Alert.alert('Error', 'Failed to save transaction.');
+				return;
+			}
+	
+			Alert.alert('Success', 'Transaction saved.');
+			router.replace('/budget');
+		} catch (err) {
+			console.error('Error saving:', err);
+			Alert.alert('Error', 'Could not save transaction.');
+		}
   };
 
   return (

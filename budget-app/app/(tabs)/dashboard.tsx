@@ -4,7 +4,7 @@ import { View, Text, StyleSheet, Dimensions, FlatList, Modal, Pressable } from '
 import { Picker } from '@react-native-picker/picker';
 import { PieChart } from 'react-native-chart-kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getAllTransactions } from '../../utils/storage';
+import { fetchUserTransactions } from '@/utils/api';
 
 export default function DashboardScreen() {
   const [transactions, setTransactions] = useState([]);
@@ -16,27 +16,28 @@ export default function DashboardScreen() {
   const [frequencyMultipliers, setFrequencyMultipliers] = useState({ weekly: 4, biweekly: 2, monthly: 1 });
 
   useEffect(() => {
-    const fetchData = async () => {
-      const data = await getAllTransactions();
-      const multipliers = await AsyncStorage.getItem('frequencyMultipliers');
-      setTransactions(data);
-      setFrequencyMultipliers(multipliers ? JSON.parse(multipliers) : { weekly: 4, biweekly: 2, monthly: 1 });
-      filterByMonth(data, selectedMonth, selectedYear);
+    const load = async () => {
+      try {
+        // const multipliers = await AsyncStorage.getItem('frequencyMultipliers');
+        const data = await fetchUserTransactions();
+				console.log(data)
+        setTransactions(data);
+        // setFrequencyMultipliers(multipliers ? JSON.parse(multipliers) : { weekly: 4, biweekly: 2, monthly: 1 });
+      } catch (err) {
+        console.error('Failed to load dashboard data:', err);
+      }
     };
-    fetchData();
+
+    load();
   }, []);
 
   useEffect(() => {
-    filterByMonth(transactions, selectedMonth, selectedYear);
-  }, [selectedMonth, selectedYear]);
-
-  const filterByMonth = (all, month, year) => {
-    const filtered = all.filter(t => {
+    const filtered = transactions.filter(t => {
       const tDate = new Date(t.date);
-      return tDate.getMonth() === month && tDate.getFullYear() === year;
+      return tDate.getMonth() === selectedMonth && tDate.getFullYear() === selectedYear;
     });
     setFilteredTransactions(filtered);
-  };
+  }, [transactions, selectedMonth, selectedYear]);
 
   const incomeData = filteredTransactions.filter(t => t.type === 'income');
   const expenseData = filteredTransactions.filter(t => t.type === 'expense');

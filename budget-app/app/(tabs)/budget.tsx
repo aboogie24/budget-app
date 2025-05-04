@@ -1,15 +1,15 @@
-// app/(tabs)/budget.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getAllTransactions, removeTransaction } from '../../utils/storage';
+import { getCurrentUser } from '@/utils/storage';
 import { Swipeable } from 'react-native-gesture-handler';
 
 export default function BudgetScreen() {
   const router = useRouter();
   const [modalVisible, setModalVisible] = useState(false);
   const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const handleAdd = (type: 'income' | 'expense') => {
     setModalVisible(false);
@@ -17,8 +17,19 @@ export default function BudgetScreen() {
   };
 
   const fetchTransactions = async () => {
-    const data = await getAllTransactions();
-    setTransactions(data);
+    const currentUser = await getCurrentUser();
+    if (!currentUser?.id) return;
+
+    try {
+      setLoading(true);
+      const response = await fetch(`http://10.0.20.204:8080/transactions?user_id=${currentUser.id}`);
+      const data = await response.json();
+      setTransactions(data);
+    } catch (error) {
+      console.error('Failed to load transactions:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -26,8 +37,20 @@ export default function BudgetScreen() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    await removeTransaction(id);
-    fetchTransactions();
+    try {
+      const response = await fetch(`http://10.0.20.204:8080/transactions/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        fetchTransactions(); // refresh after delete
+      } else {
+        Alert.alert('Error', 'Failed to delete transaction.');
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      Alert.alert('Error', 'Delete failed.');
+    }
   };
 
   const renderRightActions = (id: string) => (
@@ -56,13 +79,23 @@ export default function BudgetScreen() {
     </Swipeable>
   );
 
-  const incomeData = transactions.filter(t => t.type === 'income');
-  const expenseData = transactions.filter(t => t.type === 'expense');
+  // const incomeData = transactions.filter(t => t.type === 'income');
+	const incomeData = (transactions || []).filter(t => t.type?.toLowerCase() === 'income'); 
+  // const expenseData = transactions.filter(t => t.type === 'expense');
+	const expenseData = (transactions || []).filter(t => t.type?.toLowerCase() === 'expense');
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#4CAF50" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        <Text style={styles.text}>Your Transactions</Text>
+        <Text style={styles.text}>Budgets</Text>
         <TouchableOpacity style={styles.topRightButton} onPress={() => setModalVisible(true)}>
           <Ionicons name="add" size={28} color="white" />
         </TouchableOpacity>
@@ -91,7 +124,7 @@ export default function BudgetScreen() {
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Add a new transaction</Text>
+            <Text style={styles.modalTitle}>Add New Transaction</Text>
             <TouchableOpacity style={styles.modalButton} onPress={() => handleAdd('income')}>
               <Text style={styles.modalButtonText}>Add Income</Text>
             </TouchableOpacity>

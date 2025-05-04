@@ -4,31 +4,13 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { clearUserSession, findUserSession } from '../utils/storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useAuthGuard } from '@/hooks/useAuthGuard';
 
 
 export default function AppLayout() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const [loading, setLoading] = useState(true);
+  const loading = useAuthGuard();
 
-  useEffect(() => {
-   
-    const checkSession = async () => {
-      //const clear = await clearUserSession();
-      const user = await findUserSession();
-      const publicPaths = ['/login', '/register'];
-      console.log('User session:', user); 
-      if (!user && !publicPaths.includes(pathname)) {
-        router.replace('/login');
-      }
-     
-      setLoading(false);
-    };
-
-    checkSession();
-  }, [pathname]);
-
-  if (loading) {
+    if (loading) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
