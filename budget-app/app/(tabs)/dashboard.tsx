@@ -20,8 +20,10 @@ export default function DashboardScreen() {
       try {
         // const multipliers = await AsyncStorage.getItem('frequencyMultipliers');
         const data = await fetchUserTransactions();
-				console.log(data)
-        setTransactions(data);
+				console.log(data);
+				if (data) {
+					setTransactions(data);
+				}
         // setFrequencyMultipliers(multipliers ? JSON.parse(multipliers) : { weekly: 4, biweekly: 2, monthly: 1 });
       } catch (err) {
         console.error('Failed to load dashboard data:', err);
@@ -54,7 +56,6 @@ export default function DashboardScreen() {
   const leftover = Math.max(totalIncome - totalExpenses, 0);
 
   const chartData = [
-    { name: 'Income', amount: totalIncome, color: '#4CAF50', legendFontColor: '#333', legendFontSize: 14 },
     { name: 'Expenses', amount: totalExpenses, color: '#F44336', legendFontColor: '#333', legendFontSize: 14 },
     { name: 'Leftover', amount: leftover, color: '#2196F3', legendFontColor: '#333', legendFontSize: 14 },
   ];
@@ -102,8 +103,12 @@ export default function DashboardScreen() {
         </View>
       </Modal>
 
-      <Text style={styles.summaryText}>Monthly Income: ${totalIncome.toFixed(2)}</Text>
-      <Text style={styles.summaryText}>Monthly Expenses: ${totalExpenses.toFixed(2)}</Text>
+      <Text style={{ textAlign: 'center', marginBottom: 8, fontWeight: 'bold' }}>
+				Monthly Income: ${totalIncome.toFixed(2)}
+			</Text>
+      <Text style={{ textAlign: 'center', marginBottom: 8, fontWeight: 'bold' }}>
+				Monthly Expenses: ${totalExpenses.toFixed(2)}
+			</Text>
 
       <PieChart
         data={chartData}

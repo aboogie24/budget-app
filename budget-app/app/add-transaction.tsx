@@ -81,6 +81,7 @@ export default function AddTransactionScreen() {
 
       <TextInput
         placeholder="Amount"
+				placeholderTextColor="#888"
         value={amount}
         onChangeText={setAmount}
         keyboardType="numeric"
@@ -88,12 +89,14 @@ export default function AddTransactionScreen() {
       />
       <TextInput
         placeholder="Category"
+				placeholderTextColor="#888"
         value={category}
         onChangeText={setCategory}
         style={styles.input}
       />
       <TextInput
         placeholder="Note (optional)"
+				placeholderTextColor="#888"
         value={note}
         onChangeText={setNote}
         style={styles.input}
@@ -123,6 +126,7 @@ export default function AddTransactionScreen() {
       {type === 'expense' && frequency === 'monthly' && (
         <TextInput
           placeholder="Enter due day (1-31)"
+					placeholderTextColor="#888"
           value={dueDay}
           onChangeText={setDueDay}
           keyboardType="numeric"
@@ -140,7 +144,8 @@ export default function AddTransactionScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
+    padding: 30,
+		paddingVertical: 75,
     backgroundColor: 'white',
   },
   header: {
