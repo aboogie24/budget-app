@@ -3,6 +3,9 @@
     "name": "budget-app",
     "slug": "budget-app",
     "version": "1.0.0",
+    "extra": {
+      "API_URL": "http://10.0.20.204:8080"
+    },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "budgetapp",

@@ -1,5 +1,5 @@
 // app/add-transaction.tsx
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { addTransaction, getCurrentUser } from '../utils/storage';
@@ -14,9 +14,28 @@ export default function AddTransactionScreen() {
 
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('');
+	const [categories, setCategories] = useState([]);
   const [note, setNote] = useState('');
   const [frequency, setFrequency] = useState('one-time');
   const [dueDay, setDueDay] = useState('');
+
+	useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        console.log('Type:', type)
+        const res = await fetch(`http://10.0.20.204:8080/categories?type=${type}`);
+        const data = await res.json();
+        setCategories(data);
+      } catch (e) {
+        console.error('Failed to fetch categories:', e);
+      }
+    };
+    fetchCategories();
+  }, [type]);
+
+	const handleRedirect = async () => {
+		router.replace('/(tabs)/budget')
+	};
 
   const handleSave = async () => {
     console.log('handleSave triggered');
@@ -137,6 +156,10 @@ export default function AddTransactionScreen() {
       <TouchableOpacity onPress={handleSave} style={styles.button}>
         <Text style={styles.buttonText}>Save Transaction</Text>
       </TouchableOpacity>
+
+			<TouchableOpacity onPress={handleRedirect} style={[styles.button, { backgroundColor: '#e53935', marginTop: 16 }]}>
+        <Text style={styles.buttonText}>Cancel</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -189,8 +212,9 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: '#4CAF50',
     paddingVertical: 12,
-    borderRadius: 5,
+    borderRadius: 10,
     alignItems: 'center',
+
   },
   buttonText: {
     color: 'white',

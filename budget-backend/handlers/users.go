@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/aboogie/budget-backend/db"
@@ -11,6 +12,7 @@ import (
 
 func RegisterUser(w http.ResponseWriter, r *http.Request) {
 	var user models.User
+	log.Print("Registeration Started")
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
@@ -46,8 +48,10 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 	`, user.ID, user.Email, user.Password)
 	if err != nil {
 		http.Error(w, "Failed to register user", http.StatusInternalServerError)
+		log.Print("Failed to register user", http.StatusInternalServerError)
 		return
 	}
+	log.Print("Registeration Complete for user ", user.Email)
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{

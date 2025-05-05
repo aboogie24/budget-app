@@ -16,4 +16,7 @@ func SetupRoutes(r *mux.Router) {
 	// Auth
 	r.HandleFunc("/users/register", handlers.RegisterUser).Methods("POST")
 	r.HandleFunc("/users/login", handlers.LoginUser).Methods("POST")
+
+	// Categories
+	r.HandleFunc("/categories", handlers.GetCategories).Methods("GET")
 }
