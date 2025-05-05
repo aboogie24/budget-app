@@ -6,15 +6,20 @@ import { authenticateUser } from '@/utils/auth';
 import { setUserSession } from '../utils/storage';
 import { useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
 export default function BudgetAppLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const router = useRouter();
+  const API_URL =
+    Constants.expoConfig?.extra?.API_URL ??
+    Constants.manifest?.extra?.API_URL ??
+    'http://localhost:8080'; // fallback
 
   const handleLogin = async () => {
 		try {
-			const response = await fetch('http://10.0.20.204:8080/users/login', {
+			const response = await fetch(`${API_URL}/users/login`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ email, password }),

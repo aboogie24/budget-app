@@ -6,20 +6,26 @@ import { saveUser, UserData } from '../utils/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { v4 as uuidv4 } from 'uuid';
 import 'react-native-get-random-values';
+import Constants from 'expo-constants';
 
 export default function RegisterScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const router = useRouter();
+  const API_URL =
+    Constants.expoConfig?.extra?.API_URL ??
+    Constants.manifest?.extra?.API_URL ??
+    'http://localhost:8080'; // fallback
 
   const handleRegister = async () => {
     console.log('Generated UUID:', uuidv4());
     const id = uuidv4();
+    
 
     try {
-        console.log('Sending request.....');
-        const response = await fetch('http://10.0.20.204:8080/users/register', {
+        console.log('Sending request..... to ', API_URL);
+        const response = await fetch(`${API_URL}/users/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,12 +1,22 @@
-// app/add-transaction.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  FlatList,
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { addTransaction, getCurrentUser } from '../utils/storage';
+import { getCurrentUser } from '../utils/storage';
+import Constants from 'expo-constants';
+import { v4 as uuidv4 } from 'uuid';
 
 const frequencyOptions = ['one-time', 'weekly', 'biweekly', 'monthly'];
 
-const generateId = () => Math.random().toString(36).substring(2, 10) + Date.now();
+const generateId = () =>
+  Math.random().toString(36).substring(2, 10) + Date.now();
 
 export default function AddTransactionScreen() {
   const { type } = useLocalSearchParams();
@@ -14,18 +24,21 @@ export default function AddTransactionScreen() {
 
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('');
-	const [categories, setCategories] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [note, setNote] = useState('');
   const [frequency, setFrequency] = useState('one-time');
   const [dueDay, setDueDay] = useState('');
+  const API_URL =
+    Constants.expoConfig?.extra?.API_URL ??
+    Constants.manifest?.extra?.API_URL ??
+    'http://localhost:8080'; // fallback
 
-	useEffect(() => {
+  useEffect(() => {
     const fetchCategories = async () => {
       try {
-        console.log('Type:', type)
-        const res = await fetch(`http://10.0.20.204:8080/categories?type=${type}`);
+        const res = await fetch(`${API_URL}/categories?type=${type}`);
         const data = await res.json();
-        setCategories(data);
+        setCategories(Array.isArray(data) ? data : []);
       } catch (e) {
         console.error('Failed to fetch categories:', e);
       }
@@ -33,18 +46,16 @@ export default function AddTransactionScreen() {
     fetchCategories();
   }, [type]);
 
-	const handleRedirect = async () => {
-		router.replace('/(tabs)/budget')
-	};
+  const handleRedirect = async () => {
+    router.replace('/(tabs)/budget');
+  };
 
   const handleSave = async () => {
-    console.log('handleSave triggered');
-
-		const currentUser = await getCurrentUser();
-		if (!currentUser || !currentUser.id) {
-			Alert.alert('User error', 'No user session found.');
-			return;
-		}
+    const currentUser = await getCurrentUser();
+    if (!currentUser || !currentUser.id) {
+      Alert.alert('User error', 'No user session found.');
+      return;
+    }
 
     if (!amount || isNaN(Number(amount))) {
       Alert.alert('Invalid amount', 'Please enter a valid number.');
@@ -59,63 +70,130 @@ export default function AddTransactionScreen() {
       }
     }
 
+    // Check if category exists, otherwise create it
+    let selectedCategory = categories.find(
+      (c) => c.name.toLowerCase() === category.toLowerCase()
+    );
+
+    if (!selectedCategory) {
+      console.log(category, currentUser.id)
+      try {
+        const newCatPayload = {
+          id: uuidv4(),
+          name: category, 
+          user_id: currentUser.id,
+          type,
+        }
+
+        console.log(newCatPayload)
+        const categoryRes = await fetch(`${API_URL}/categories`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: uuidv4(),
+            name: category,
+            user_id: currentUser.id,
+            type,
+            color: "#4CAF50", 
+          }),
+        });
+
+        console.log(categoryRes)
+
+        if (!categoryRes.ok) {
+          throw new Error(`Failed to create category: ${await categoryRes.text()}`);
+        }
+
+        selectedCategory = await categoryRes.json();
+        setCategories((prev) => [...prev, selectedCategory]);
+      } catch (err) {
+        console.error('Failed to create category:', err);
+        Alert.alert('Error', 'Failed to create category.');
+        return;
+      }
+    }
+
     const transaction = {
-			id: generateId(),
-			user_id: currentUser.id, // from session
-			type,
-			amount: parseFloat(amount),
-			category,
-			note,
-			date: new Date().toISOString(),
-			frequency,
-			due_day: frequency === 'monthly' && type === 'expense' ? parseInt(dueDay) : null,
-		};
-		console.log(transaction)
+      id: generateId(),
+      user_id: currentUser.id,
+      type,
+      amount: parseFloat(amount),
+      category: selectedCategory.name,
+      note,
+      date: new Date().toISOString(),
+      frequency,
+      due_day:
+        frequency === 'monthly' && type === 'expense' ? parseInt(dueDay) : null,
+    };
+
     try {
-      const response = await fetch('http://10.0.20.204:8080/transactions', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(transaction),
-			});
-	
-			if (!response.ok) {
-				const err = await response.text();
-				console.log(response)
-				console.error('Failed to save:', err);
-				Alert.alert('Error', 'Failed to save transaction.');
-				return;
-			}
-	
-			Alert.alert('Success', 'Transaction saved.');
-			router.replace('/budget');
-		} catch (err) {
-			console.error('Error saving:', err);
-			Alert.alert('Error', 'Could not save transaction.');
-		}
+      const response = await fetch(`${API_URL}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(transaction),
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        console.error('Failed to save:', err);
+        Alert.alert('Error', 'Failed to save transaction.');
+        return;
+      }
+
+      Alert.alert('Success', 'Transaction saved.');
+      router.replace('/budget');
+    } catch (err) {
+      console.error('Error saving:', err);
+      Alert.alert('Error', 'Could not save transaction.');
+    }
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Add {type === 'income' ? 'Income' : 'Expense'}</Text>
+      <Text style={styles.header}>
+        Add {type === 'income' ? 'Income' : 'Expense'}
+      </Text>
 
       <TextInput
         placeholder="Amount"
-				placeholderTextColor="#888"
+        placeholderTextColor="#888"
         value={amount}
         onChangeText={setAmount}
         keyboardType="numeric"
         style={styles.input}
       />
-      <TextInput
-        placeholder="Category"
-				placeholderTextColor="#888"
-        value={category}
-        onChangeText={setCategory}
-        style={styles.input}
-      />
+
+      <View style={{ marginBottom: 20 }}>
+        <TextInput
+          placeholder="Category"
+          placeholderTextColor="#888"
+          value={category}
+          onChangeText={(text) => {
+            setCategory(text);
+          }}
+          style={styles.input}
+        />
+        {category.length > 0 && (
+          <FlatList
+            data={categories.filter((c) =>
+              c.name.toLowerCase().includes(category.toLowerCase())
+            )}
+            keyExtractor={(item) => item.id.toString()}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() => setCategory(item.name)}
+                style={styles.suggestionItem}
+              >
+                <Text>{item.name}</Text>
+              </TouchableOpacity>
+            )}
+          />
+        )}
+      </View>
+
       <TextInput
         placeholder="Note (optional)"
-				placeholderTextColor="#888"
+        placeholderTextColor="#888"
         value={note}
         onChangeText={setNote}
         style={styles.input}
@@ -123,19 +201,21 @@ export default function AddTransactionScreen() {
 
       <Text style={styles.label}>Frequency</Text>
       <View style={styles.frequencyRow}>
-        {frequencyOptions.map(option => (
+        {frequencyOptions.map((option) => (
           <TouchableOpacity
             key={option}
             onPress={() => setFrequency(option)}
             style={[
               styles.freqButton,
               frequency === option && styles.freqButtonSelected,
-            ]}>
+            ]}
+          >
             <Text
               style={[
                 styles.freqButtonText,
                 frequency === option && styles.freqButtonTextSelected,
-              ]}>
+              ]}
+            >
               {option}
             </Text>
           </TouchableOpacity>
@@ -145,7 +225,7 @@ export default function AddTransactionScreen() {
       {type === 'expense' && frequency === 'monthly' && (
         <TextInput
           placeholder="Enter due day (1-31)"
-					placeholderTextColor="#888"
+          placeholderTextColor="#888"
           value={dueDay}
           onChangeText={setDueDay}
           keyboardType="numeric"
@@ -157,7 +237,10 @@ export default function AddTransactionScreen() {
         <Text style={styles.buttonText}>Save Transaction</Text>
       </TouchableOpacity>
 
-			<TouchableOpacity onPress={handleRedirect} style={[styles.button, { backgroundColor: '#e53935', marginTop: 16 }]}>
+      <TouchableOpacity
+        onPress={handleRedirect}
+        style={[styles.button, { backgroundColor: '#e53935', marginTop: 16 }]}
+      >
         <Text style={styles.buttonText}>Cancel</Text>
       </TouchableOpacity>
     </View>
@@ -168,7 +251,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 30,
-		paddingVertical: 75,
+    paddingVertical: 75,
     backgroundColor: 'white',
   },
   header: {
@@ -179,7 +262,7 @@ const styles = StyleSheet.create({
   input: {
     borderBottomWidth: 1,
     paddingVertical: 10,
-    marginBottom: 20,
+    marginBottom: 10,
   },
   label: {
     fontSize: 16,
@@ -214,10 +297,16 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
-
   },
   buttonText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+  suggestionItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+    backgroundColor: '#fafafa',
   },
 });

@@ -10,7 +10,7 @@ export function useAuthGuard() {
   useEffect(() => {
     const checkSession = async () => {
       const user = await findUserSession();
-      const publicPaths = ['/login', '/register', '/'];
+      const publicPaths = ['/login', '/register'];
 
       console.log(user); 
       console.log(publicPaths.includes(pathname))
