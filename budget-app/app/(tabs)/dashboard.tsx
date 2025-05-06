@@ -1,12 +1,15 @@
 // app/(tabs)/dashboard.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Dimensions, FlatList, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, FlatList, Modal, Pressable, TouchableOpacity } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { PieChart } from 'react-native-chart-kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchUserTransactions } from '@/utils/api';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 export default function DashboardScreen() {
+  const router = useRouter();
   const [transactions, setTransactions] = useState([]);
   const [filteredTransactions, setFilteredTransactions] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -18,18 +21,14 @@ export default function DashboardScreen() {
   useEffect(() => {
     const load = async () => {
       try {
-        // const multipliers = await AsyncStorage.getItem('frequencyMultipliers');
         const data = await fetchUserTransactions();
-				console.log(data);
-				if (data) {
-					setTransactions(data);
-				}
-        // setFrequencyMultipliers(multipliers ? JSON.parse(multipliers) : { weekly: 4, biweekly: 2, monthly: 1 });
+        if (data) {
+          setTransactions(data);
+        }
       } catch (err) {
         console.error('Failed to load dashboard data:', err);
       }
     };
-
     load();
   }, []);
 
@@ -46,7 +45,7 @@ export default function DashboardScreen() {
 
   const calculateTotal = (data) => {
     return data.reduce((sum, t) => {
-      const multiplier = frequencyMultipliers[t.frequency] || 1;
+      const multiplier = frequencyMultipliers[t.frequency?.toLowerCase()] || 1;
       return sum + (t.amount * multiplier);
     }, 0);
   };
@@ -55,15 +54,45 @@ export default function DashboardScreen() {
   const totalExpenses = calculateTotal(expenseData);
   const leftover = Math.max(totalIncome - totalExpenses, 0);
 
-  const chartData = [
-    { name: 'Expenses', amount: totalExpenses, color: '#F44336', legendFontColor: '#333', legendFontSize: 14 },
-    { name: 'Leftover', amount: leftover, color: '#2196F3', legendFontColor: '#333', legendFontSize: 14 },
-  ];
+  const expenseByCategory = expenseData.reduce((acc, item) => {
+    const multiplier = frequencyMultipliers[item.frequency?.toLowerCase()] || 1;
+    let categoryEntry = acc.find(cat => cat.name === item.category);
+  
+    if (categoryEntry) {
+      categoryEntry.amount += item.amount * multiplier;
+    } else {
+      // Find a transaction that has the same category and a color
+      const match = expenseData.find(t => t.category === item.category && t.color);
+      acc.push({
+        name: item.category,
+        amount: item.amount * multiplier,
+        color: match?.color || '#999',
+        legendFontColor: '#333',
+        legendFontSize: 14,
+      });
+    }
+  
+    return acc;
+  }, []);
+  
+
+  // const expenseByCategory = expenseData.reduce((acc, item) => {
+  //   const existing = acc.find(cat => cat.name === item.category);
+  //   const multiplier = frequencyMultipliers[item.frequency?.toLowerCase()] || 1;
+  //   if (existing) existing.amount += item.amount * multiplier;
+  //   else acc.push({ name: item.category, amount: item.amount * multiplier, color: item.color || '#999', legendFontColor: '#333', legendFontSize: 14 });
+  //   return acc;
+  // }, []);
 
   const renderRecentItem = ({ item }) => (
-    <View style={styles.transactionItem}>
-      <Text style={styles.transactionTitle}>{item.type.toUpperCase()} - ${item.amount}</Text>
-      <Text style={styles.transactionDetails}>{item.category} | {new Date(item.date).toLocaleDateString()}</Text>
+    <View style={styles.recentRow}>
+      <View style={[styles.dot, { backgroundColor: item.color || (item.type === 'expense' ? '#F44336' : '#4CAF50') }]} />
+      <View>
+        <Text style={styles.transactionType}>{item.type.toUpperCase()}</Text>
+        <Text style={styles.transactionAmount}>${item.amount.toLocaleString()}</Text>
+        <Text style={styles.transactionDetails}>{item.category}</Text>
+        <Text style={styles.transactionDetails}>{new Date(item.date).toLocaleDateString()}</Text>
+      </View>
     </View>
   );
 
@@ -76,10 +105,10 @@ export default function DashboardScreen() {
 
       <View style={styles.pickerRow}>
         <Pressable style={styles.pickerButton} onPress={() => setMonthModalVisible(true)}>
-          <Text style={styles.pickerButtonText}>Month: {new Date(0, selectedMonth).toLocaleString('default', { month: 'long' })}</Text>
+          <Text style={styles.pickerButtonText}>{new Date(0, selectedMonth).toLocaleString('default', { month: 'long' })}</Text>
         </Pressable>
         <Pressable style={styles.pickerButton} onPress={() => setYearModalVisible(true)}>
-          <Text style={styles.pickerButtonText}>Year: {selectedYear}</Text>
+          <Text style={styles.pickerButtonText}>{selectedYear}</Text>
         </Pressable>
       </View>
 
@@ -103,15 +132,19 @@ export default function DashboardScreen() {
         </View>
       </Modal>
 
-      <Text style={{ textAlign: 'center', marginBottom: 8, fontWeight: 'bold' }}>
-				Monthly Income: ${totalIncome.toFixed(2)}
-			</Text>
-      <Text style={{ textAlign: 'center', marginBottom: 8, fontWeight: 'bold' }}>
-				Monthly Expenses: ${totalExpenses.toFixed(2)}
-			</Text>
+      <View style={styles.chartRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.summaryText}>↑ ${totalIncome.toLocaleString()}</Text>
+          <Text style={styles.summaryLabel}>{new Date(0, selectedMonth).toLocaleString('default', { month: 'long' })}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.summaryText, { color: '#F44336' }]}>↑ ${totalExpenses.toLocaleString()}</Text>
+          <Text style={styles.summaryLabel}>{`${new Date(0, selectedMonth).toLocaleString('default', { month: 'short' })}. ${selectedYear}`}</Text>
+        </View>
+      </View>
 
       <PieChart
-        data={chartData}
+        data={expenseByCategory}
         width={Dimensions.get('window').width - 32}
         height={220}
         chartConfig={{ backgroundColor: 'white', backgroundGradientFrom: 'white', backgroundGradientTo: 'white', color: () => `#000` }}
@@ -123,7 +156,13 @@ export default function DashboardScreen() {
         avoidFalseZero={true}
       />
 
-      <Text style={styles.sectionHeader}>Recent Activity</Text>
+      <View style={styles.recentHeaderRow}>
+        <Text style={styles.sectionHeader}>Recent Activity</Text>
+        <TouchableOpacity onPress={() => router.push('/settings/categories')}>
+          <Text style={{ color: '#1e40af' }}>Manage categories</Text>
+        </TouchableOpacity>
+      </View>
+
       <FlatList
         data={filteredTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5)}
         keyExtractor={(item) => item.id}
@@ -140,9 +179,14 @@ const styles = StyleSheet.create({
   pickerButton: { flex: 1, backgroundColor: '#eee', padding: 10, marginHorizontal: 5, borderRadius: 8 },
   pickerButtonText: { textAlign: 'center', fontSize: 14, fontWeight: '600' },
   modalContainer: { marginTop: 'auto', backgroundColor: 'white', padding: 10, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
-  summaryText: { fontSize: 16, fontWeight: '500', marginBottom: 4, marginLeft: 8 },
+  summaryText: { fontSize: 20, fontWeight: 'bold', textAlign: 'center' },
+  summaryLabel: { textAlign: 'center', color: '#666', fontSize: 12 },
   sectionHeader: { fontSize: 18, fontWeight: 'bold', marginTop: 24, marginBottom: 12 },
-  transactionItem: { paddingVertical: 8, borderBottomWidth: 1, borderColor: '#eee' },
-  transactionTitle: { fontWeight: 'bold', fontSize: 16 },
-  transactionDetails: { color: '#666', fontSize: 14 },
+  recentRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  dot: { width: 40, height: 40, borderRadius: 20, marginRight: 12 },
+  transactionType: { fontWeight: 'bold', fontSize: 14 },
+  transactionAmount: { fontSize: 16 },
+  transactionDetails: { fontSize: 12, color: '#666' },
+  chartRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 12 },
+  recentHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, marginBottom: 12 },
 });

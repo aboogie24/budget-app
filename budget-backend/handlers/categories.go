@@ -141,3 +141,76 @@ func GetCategoriesByUserID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(categories)
 }
+
+func UpdateCategory(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	var category models.Category
+	if err := json.NewDecoder(r.Body).Decode(&category); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		log.Printf("Invalid JSON: %v", err)
+		return
+	}
+
+	uid, err := uuid.FromString(id)
+	if err != nil {
+		http.Error(w, "Invalid category ID", http.StatusBadRequest)
+		log.Printf("Invalid UUID format: %v", err)
+		return
+	}
+
+	conn, err := db.Init()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		log.Print("DB connection error")
+		return
+	}
+	defer conn.Close()
+
+	_, err = conn.Exec(`
+		UPDATE categories
+		SET name = $1, color = $2
+		WHERE id = $3
+	`, category.Name, category.Color, uid)
+	if err != nil {
+		http.Error(w, "Failed to update category", http.StatusInternalServerError)
+		log.Printf("Update error: %v", err)
+		return
+	}
+
+	category.ID = uid // ✅ UUID assignment
+	log.Printf("Category updated: %s", category.Name)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(category)
+}
+
+func DeleteCategory(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	uid, err := uuid.FromString(id)
+	if err != nil {
+		http.Error(w, "Invalid category ID", http.StatusBadRequest)
+		log.Printf("Invalid UUID format: %v", err)
+		return
+	}
+
+	conn, err := db.Init()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		log.Print("DB connection error")
+		return
+	}
+	defer conn.Close()
+
+	_, err = conn.Exec(`DELETE FROM categories WHERE id = $1`, uid)
+	if err != nil {
+		http.Error(w, "Failed to delete category", http.StatusInternalServerError)
+		log.Printf("Delete error: %v", err)
+		return
+	}
+
+	log.Printf("Category deleted: %s", uid)
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -34,7 +34,11 @@ services:
       "-path", "/migrations",
       "-database", "postgres://budget_user:budget_pass@db:5432/budget_db?sslmode=disable",
       #"-database", "postgres://budget_user:budget_pass@db:5432/budget_db?sslmode=disable",
-       "up"
+      "up"
+      #"force",
+      #"down",
+      #"1"
+      #"20250506092221"
       #"drop", 
       #"-f"
     ]

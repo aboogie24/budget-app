@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -53,28 +54,70 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dbClient.Close()
 
+	// rows, err := dbClient.Query(`
+	// 	SELECT id, user_id, type, amount, category, note, date, frequency, due_day
+	// 	FROM transactions WHERE user_id = $1
+	// `, userID)
+	log.Printf("User_ID: %v", userID)
 	rows, err := dbClient.Query(`
-		SELECT id, user_id, type, amount, category, note, date, frequency, due_day
-		FROM transactions WHERE user_id = $1
+		SELECT 
+			t.id,          -- 1
+			t.user_id,     -- 2
+			t.budget_id,   -- 3
+			t.type,        -- 4
+			t.amount,      -- 5
+			t.note,        -- 6
+			t.date,        -- 7
+			t.frequency,   -- 8
+			t.due_day,     -- 9
+			c.name,        -- 10 = category name
+			c.color        -- 11
+		FROM transactions t
+		LEFT JOIN categories c ON t.category_id = c.id
+		WHERE t.user_id = $1
 	`, userID)
 
 	if err != nil {
 		http.Error(w, "Database query error", http.StatusInternalServerError)
+		log.Print(`Database query error`)
 		return
 	}
 	defer rows.Close()
 
 	var transactions []models.Transaction
-
+	log.Print("Updating transaction model from database")
+	columns, _ := rows.Columns()
+	log.Printf("Columes returned: %v", columns)
+	rowCount := 0
 	for rows.Next() {
 		var t models.Transaction
-		err := rows.Scan(&t.ID, &t.UserID, &t.Type, &t.Amount, &t.Category, &t.Note, &t.Date, &t.Frequency, &t.DueDay)
+		rowCount++
+		log.Print("Scanning")
+		columns, _ := rows.Columns()
+		log.Printf("Columes returned: %v", columns)
+		err := rows.Scan(
+			&t.ID,     // 1
+			&t.UserID, // 2
+			&t.BudgetID,
+			&t.Type,      // 3
+			&t.Amount,    // 4
+			&t.Note,      // 5
+			&t.Date,      // 6
+			&t.Frequency, // 7
+			&t.DueDay,    // 8
+			&t.Category,  // 9
+			&t.Color,     // 10
+		)
+
 		if err != nil {
 			http.Error(w, "Failed to scan row", http.StatusInternalServerError)
+			log.Printf("Failed to scan", err)
 			return
 		}
+		log.Print("Scan worked")
 		transactions = append(transactions, t)
 	}
+	log.Printf("Total rows processed: %d", rowCount)
 
 	json.NewEncoder(w).Encode(transactions)
 }

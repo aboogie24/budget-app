@@ -21,4 +21,7 @@ func SetupRoutes(r *mux.Router) {
 	r.HandleFunc("/categories", handlers.GetCategories).Methods("GET")
 	r.HandleFunc("/categories", handlers.CreateCategory).Methods("POST")
 	r.HandleFunc("/categories/user/{user_id}", handlers.GetCategoriesByUserID).Methods("GET") // ← new route
+	r.HandleFunc("/categories/{id}", handlers.UpdateCategory).Methods("PUT")
+	r.HandleFunc("/categories/{id}", handlers.DeleteCategory).Methods("DELETE")
+
 }

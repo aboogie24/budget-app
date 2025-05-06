@@ -76,11 +76,32 @@ export default function BudgetScreen() {
     </TouchableOpacity>
   );
 
+  const frequencyMultipliers = {
+    weekly: 4,
+    biweekly: 2,
+    monthly: 1,
+  };
+  
   const incomeData = transactions.filter((t) => t.type?.toLowerCase() === 'income');
   const expenseData = transactions.filter((t) => t.type?.toLowerCase() === 'expense');
-  const totalIncome = incomeData.reduce((acc, t) => acc + t.amount, 0);
-  const totalExpenses = expenseData.reduce((acc, t) => acc + t.amount, 0);
+  
+  const totalIncome = incomeData.reduce((acc, t) => {
+    const multiplier = frequencyMultipliers[t.frequency?.toLowerCase()] || 1;
+    return acc + (t.amount * multiplier);
+  }, 0);
+  
+  const totalExpenses = expenseData.reduce((acc, t) => {
+    const multiplier = frequencyMultipliers[t.frequency?.toLowerCase()] || 1;
+    return acc + (t.amount * multiplier);
+  }, 0);
+  
   const progress = totalIncome > 0 ? totalExpenses / totalIncome : 0;
+
+  // const incomeData = transactions.filter((t) => t.type?.toLowerCase() === 'income');
+  // const expenseData = transactions.filter((t) => t.type?.toLowerCase() === 'expense');
+  // const totalIncome = incomeData.reduce((acc, t) => acc + t.amount, 0);
+  // const totalExpenses = expenseData.reduce((acc, t) => acc + t.amount, 0);
+  // const progress = totalIncome > 0 ? totalExpenses / totalIncome : 0;
 
   const renderTransactionItem = ({ item }) => (
     <Swipeable renderRightActions={() => renderRightActions(item.id)}>

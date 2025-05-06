@@ -117,6 +117,7 @@ export default function CategorySettings() {
 
   const handleUpdate = async () => {
     try {
+      console.log(`${API_URL}/categories/${editingId}`);
       const res = await fetch(`${API_URL}/categories/${editingId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
