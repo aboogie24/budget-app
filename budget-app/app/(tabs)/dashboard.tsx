@@ -56,24 +56,27 @@ export default function DashboardScreen() {
 
   const expenseByCategory = expenseData.reduce((acc, item) => {
     const multiplier = frequencyMultipliers[item.frequency?.toLowerCase()] || 1;
-    let categoryEntry = acc.find(cat => cat.name === item.category);
+    const name = item.category_name ?? 'leftover';
+    console.log("CAT NAME: ", item); 
+    const existing = acc.find(cat => cat.name === name);
+    const amount = item.amount * multiplier;
   
-    if (categoryEntry) {
-      categoryEntry.amount += item.amount * multiplier;
+    if (existing) {
+      existing.amount += amount;
     } else {
-      // Find a transaction that has the same category and a color
-      const match = expenseData.find(t => t.category === item.category && t.color);
       acc.push({
-        name: item.category,
-        amount: item.amount * multiplier,
-        color: match?.color || '#999',
+        name, // <- if item.category is undefined, this will be "undefined"
+        amount,
+        color: item.color || '#999',
         legendFontColor: '#333',
         legendFontSize: 14,
       });
     }
-  
     return acc;
   }, []);
+
+
+// That should fix the "100% undefined" label and make the pie chart accurate again.
   
 
   // const expenseByCategory = expenseData.reduce((acc, item) => {
