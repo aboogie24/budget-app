@@ -57,7 +57,6 @@ export default function DashboardScreen() {
   const expenseByCategory = expenseData.reduce((acc, item) => {
     const multiplier = frequencyMultipliers[item.frequency?.toLowerCase()] || 1;
     const name = item.category_name ?? 'leftover';
-    console.log("CAT NAME: ", item); 
     const existing = acc.find(cat => cat.name === name);
     const amount = item.amount * multiplier;
   

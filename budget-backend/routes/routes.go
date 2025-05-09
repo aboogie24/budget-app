@@ -24,4 +24,10 @@ func SetupRoutes(r *mux.Router) {
 	r.HandleFunc("/categories/{id}", handlers.UpdateCategory).Methods("PUT")
 	r.HandleFunc("/categories/{id}", handlers.DeleteCategory).Methods("DELETE")
 
+	// Budgets
+	r.HandleFunc("/budgets", handlers.CreateBudget).Methods("POST")
+	r.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
+	r.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
+	r.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
+
 }
