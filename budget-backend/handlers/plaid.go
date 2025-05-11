@@ -50,3 +50,32 @@ func ExchangeToken(client *models.Client) http.HandlerFunc {
 		})
 	}
 }
+
+// func CreateLinkToken(client *models.Client) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		user := plaid.LinkTokenCreateRequestUser{
+// 			ClientUserId: *models.User.ID, // Replace with real user ID in production
+// 		}
+
+// 		request := plaid.NewLinkTokenCreateRequest(
+// 			"Budget App",
+// 			[]plaid.Products{plaid.PRODUCTS_TRANSACTIONS},
+// 			"en",
+// 			[]string{"US"},
+// 			user,
+// 		)
+
+// 		resp, _, err := client.API.PlaidApi.LinkTokenCreate(context.Background()).
+// 			LinkTokenCreateRequest(*request).
+// 			Execute()
+
+// 		if err != nil {
+// 			http.Error(w, "Failed to create link token: "+err.Error(), http.StatusInternalServerError)
+// 			return
+// 		}
+
+// 		json.NewEncoder(w).Encode(map[string]string{
+// 			"link_token": resp.GetLinkToken(),
+// 		})
+// 	}
+// }

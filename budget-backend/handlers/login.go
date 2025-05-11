@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/aboogie/budget-backend/auth"
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/models"
 )
@@ -38,8 +39,15 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	token, err := auth.GenerateToken(user.ID)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]any{
 		"status": "login successful",
+		"token":  token,
 		"user": map[string]any{
 			"id":           user.ID,
 			"email":        user.Email,
