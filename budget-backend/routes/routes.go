@@ -1,12 +1,19 @@
 package routes
 
 import (
+	"log"
+
 	"github.com/aboogie/budget-backend/handlers"
+	plaidclient "github.com/aboogie/budget-backend/internal/plaid"
 
 	"github.com/gorilla/mux"
 )
 
 func SetupRoutes(r *mux.Router) {
+
+	log.Print("Setting up Routes")
+
+	plaid := plaidclient.NewClient()
 
 	// Transactions
 	r.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
@@ -29,5 +36,8 @@ func SetupRoutes(r *mux.Router) {
 	r.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
 	r.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
 	r.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
+
+	//Plaid
+	r.HandleFunc("/exchange_token", handlers.ExchangeToken(plaid)).Methods("POST")
 
 }

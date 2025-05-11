@@ -27,7 +27,7 @@ WORKDIR /root/
 COPY --from=builder /app/budget-app-backend .
 
 # Copy .env if needed (optional)
-# COPY .env .
+COPY .env .
 
 # Set environment variable to configure port (optional)
 ENV PORT=8080
