@@ -6,6 +6,7 @@ import (
 
 	"github.com/aboogie/budget-backend/auth"
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/middleware"
 	"github.com/aboogie/budget-backend/models"
 )
 
@@ -45,6 +46,10 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	session, _ := middleware.GetSession(w, r)
+	session.Values["user_id"] = user.ID
+	session.Save(r, w)
+
 	json.NewEncoder(w).Encode(map[string]any{
 		"status": "login successful",
 		"token":  token,
@@ -54,4 +59,11 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 			"isFirstLogin": false,
 		},
 	})
+}
+
+func LogoutUser(w http.ResponseWriter, r *http.Request) {
+	session, _ := middleware.GetSession(w, r)
+	delete(session.Values, "user_id")
+	session.Save(r, w)
+	w.WriteHeader(http.StatusOK)
 }

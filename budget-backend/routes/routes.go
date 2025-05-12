@@ -5,6 +5,7 @@ import (
 
 	"github.com/aboogie/budget-backend/handlers"
 	plaidclient "github.com/aboogie/budget-backend/internal/plaid"
+	"github.com/aboogie/budget-backend/middleware"
 
 	"github.com/gorilla/mux"
 )
@@ -15,14 +16,20 @@ func SetupRoutes(r *mux.Router) {
 
 	plaid := plaidclient.NewClient()
 
-	// Transactions
-	r.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
-	r.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
-	r.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
+	authRoutes := r.PathPrefix("/auth").Subrouter()
+	authRoutes.Use(middleware.RequireAuth)
 
-	// Auth
+	// Transactions
+	authRoutes.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
+	authRoutes.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
+	authRoutes.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
+
+	// Auth (Login, Register)
 	r.HandleFunc("/users/register", handlers.RegisterUser).Methods("POST")
 	r.HandleFunc("/users/login", handlers.LoginUser).Methods("POST")
+
+	// User (Logut)
+	r.HandleFunc("/user/logout", handlers.LogoutUser).Methods("POST")
 
 	// Categories
 	r.HandleFunc("/categories", handlers.GetCategories).Methods("GET")
