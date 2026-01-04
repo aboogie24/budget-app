@@ -7,7 +7,10 @@ import {
   TouchableOpacity,
   Alert,
   FlatList,
+  ScrollView,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getCurrentUser } from '../utils/storage';
 import Constants from 'expo-constants';
@@ -19,7 +22,8 @@ const generateId = () =>
   Math.random().toString(36).substring(2, 10) + Date.now();
 
 export default function AddTransactionScreen() {
-  const { type } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const type = (params.type as string) || 'expense';
   const router = useRouter();
 
   const [amount, setAmount] = useState('');
@@ -88,7 +92,11 @@ export default function AddTransactionScreen() {
         console.log(newCatPayload)
         const categoryRes = await fetch(`${API_URL}/categories`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(currentUser.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+          },
+          credentials: 'include',
           body: JSON.stringify({
             id: uuidv4(),
             name: category,
@@ -127,9 +135,13 @@ export default function AddTransactionScreen() {
     };
 
     try {
-      const response = await fetch(`${API_URL}/transactions`, {
+      const response = await fetch(`${API_URL}/auth/transactions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(currentUser.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+        },
+        credentials: 'include',
         body: JSON.stringify(transaction),
       });
 
@@ -141,7 +153,7 @@ export default function AddTransactionScreen() {
       }
 
       Alert.alert('Success', 'Transaction saved.');
-      router.replace('/budget');
+      router.replace('/(tabs)/budget');
     } catch (err) {
       console.error('Error saving:', err);
       Alert.alert('Error', 'Could not save transaction.');
@@ -149,164 +161,292 @@ export default function AddTransactionScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>
-        Add {type === 'income' ? 'Income' : 'Expense'}
-      </Text>
+    <LinearGradient colors={['#0b1021', '#1b0d30', '#2d0c53']} style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+        <View style={styles.container}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={handleRedirect} style={styles.iconButton}>
+              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
+            </TouchableOpacity>
+            <View style={styles.headerCenter}>
+              <Text style={styles.headerTitle}>
+                {type === 'income' ? 'New Income' : 'New Expense'}
+              </Text>
+              <Text style={styles.headerSubtitle}>Log it to keep budgets fresh</Text>
+            </View>
+            <View style={{ width: 40 }} />
+          </View>
 
-      <TextInput
-        placeholder="Amount"
-        placeholderTextColor="#888"
-        value={amount}
-        onChangeText={setAmount}
-        keyboardType="numeric"
-        style={styles.input}
-      />
-
-      <View style={{ marginBottom: 20 }}>
-        <TextInput
-          placeholder="Category"
-          placeholderTextColor="#888"
-          value={category}
-          onChangeText={(text) => {
-            setCategory(text);
-          }}
-          style={styles.input}
-        />
-        {category.length > 0 && (
-          <FlatList
-            data={categories.filter((c) =>
-              c.name.toLowerCase().includes(category.toLowerCase())
-            )}
-            keyExtractor={(item) => item.id.toString()}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                onPress={() => setCategory(item.name)}
-                style={styles.suggestionItem}
-              >
-                <Text>{item.name}</Text>
-              </TouchableOpacity>
-            )}
-          />
-        )}
-      </View>
-
-      <TextInput
-        placeholder="Note (optional)"
-        placeholderTextColor="#888"
-        value={note}
-        onChangeText={setNote}
-        style={styles.input}
-      />
-
-      <Text style={styles.label}>Frequency</Text>
-      <View style={styles.frequencyRow}>
-        {frequencyOptions.map((option) => (
-          <TouchableOpacity
-            key={option}
-            onPress={() => setFrequency(option)}
-            style={[
-              styles.freqButton,
-              frequency === option && styles.freqButtonSelected,
-            ]}
-          >
+          <View style={styles.typePill}>
+            <Ionicons
+              name={type === 'income' ? 'trending-up' : 'card-outline'}
+              size={18}
+              color={type === 'income' ? '#34d399' : '#f472b6'}
+            />
             <Text
               style={[
-                styles.freqButtonText,
-                frequency === option && styles.freqButtonTextSelected,
+                styles.typePillText,
+                { color: type === 'income' ? '#34d399' : '#f472b6' },
               ]}
             >
-              {option}
+              {type === 'income' ? 'Income' : 'Expense'}
             </Text>
+          </View>
+
+          <View style={styles.card}>
+            <LabeledInput
+              label="Amount"
+              icon="cash-outline"
+              keyboardType="numeric"
+              placeholder="$0.00"
+              value={amount}
+              onChangeText={setAmount}
+            />
+
+            <LabeledInput
+              label="Category"
+              icon="pricetag-outline"
+              placeholder="Groceries, Salary, Rent…"
+              value={category}
+              onChangeText={(text) => setCategory(text)}
+            />
+
+            {category.length > 0 && (
+              <FlatList
+                data={categories.filter((c) =>
+                  c.name.toLowerCase().includes(category.toLowerCase())
+                )}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    onPress={() => setCategory(item.name)}
+                    style={styles.suggestionItem}
+                  >
+                    <Text style={{ color: '#e5e7eb' }}>{item.name}</Text>
+                  </TouchableOpacity>
+                )}
+                style={{ maxHeight: 120, marginBottom: 12 }}
+              />
+            )}
+
+            <LabeledInput
+              label="Note (optional)"
+              icon="create-outline"
+              placeholder="Add a quick note"
+              value={note}
+              onChangeText={setNote}
+            />
+
+            <Text style={styles.label}>Frequency</Text>
+            <View style={styles.frequencyRow}>
+              {frequencyOptions.map((option) => {
+                const selected = frequency === option;
+                return (
+                  <TouchableOpacity
+                    key={option}
+                    onPress={() => setFrequency(option)}
+                    style={[styles.freqButton, selected && styles.freqButtonSelected]}
+                  >
+                    <Text
+                      style={[
+                        styles.freqButtonText,
+                        selected && styles.freqButtonTextSelected,
+                      ]}
+                    >
+                      {option}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {type === 'expense' && frequency === 'monthly' && (
+              <LabeledInput
+                label="Due day"
+                icon="calendar-outline"
+                placeholder="Enter due day (1-31)"
+                value={dueDay}
+                keyboardType="numeric"
+                onChangeText={setDueDay}
+              />
+            )}
+          </View>
+
+          <TouchableOpacity onPress={handleSave} style={styles.button}>
+            <LinearGradient
+              colors={['#a855f7', '#7c3aed']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.buttonInner}
+            >
+              <Text style={styles.buttonText}>Save</Text>
+              <Ionicons name="arrow-forward" size={18} color="#fff" />
+            </LinearGradient>
           </TouchableOpacity>
-        ))}
-      </View>
-
-      {type === 'expense' && frequency === 'monthly' && (
-        <TextInput
-          placeholder="Enter due day (1-31)"
-          placeholderTextColor="#888"
-          value={dueDay}
-          onChangeText={setDueDay}
-          keyboardType="numeric"
-          style={styles.input}
-        />
-      )}
-
-      <TouchableOpacity onPress={handleSave} style={styles.button}>
-        <Text style={styles.buttonText}>Save Transaction</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        onPress={handleRedirect}
-        style={[styles.button, { backgroundColor: '#e53935', marginTop: 16 }]}
-      >
-        <Text style={styles.buttonText}>Cancel</Text>
-      </TouchableOpacity>
-    </View>
+        </View>
+      </ScrollView>
+    </LinearGradient>
   );
 }
+
+const LabeledInput = ({
+  label,
+  icon,
+  placeholder,
+  value,
+  onChangeText,
+  keyboardType,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  placeholder?: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  keyboardType?: 'numeric' | 'default';
+}) => (
+  <View style={{ marginBottom: 14 }}>
+    <Text style={styles.label}>{label}</Text>
+    <View style={styles.inputWrapper}>
+      <Ionicons name={icon} size={18} color="#cbd5e1" style={{ marginRight: 10 }} />
+      <TextInput
+        placeholder={placeholder}
+        placeholderTextColor="#94a3b8"
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType}
+        style={styles.input}
+      />
+    </View>
+  </View>
+);
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 30,
-    paddingVertical: 75,
-    backgroundColor: 'white',
+    padding: 20,
+    paddingTop: 70,
   },
-  header: {
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 18,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  headerCenter: { alignItems: 'center' },
+  headerTitle: {
     fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 20,
+    fontWeight: '800',
+    color: '#f8fafc',
+  },
+  headerSubtitle: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    marginTop: 4,
   },
   input: {
-    borderBottomWidth: 1,
+    flex: 1,
     paddingVertical: 10,
-    marginBottom: 10,
+    color: '#f8fafc',
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   label: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 10,
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 8,
+    color: '#e5e7eb',
   },
   frequencyRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 20,
+    marginBottom: 4,
+    gap: 8,
   },
   freqButton: {
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: '#e0e0e0',
-    borderRadius: 20,
-    marginRight: 10,
-    marginBottom: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   freqButtonSelected: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: 'rgba(168, 85, 247, 0.18)',
+    borderColor: 'rgba(168, 85, 247, 0.7)',
   },
   freqButtonText: {
-    color: '#000',
+    color: '#e5e7eb',
+    textTransform: 'capitalize',
   },
   freqButtonTextSelected: {
     color: '#fff',
     fontWeight: 'bold',
   },
   button: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  buttonInner: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 8,
   },
   buttonText: {
     color: 'white',
-    fontWeight: 'bold',
+    fontWeight: '800',
+    fontSize: 16,
   },
   suggestionItem: {
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderColor: '#eee',
-    backgroundColor: '#fafafa',
+    borderColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  typePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 14,
+  },
+  typePillText: {
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

@@ -11,6 +11,7 @@ export interface UserData {
 
 const USERS_KEY = 'budgetAppUsers';
 const SESSION_KEY = 'budgetAppSession';
+const THEME_KEY = 'coupleflowTheme';
 
 export async function saveUser(user: UserData): Promise<void> {
   const existing = await AsyncStorage.getItem(USERS_KEY);
@@ -73,6 +74,15 @@ export async function clearUserSession(): Promise<void> {
 export async function logout(): Promise<void> {
     await AsyncStorage.removeItem(SESSION_KEY);
   }
+
+export async function setThemeChoice(theme: 'light' | 'dark') {
+  await AsyncStorage.setItem(THEME_KEY, theme);
+}
+
+export async function getThemeChoice(): Promise<'light' | 'dark' | null> {
+  const val = await AsyncStorage.getItem(THEME_KEY);
+  return val === 'light' || val === 'dark' ? val : null;
+}
 
 export interface Transaction {
 id: string;

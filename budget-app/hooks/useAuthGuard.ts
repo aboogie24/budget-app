@@ -19,7 +19,7 @@ export function useAuthGuard() {
       if (!user && !publicPaths.includes(pathname)) {
         router.replace('/login');
       } else if (user && publicPaths.includes(pathname)) {
-        router.replace('/dashboard');
+        router.replace('/(tabs)/dashboard');
       }
 
       setLoading(false);

@@ -9,9 +9,18 @@ export async function fetchUserTransactions() {
     'http://localhost:8080'; // fallback
 
   if (!user?.id) throw new Error('User not found');
-	                       
-  const response = await fetch(`${API_URL}/transactions?user_id=${user.id}`);
+
+  // Backend protects transactions under /auth and expects the session cookie.
+  const response = await fetch(`${API_URL}/auth/transactions?user_id=${user.id}`, {
+    credentials: 'include',
+    headers: user.token ? { Authorization: `Bearer ${user.token}` } : undefined,
+  });
   if (!response.ok) throw new Error(`Failed to fetch transactions: ${response.status}`);
 
-  return await response.json();
+  const data = await response.json();
+  if (!Array.isArray(data)) return [];
+  return data.map((t: any) => ({
+    ...t,
+    category_name: t.category_name ?? t.category ?? t.categoryName,
+  }));
 }

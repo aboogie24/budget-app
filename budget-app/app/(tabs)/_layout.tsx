@@ -5,11 +5,24 @@ import { Ionicons } from '@expo/vector-icons';
 
 export default function TabLayout() {
   return (
-    <Tabs>
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: {
+          backgroundColor: '#120a2c',
+          borderTopColor: 'rgba(255,255,255,0.08)',
+          height: 70,
+          paddingBottom: 12,
+          paddingTop: 8,
+        },
+        tabBarActiveTintColor: '#c084fc',
+        tabBarInactiveTintColor: '#94a3b8',
+      }}
+    >
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: 'Dashboard',
+          title: 'Home',
           tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
         }}
       />
@@ -28,6 +41,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="goals"
+        options={{
+          title: 'Goals',
+          tabBarIcon: ({ color, size }) => <Ionicons name="albums" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: 'Settings',
@@ -37,4 +57,3 @@ export default function TabLayout() {
     </Tabs>
   );
 }
-

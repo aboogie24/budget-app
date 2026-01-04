@@ -34,7 +34,7 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>exp+budget-app</string>
+          <string>exp+coupleflow</string>
         </array>
       </dict>
     </array>

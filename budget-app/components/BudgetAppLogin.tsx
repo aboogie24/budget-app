@@ -1,14 +1,22 @@
 // components/BudgetAppLogin.tsx
-import { View, Text, TextInput, TouchableOpacity, ImageBackground, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { authenticateUser } from '@/utils/auth';
-import { setUserSession } from '../utils/storage';
 import { useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 
 export default function BudgetAppLogin() {
+  const colors = {
+    primary: '#7c3aed',
+    secondary: '#b26ef8',
+    background: '#0b1021',
+    surface: 'rgba(255,255,255,0.08)',
+    text: '#f8fafc',
+    muted: '#cbd5e1',
+    border: 'rgba(255,255,255,0.15)',
+  };
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const router = useRouter();
@@ -22,6 +30,8 @@ export default function BudgetAppLogin() {
 			const response = await fetch(`${API_URL}/users/login`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
+        // credentials allow the backend session cookie to be stored for /auth routes
+				credentials: 'include',
 				body: JSON.stringify({ email, password }),
 			});
 			
@@ -33,9 +43,11 @@ export default function BudgetAppLogin() {
 			const data = await response.json();
 			const user = data.user;
 			console.log('User logging in:', user)
-			await AsyncStorage.setItem('budgetAppSession', JSON.stringify(user));
+
+			const session = { ...user, token: data.token };
+			await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
 	
-			router.replace(user.isFirstLogin ? '/setup' : '/dashboard');
+			router.replace(user.isFirstLogin ? '/setup' : '/(tabs)/dashboard');
 		} catch (err) {
 			console.error('Login error:', err);
 			alert('Unable to login. Check your connection.');
@@ -62,91 +74,100 @@ export default function BudgetAppLogin() {
   };
 
   return (
-    <ImageBackground
-      source={{ uri: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?fit=crop&w=800&q=80' }}
-      style={styles.imageBackground}
-      resizeMode="cover"
+    <LinearGradient
+      colors={['#0b1021', '#371160', '#2b0f50']}
+      style={styles.screen}
     >
-      <LinearGradient
-        colors={["rgba(0,0,0,0.6)", "rgba(0,0,0,0.6)"]}
-        style={styles.gradientOverlay}
-      >
-        <View style={styles.loginContainer}>
-          <Text style={styles.title}>Login</Text>
+      <View style={styles.loginContainer}>
+        <Text style={[styles.tagline, { color: colors.secondary }]}>For couples & shared goals</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Welcome back</Text>
+        <Text style={[styles.subtitle, { color: colors.muted }]}>
+          Log in to track budgets, debts, and savings together.
+        </Text>
 
-          <TextInput
-            placeholder="Email"
-            value={email}
-            onChangeText={setEmail}
-            style={styles.input}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
+        <TextInput
+          placeholder="Email"
+          placeholderTextColor={colors.muted}
+          value={email}
+          onChangeText={setEmail}
+          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
+          keyboardType="email-address"
+          autoCapitalize="none"
+        />
 
-          <TextInput
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            style={styles.input}
-            secureTextEntry
-          />
+        <TextInput
+          placeholder="Password"
+          placeholderTextColor={colors.muted}
+          value={password}
+          onChangeText={setPassword}
+          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
+          secureTextEntry
+        />
 
-          <TouchableOpacity onPress={handleLogin} style={styles.button}>
-            <Text style={styles.buttonText}>Log In</Text>
-          </TouchableOpacity>
+        <TouchableOpacity onPress={handleLogin} style={[styles.button, { backgroundColor: colors.primary }]}>
+          <Text style={styles.buttonText}>Log In</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleRegister} style={styles.registerButton}>
-            <Text style={styles.registerText}>Don't have an account? Register</Text>
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
-    </ImageBackground>
+        <TouchableOpacity onPress={handleRegister} style={[styles.buttonGhost, { borderColor: colors.secondary }]}>
+          <Text style={[styles.buttonGhostText, { color: colors.secondary }]}>Create an account</Text>
+        </TouchableOpacity>
+      </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  imageBackground: {
-    flex: 1,
-    justifyContent: 'center'
-  },
-  gradientOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 20
-  },
+  screen: { flex: 1, justifyContent: 'center', padding: 24 },
   loginContainer: {
-    backgroundColor: 'white',
-    borderRadius: 10,
-    padding: 20
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  tagline: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 6,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 20
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: 6,
+    color: '#1a1a1a',
+  },
+  subtitle: {
+    fontSize: 15,
+    color: '#6b7280',
+    marginBottom: 20,
   },
   input: {
-    borderBottomWidth: 1,
-    marginBottom: 20,
-    paddingVertical: 8
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 12,
+    color: '#1a1a1a',
   },
   button: {
-    backgroundColor: '#4CAF50',
-    padding: 12,
-    borderRadius: 5,
-    marginBottom: 10
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginBottom: 10,
   },
   buttonText: {
     color: 'white',
-    textAlign: 'center',
-    fontWeight: 'bold'
+    fontWeight: '700',
+    fontSize: 16,
   },
-  registerButton: {
-    paddingVertical: 10
+  buttonGhost: {
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    borderWidth: 2,
   },
-  registerText: {
-    color: '#4CAF50',
-    textAlign: 'center',
-    textDecorationLine: 'underline'
-  }
+  buttonGhostText: {
+    fontWeight: '700',
+    fontSize: 16,
+  },
 });

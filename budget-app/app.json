@@ -1,10 +1,14 @@
 {
   "expo": {
     "name": "budget-app",
-    "slug": "budget-app",
+    "slug": "coupleflow",
     "version": "1.0.0",
     "extra": {
-      "API_URL": "http://10.0.20.204:8080"
+      "API_URL": "http://localhost:8080",
+      "router": {},
+      "eas": {
+        "projectId": "15c3004a-989d-45ed-ae17-903dae308ca9"
+      }
     },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -38,10 +42,30 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          },
+          "android": {
+            "compileSdkVersion": 34,
+            "minSdkVersion": 24
+          }
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "alfred2424s-organization",
+    "runtimeVersion": "1.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/15c3004a-989d-45ed-ae17-903dae308ca9"
     }
   }
 }

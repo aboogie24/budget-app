@@ -2,15 +2,38 @@
 import { Slot, useRouter, usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { clearUserSession, findUserSession } from '../utils/storage';
+import { findUserSession } from '../utils/storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useAuthGuard } from '@/hooks/useAuthGuard';
-
 
 export default function AppLayout() {
-  const loading = useAuthGuard();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [loading, setLoading] = useState(true);
 
-    if (loading) {
+  useEffect(() => {
+    const checkIntro = async () => {
+      const session = await findUserSession();
+      // Avoid redirect loop if already on public screens
+      const isPublic =
+        pathname?.startsWith('/intro') ||
+        pathname?.startsWith('/welcome') ||
+        pathname?.startsWith('/login') ||
+        pathname?.startsWith('/register') ||
+        pathname?.startsWith('/onboarding') ||
+        pathname?.startsWith('/theme-select') ||
+        pathname?.startsWith('/partner-mode') ||
+        pathname?.startsWith('/household-setup') ||
+        pathname?.startsWith('/goals');
+
+      if (!session && !isPublic) {
+        router.replace('/intro');
+      }
+      setLoading(false);
+    };
+    checkIntro();
+  }, [pathname, router]);
+
+  if (loading) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -26,4 +49,3 @@ export default function AppLayout() {
     </GestureHandlerRootView>
   );
 }
-

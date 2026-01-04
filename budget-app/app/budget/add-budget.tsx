@@ -41,9 +41,27 @@ export default function AddBudgetScreen() {
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const response = await fetch(`${API_URL}/categories?type=${type}`);
-        const data = await response.json();
-        setCategories(data.map(c => ({ label: c.name, value: c.id })));
+        const user = await getCurrentUser();
+        const defaultsRes = await fetch(`${API_URL}/categories?type=${type}`);
+        const defaults = defaultsRes.ok ? await defaultsRes.json() : [];
+
+        let userCats: any[] = [];
+        if (user?.id) {
+          const userRes = await fetch(`${API_URL}/categories/user/${user.id}`);
+          userCats = userRes.ok ? await userRes.json() : [];
+        }
+
+        const filteredUserCats = (Array.isArray(userCats) ? userCats : []).filter(
+          (c) => c.type?.toLowerCase() === type.toLowerCase()
+        );
+
+        const merged = [...(Array.isArray(defaults) ? defaults : []), ...filteredUserCats];
+        const deduped = merged.reduce((acc: any[], curr: any) => {
+          if (!acc.find((c) => c.id === curr.id || c.name === curr.name)) acc.push(curr);
+          return acc;
+        }, []);
+        const items = deduped.map((c) => ({ label: c.name, value: c.id }));
+        setCategories(items);
       } catch (error) {
         console.error('Failed to load categories', error);
       }
@@ -60,7 +78,10 @@ export default function AddBudgetScreen() {
       const currentYear = new Date().getFullYear();
 
       try {
-        const response = await fetch(`${API_URL}/budgets/user/${currentUser.id}?month=${currentMonth}&year=${currentYear}`);
+        const response = await fetch(`${API_URL}/budgets/user/${currentUser.id}?month=${currentMonth}&year=${currentYear}`, {
+          credentials: 'include',
+          headers: currentUser.token ? { Authorization: `Bearer ${currentUser.token}` } : undefined,
+        });
         const data = await response.json();
         setBudgets(Array.isArray(data) ? data : []);
       } catch (error) {
@@ -88,6 +109,7 @@ export default function AddBudgetScreen() {
       year: date.getFullYear(),
       category_id: categoryId,
       user_id: currentUser.id,
+      start_date: date.toISOString(),
     };
 
     try {
@@ -130,7 +152,9 @@ export default function AddBudgetScreen() {
           <Text style={styles.transactionName}>{item.name}</Text>
         </View>
         <Text style={styles.transactionCategory}>{item.category_name || 'Uncategorized'}</Text>
-        <Text style={styles.transactionDate}>{item.month}/{item.year}</Text>
+        <Text style={styles.transactionDate}>
+          {item.start_date ? new Date(item.start_date).toLocaleDateString() : `${item.month}/${item.year}`}
+        </Text>
       </View>
     </View>
   );
@@ -196,6 +220,12 @@ export default function AddBudgetScreen() {
           setValue={setType}
           setItems={() => {}}
           style={styles.dropdown}
+          dropDownContainerStyle={styles.dropdownContainer}
+          listMode="MODAL"
+          onOpen={() => {
+            setCategoryOpen(false);
+            setFrequencyOpen(false);
+          }}
           zIndex={3000}
           zIndexInverse={1000}
         />
@@ -215,6 +245,12 @@ export default function AddBudgetScreen() {
           setValue={setFrequency}
           setItems={() => {}}
           style={styles.dropdown}
+          dropDownContainerStyle={styles.dropdownContainer}
+          listMode="MODAL"
+          onOpen={() => {
+            setTypeOpen(false);
+            setCategoryOpen(false);
+          }}
           zIndex={2500}
           zIndexInverse={1500}
         />
@@ -228,6 +264,14 @@ export default function AddBudgetScreen() {
           setValue={setCategoryId}
           setItems={setCategories}
           style={styles.dropdown}
+          dropDownContainerStyle={styles.dropdownContainer}
+          listMode="MODAL"
+          searchable
+          placeholder="Select category"
+          onOpen={() => {
+            setTypeOpen(false);
+            setFrequencyOpen(false);
+          }}
           zIndex={2000}
           zIndexInverse={2000}
         />
@@ -292,7 +336,9 @@ const styles = StyleSheet.create({
   },
   dropdown: {
     marginBottom: 16,
+    borderColor: '#ccc',
   },
+  dropdownContainer: { borderColor: '#ccc' },
   label: {
     fontSize: 16,
     fontWeight: 'bold',
