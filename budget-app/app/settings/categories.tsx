@@ -7,8 +7,10 @@ import {
   FlatList,
   StyleSheet,
   Alert,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../../utils/storage';
 import Constants from 'expo-constants';
 import { v4 as uuidv4 } from 'uuid';
@@ -19,75 +21,54 @@ const API_URL =
   Constants.manifest?.extra?.API_URL ??
   'http://localhost:8080';
 
-const presetColors = [
-  '#F44336', '#E91E63', '#9C27B0', '#3F51B5', '#2196F3',
-  '#009688', '#4CAF50', '#CDDC39', '#FFC107', '#FF5722',
+const PRESET_COLORS = [
+  '#7c3aed', '#22c55e', '#ef4444', '#3b82f6', '#06b6d4',
+  '#f59e0b', '#ec4899', '#14b8a6', '#f97316', '#8b5cf6',
 ];
 
 export default function CategorySettings() {
-  const [categories, setCategories] = useState([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [newName, setNewName] = useState('');
-  const [newColor, setNewColor] = useState('#4CAF50');
+  const [newColor, setNewColor] = useState('#7c3aed');
   const [type, setType] = useState<'expense' | 'income'>('expense');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState('');
 
   const fetchCategories = async () => {
-
     try {
       const user = await getCurrentUser();
-      const res = await fetch(`${API_URL}/categories/user/${user.id}`);
+      const headers = user?.token ? { Authorization: `Bearer ${user.token}` } : undefined;
+      const res = await fetch(`${API_URL}/categories/user/${user.id}`, { headers, credentials: 'include' });
       const data = await res.json();
-      const filtered = data.filter((cat) => cat.type === type)
-      setCategories(filtered);
+      setCategories((Array.isArray(data) ? data : []).filter((cat: any) => cat.type === type));
     } catch (err) {
       console.error('Error fetching categories:', err);
     }
   };
 
-  useEffect(() => {
-    fetchCategories();
-  }, [type]);
-
-  const handleReturn = () => {
-    router.replace('/(tabs)/settings');
-  };
+  useEffect(() => { fetchCategories(); }, [type]);
 
   const handleAddCategory = async () => {
     const currentUser = await getCurrentUser();
-    if (!newName) {
-      Alert.alert('Missing name', 'Please enter a category name.');
-      return;
-    }
+    if (!newName.trim()) { Alert.alert('Missing name', 'Please enter a category name.'); return; }
     try {
-      const payload = {
-        id: uuidv4(),
-        name: newName,
-        type,
-        user_id: currentUser.id,
-        color: newColor,
-      };
-
+      const payload = { id: uuidv4(), name: newName.trim(), type, user_id: currentUser.id, color: newColor };
+      const headers: any = { 'Content-Type': 'application/json' };
+      if (currentUser.token) headers.Authorization = `Bearer ${currentUser.token}`;
       const res = await fetch(`${API_URL}/categories`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        method: 'POST', headers, credentials: 'include', body: JSON.stringify(payload),
       });
-
       if (!res.ok) throw new Error(await res.text());
-
       const created = await res.json();
       setCategories((prev) => [...prev, created]);
       setNewName('');
-      Alert.alert('Success', 'Category added.');
-    } catch (err) {
-      console.error('Failed to create category:', err);
+    } catch {
       Alert.alert('Error', 'Could not add category.');
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     Alert.alert('Delete Category', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -95,13 +76,13 @@ export default function CategorySettings() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const res = await fetch(`${API_URL}/categories/${id}`, {
-              method: 'DELETE',
-            });
+            const user = await getCurrentUser();
+            const headers: any = {};
+            if (user?.token) headers.Authorization = `Bearer ${user.token}`;
+            const res = await fetch(`${API_URL}/categories/${id}`, { method: 'DELETE', headers, credentials: 'include' });
             if (!res.ok) throw new Error(await res.text());
             setCategories((prev) => prev.filter((c) => c.id !== id));
-          } catch (err) {
-            console.error('Delete failed:', err);
+          } catch {
             Alert.alert('Error', 'Failed to delete category.');
           }
         },
@@ -112,193 +93,298 @@ export default function CategorySettings() {
   const startEditing = (category: any) => {
     setEditingId(category.id);
     setEditName(category.name);
-    setEditColor(category.color || '#4CAF50');
+    setEditColor(category.color || '#7c3aed');
   };
 
   const handleUpdate = async () => {
     try {
-      console.log(`${API_URL}/categories/${editingId}`);
+      const user = await getCurrentUser();
+      const headers: any = { 'Content-Type': 'application/json' };
+      if (user?.token) headers.Authorization = `Bearer ${user.token}`;
       const res = await fetch(`${API_URL}/categories/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers, credentials: 'include',
         body: JSON.stringify({ name: editName, color: editColor }),
       });
       if (!res.ok) throw new Error(await res.text());
-
       const updated = await res.json();
-      setCategories((prev) =>
-        prev.map((c) => (c.id === editingId ? updated : c))
-      );
+      setCategories((prev) => prev.map((c) => (c.id === editingId ? updated : c)));
       setEditingId(null);
-    } catch (err) {
-      console.error('Update failed:', err);
+    } catch {
       Alert.alert('Error', 'Failed to update category.');
     }
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <FlatList
-        data={categories}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.container}
-        ListHeaderComponent={
-          <>
-            <Text style={styles.header}>Manage {type} Categories</Text>
-            <View style={styles.toggleRow}>
-              <TouchableOpacity
-                style={[styles.toggleButton, type === 'expense' && styles.toggleSelected]}
-                onPress={() => setType('expense')}
-              >
-                <Text style={type === 'expense' ? styles.selectedText : styles.text}>Expenses</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggleButton, type === 'income' && styles.toggleSelected]}
-                onPress={() => setType('income')}
-              >
-                <Text style={type === 'income' ? styles.selectedText : styles.text}>Income</Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        }
-        renderItem={({ item }) => (
-          <View style={styles.categoryRow}>
-            <View style={[styles.colorDot, { backgroundColor: item.color || '#ccc' }]} />
-            {editingId === item.id ? (
-              <View style={{ flex: 1 }}>
-                <TextInput
-                  value={editName}
-                  onChangeText={setEditName}
-                  style={styles.input}
-                />
-                <View style={styles.colorGrid}>
-                  {presetColors.map((color) => (
-                    <TouchableOpacity
-                      key={color}
-                      onPress={() => setEditColor(color)}
-                      style={[styles.colorBox, {
-                        backgroundColor: color,
-                        borderWidth: editColor === color ? 2 : 0,
-                      }]}
-                    />
-                  ))}
-                </View>
-                <TouchableOpacity onPress={handleUpdate} style={[styles.button, { marginTop: 4 }]}>
-                  <Text style={styles.buttonText}>Save</Text>
+    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }}>
+        <FlatList
+          data={categories}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            <>
+              {/* Header */}
+              <View style={styles.headerRow}>
+                <TouchableOpacity onPress={() => router.replace('/(tabs)/settings')} style={styles.backBtn}>
+                  <Ionicons name="arrow-back" size={20} color="#c084fc" />
                 </TouchableOpacity>
+                <Text style={styles.header}>Categories</Text>
+                <View style={{ width: 40 }} />
               </View>
-            ) : (
-              <>
-                <Text style={{ flex: 1 }}>{item.name}</Text>
-                <TouchableOpacity onPress={() => startEditing(item)}>
-                  <Text style={{ marginRight: 16, color: '#2196F3' }}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleDelete(item.id)}>
-                  <Text style={{ color: '#E53935' }}>Delete</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        )}
-        ListFooterComponent={
-          <View style={{ marginBottom: 40 }}>
-            <Text style={styles.subHeader}>Add New Category</Text>
-            <TextInput
-              placeholder="Category name"
-              value={newName}
-              onChangeText={setNewName}
-              style={styles.input}
-            />
-            <Text style={styles.label}>Pick a color</Text>
-            <View style={styles.colorGrid}>
-              {presetColors.map((color) => (
-                <TouchableOpacity
-                  key={color}
-                  onPress={() => setNewColor(color)}
-                  style={[styles.colorBox, {
-                    backgroundColor: color,
-                    borderWidth: newColor === color ? 2 : 0,
-                  }]}
-                />
-              ))}
+
+              {/* Type toggle */}
+              <View style={styles.toggleRow}>
+                {(['expense', 'income'] as const).map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[styles.toggle, type === t && styles.toggleActive]}
+                    onPress={() => setType(t)}
+                  >
+                    <Ionicons
+                      name={t === 'expense' ? 'cart-outline' : 'cash-outline'}
+                      size={16}
+                      color={type === t ? '#c084fc' : '#64748b'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={type === t ? styles.toggleTextActive : styles.toggleText}>
+                      {t === 'expense' ? 'Expenses' : 'Income'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.sectionLabel}>
+                {categories.length} {type} categor{categories.length !== 1 ? 'ies' : 'y'}
+              </Text>
+            </>
+          }
+          renderItem={({ item }) => (
+            <View style={styles.catCard}>
+              {editingId === item.id ? (
+                /* Editing mode */
+                <View style={{ gap: 10 }}>
+                  <TextInput
+                    value={editName}
+                    onChangeText={setEditName}
+                    style={styles.input}
+                    placeholderTextColor="#475569"
+                  />
+                  <View style={styles.colorGrid}>
+                    {PRESET_COLORS.map((color) => (
+                      <TouchableOpacity
+                        key={color}
+                        onPress={() => setEditColor(color)}
+                        style={[
+                          styles.colorSwatch,
+                          { backgroundColor: color },
+                          editColor === color && styles.colorSwatchActive,
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity style={styles.saveBtn} onPress={handleUpdate}>
+                      <Text style={styles.saveBtnText}>Save</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditingId(null)}>
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                /* Display mode */
+                <View style={styles.catRow}>
+                  <View style={[styles.catDot, { backgroundColor: item.color || '#7c3aed' }]} />
+                  <Text style={styles.catName} numberOfLines={1}>{item.name}</Text>
+                  <TouchableOpacity onPress={() => startEditing(item)} style={styles.actionBtn}>
+                    <Ionicons name="create-outline" size={16} color="#c084fc" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.actionBtn}>
+                    <Ionicons name="trash-outline" size={16} color="#f87171" />
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
-            <View style={{ gap: 12 }}>
-              <TouchableOpacity style={styles.button} onPress={handleAddCategory}>
-                <Text style={styles.buttonText}>Add Category</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.buttonBack} onPress={handleReturn}>
-                <Text style={styles.buttonText}>Back</Text>
+          )}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Ionicons name="folder-open-outline" size={32} color="rgba(255,255,255,0.15)" />
+              <Text style={styles.emptyText}>No {type} categories yet</Text>
+            </View>
+          }
+          ListFooterComponent={
+            <View style={styles.addCard}>
+              <Text style={styles.sectionLabel}>ADD NEW CATEGORY</Text>
+              <TextInput
+                placeholder="Category name"
+                placeholderTextColor="#475569"
+                value={newName}
+                onChangeText={setNewName}
+                style={styles.input}
+              />
+              <Text style={styles.fieldLabel}>Color</Text>
+              <View style={styles.colorGrid}>
+                {PRESET_COLORS.map((color) => (
+                  <TouchableOpacity
+                    key={color}
+                    onPress={() => setNewColor(color)}
+                    style={[
+                      styles.colorSwatch,
+                      { backgroundColor: color },
+                      newColor === color && styles.colorSwatchActive,
+                    ]}
+                  />
+                ))}
+              </View>
+              <TouchableOpacity style={styles.primaryBtn} onPress={handleAddCategory}>
+                <Ionicons name="add-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+                <Text style={styles.primaryBtnText}>Add Category</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        }
-      />
-    </SafeAreaView>
+          }
+        />
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: 'white',
-  },
-  container: { padding: 20, backgroundColor: 'white' },
-  header: { fontSize: 20, fontWeight: 'bold', marginBottom: 16 },
-  subHeader: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
-  input: {
-    borderBottomWidth: 1,
-    borderColor: '#ccc',
-    marginBottom: 16,
-    paddingVertical: 8,
-  },
-  label: { fontWeight: 'bold', marginBottom: 8 },
-  colorGrid: {
+  container: { padding: 16, paddingBottom: 48 },
+
+  /* Header */
+  headerRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 16,
   },
-  colorBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    marginRight: 10,
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  header: { fontSize: 20, fontWeight: '800', color: '#f8fafc' },
+
+  /* Toggle */
+  toggleRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  toggle: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  toggleActive: {
+    backgroundColor: 'rgba(192,132,252,0.12)',
+    borderColor: 'rgba(192,132,252,0.3)',
+  },
+  toggleText: { color: '#64748b', fontWeight: '700' },
+  toggleTextActive: { color: '#c084fc', fontWeight: '800' },
+
+  sectionLabel: {
+    color: '#64748b',
+    fontSize: 11,
+    letterSpacing: 1.2,
+    fontWeight: '700',
     marginBottom: 10,
   },
-  categoryRow: {
+
+  /* Category card */
+  catCard: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  catRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  catDot: { width: 14, height: 14, borderRadius: 7 },
+  catName: { flex: 1, color: '#f8fafc', fontWeight: '700', fontSize: 15 },
+  actionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  /* Input */
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#f8fafc',
+    fontSize: 15,
+  },
+  fieldLabel: { color: '#94a3b8', fontWeight: '600', fontSize: 13, marginBottom: 6 },
+
+  /* Colors */
+  colorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
+  colorSwatch: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  colorSwatchActive: { borderColor: '#fff' },
+
+  /* Buttons */
+  saveBtn: {
+    flex: 1,
+    backgroundColor: '#7c3aed',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  saveBtnText: { color: '#fff', fontWeight: '700' },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  cancelBtnText: { color: '#94a3b8', fontWeight: '700' },
+  primaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    justifyContent: 'center',
+    backgroundColor: '#7c3aed',
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginTop: 4,
   },
-  colorDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    marginRight: 10,
+  primaryBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+
+  /* Add card */
+  addCard: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  button: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  buttonBack: {
-    backgroundColor: '#FF0000',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  buttonText: { color: 'white', fontWeight: 'bold' },
-  toggleRow: { flexDirection: 'row', marginBottom: 20 },
-  toggleButton: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderColor: '#ccc',
-  },
-  toggleSelected: {
-    borderColor: '#4CAF50',
-  },
-  text: { color: '#888' },
-  selectedText: { color: '#4CAF50', fontWeight: 'bold' },
+
+  /* Empty */
+  emptyState: { alignItems: 'center', paddingVertical: 32, gap: 8 },
+  emptyText: { color: 'rgba(255,255,255,0.3)', fontSize: 14, fontWeight: '600' },
 });

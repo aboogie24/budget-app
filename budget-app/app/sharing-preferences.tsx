@@ -31,11 +31,13 @@ const defaultPrefs: SharingPrefs = {
 };
 
 const ToggleRow = ({
+  icon,
   title,
   subtitle,
   value,
   onChange,
 }: {
+  icon: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle?: string;
   value: boolean;
@@ -43,14 +45,19 @@ const ToggleRow = ({
 }) => (
   <View style={styles.row}>
     <View style={styles.rowLeft}>
-      <Text style={styles.rowTitle}>{title}</Text>
-      {subtitle ? <Text style={styles.rowSubtitle}>{subtitle}</Text> : null}
+      <View style={styles.rowIcon}>
+        <Ionicons name={icon} size={16} color="#c084fc" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.rowSubtitle}>{subtitle}</Text> : null}
+      </View>
     </View>
     <Switch
       value={value}
       onValueChange={onChange}
       thumbColor="#fff"
-      trackColor={{ true: '#a855f7', false: '#cbd5e1' }}
+      trackColor={{ true: '#a855f7', false: 'rgba(255,255,255,0.15)' }}
     />
   </View>
 );
@@ -59,6 +66,7 @@ export default function SharingPreferencesScreen() {
   const router = useRouter();
   const [prefs, setPrefs] = useState<SharingPrefs>(defaultPrefs);
   const [householdId, setHouseholdId] = useState<string | undefined>(undefined);
+  const [saving, setSaving] = useState(false);
   const API_URL =
     Constants.expoConfig?.extra?.API_URL ??
     Constants.manifest?.extra?.API_URL ??
@@ -115,6 +123,7 @@ export default function SharingPreferencesScreen() {
   }, [householdId]);
 
   const savePrefs = async () => {
+    setSaving(true);
     try {
       const user = await getCurrentUser();
       if (!user?.id) {
@@ -154,73 +163,114 @@ export default function SharingPreferencesScreen() {
       router.replace('/(tabs)/settings');
     } catch (e) {
       Alert.alert('Error', 'Could not save preferences.');
+    } finally {
+      setSaving(false);
     }
   };
 
+  const allOn = Object.entries(prefs).every(([, v]) => v === true);
+
+  const toggleAll = (on: boolean) => {
+    setPrefs({
+      shareBudgets: on,
+      shareTransactions: on,
+      shareDebts: on,
+      shareSavings: on,
+      sharePriorities: on,
+      shareNotes: on,
+      notifyPartner: on,
+    });
+  };
+
   return (
-    <LinearGradient colors={['#f6f3ff', '#f8f5ff']} style={{ flex: 1 }}>
+    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={20} color="#111827" />
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/settings')}>
+            <Ionicons name="arrow-back" size={20} color="#c084fc" />
           </TouchableOpacity>
           <Text style={styles.headerText}>Sharing Preferences</Text>
           <View style={{ width: 40 }} />
         </View>
 
+        {/* Quick toggle */}
+        <View style={styles.quickToggle}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.quickLabel}>{allOn ? 'Sharing everything' : 'Custom sharing'}</Text>
+            <Text style={styles.quickSub}>Toggle all at once</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.quickBtn, allOn && styles.quickBtnActive]}
+            onPress={() => toggleAll(!allOn)}
+          >
+            <Text style={[styles.quickBtnText, allOn && styles.quickBtnTextActive]}>
+              {allOn ? 'All On' : 'Turn All On'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* What to share */}
         <View style={styles.card}>
-          <Text style={styles.sectionLabel}>What to share</Text>
+          <Text style={styles.sectionLabel}>WHAT TO SHARE</Text>
           <ToggleRow
+            icon="wallet-outline"
             title="Budgets"
             subtitle="Allow partner to view shared budgets"
             value={prefs.shareBudgets}
             onChange={(v) => setPrefs((p) => ({ ...p, shareBudgets: v }))}
           />
           <ToggleRow
+            icon="swap-horizontal-outline"
             title="Transactions"
             subtitle="Show spending & income activity"
             value={prefs.shareTransactions}
             onChange={(v) => setPrefs((p) => ({ ...p, shareTransactions: v }))}
           />
           <ToggleRow
+            icon="card-outline"
             title="Debts"
             subtitle="Loans, credit cards, payoff progress"
             value={prefs.shareDebts}
             onChange={(v) => setPrefs((p) => ({ ...p, shareDebts: v }))}
           />
           <ToggleRow
+            icon="trending-up-outline"
             title="Savings"
             subtitle="Goals, balances, contributions"
             value={prefs.shareSavings}
             onChange={(v) => setPrefs((p) => ({ ...p, shareSavings: v }))}
           />
           <ToggleRow
+            icon="flag-outline"
             title="Priorities"
             subtitle="Roadmap items and rankings"
             value={prefs.sharePriorities}
             onChange={(v) => setPrefs((p) => ({ ...p, sharePriorities: v }))}
           />
           <ToggleRow
-            title="Notes & categories"
+            icon="pricetag-outline"
+            title="Notes & Categories"
             subtitle="Include labels and notes with shared items"
             value={prefs.shareNotes}
             onChange={(v) => setPrefs((p) => ({ ...p, shareNotes: v }))}
           />
         </View>
 
+        {/* Activity */}
         <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Activity</Text>
+          <Text style={styles.sectionLabel}>ACTIVITY</Text>
           <ToggleRow
-            title="Notify partner when I update things"
-            subtitle="Edits to budgets, debts, savings, or priorities"
+            icon="notifications-outline"
+            title="Notify Partner"
+            subtitle="When I update budgets, debts, savings, or priorities"
             value={prefs.notifyPartner}
             onChange={(v) => setPrefs((p) => ({ ...p, notifyPartner: v }))}
           />
         </View>
 
-        <TouchableOpacity style={styles.saveBtn} onPress={savePrefs}>
+        <TouchableOpacity style={styles.saveBtn} onPress={savePrefs} disabled={saving}>
           <LinearGradient colors={['#a855f7', '#7c3aed']} style={styles.saveBtnInner}>
-            <Text style={styles.saveText}>Save preferences</Text>
+            <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save Preferences'}</Text>
             <Ionicons name="checkmark" size={18} color="#fff" />
           </LinearGradient>
         </TouchableOpacity>
@@ -233,6 +283,7 @@ const styles = StyleSheet.create({
   topBar: {
     paddingHorizontal: 16,
     paddingTop: 8,
+    paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -241,46 +292,83 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  headerText: { fontSize: 18, fontWeight: '800', color: '#111827' },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 18,
-    padding: 16,
+  headerText: { fontSize: 18, fontWeight: '800', color: '#f8fafc' },
+
+  /* Quick toggle */
+  quickToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginHorizontal: 16,
-    marginTop: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
-    gap: 10,
+    marginBottom: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  quickLabel: { color: '#f8fafc', fontWeight: '700', fontSize: 15 },
+  quickSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  quickBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  quickBtnActive: {
+    backgroundColor: 'rgba(168,85,247,0.2)',
+    borderColor: 'rgba(168,85,247,0.3)',
+  },
+  quickBtnText: { color: '#94a3b8', fontWeight: '700', fontSize: 13 },
+  quickBtnTextActive: { color: '#c084fc' },
+
+  /* Cards */
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 18,
+    padding: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    gap: 2,
   },
   sectionLabel: {
-    color: '#9ca3af',
-    fontSize: 12,
-    letterSpacing: 1,
+    color: '#64748b',
+    fontSize: 11,
+    letterSpacing: 1.2,
     fontWeight: '700',
     marginBottom: 4,
   },
+
+  /* Rows */
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 10,
   },
-  rowLeft: { flex: 1, paddingRight: 12 },
-  rowTitle: { fontWeight: '700', color: '#111827', fontSize: 15 },
-  rowSubtitle: { color: '#6b7280', fontSize: 12, marginTop: 2 },
-  saveBtn: { marginTop: 24, marginHorizontal: 16 },
+  rowLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+  rowIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: 'rgba(192,132,252,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowTitle: { fontWeight: '700', color: '#f8fafc', fontSize: 15 },
+  rowSubtitle: { color: '#64748b', fontSize: 12, marginTop: 1 },
+
+  /* Save */
+  saveBtn: { marginTop: 8, marginHorizontal: 16 },
   saveBtnInner: {
     borderRadius: 14,
     paddingVertical: 14,

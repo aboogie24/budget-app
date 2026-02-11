@@ -4,7 +4,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/aboogie/budget-backend/handlers"
 	"github.com/aboogie/budget-backend/middleware"
 	"github.com/aboogie/budget-backend/routes"
 
@@ -18,7 +20,14 @@ func main() {
 	r := mux.NewRouter()
 	routes.SetupRoutes(r)
 
+	// Start background recurring transaction processor (runs daily).
+	handlers.StartRecurringTicker()
+
+	// Rate limiter: 120 requests per minute per IP, burst of 20.
+	limiter := middleware.NewRateLimiter(120, 20, time.Minute)
+
 	corsWrapped := middleware.EnableCORS(r)
+	rateLimited := limiter.Middleware(corsWrapped)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -26,5 +35,5 @@ func main() {
 	}
 
 	log.Printf("Server is running on port %s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, corsWrapped))
+	log.Fatal(http.ListenAndServe(":"+port, rateLimited))
 }

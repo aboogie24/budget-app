@@ -1,39 +1,45 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, Dimensions } from 'react-native';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, Dimensions, Platform, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { getCurrentUser } from '@/utils/storage';
 import { useRouter } from 'expo-router';
-import { Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { v4 as uuidv4 } from 'uuid';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
-type Budget = {
+type Category = { id: string; name: string; type: string; budget_id?: string | null };
+
+type CategorySummary = { id: string; name: string; spent: number };
+
+type BudgetSummaryItem = {
   id: string;
   name: string;
-  amount: number;
   type: string;
+  budgeted: number;
+  spent: number;
+  remaining: number;
+  percent: number;
+  frequency: string;
   household_id?: string | null;
-  category_name?: string | null;
-  category_id?: string | null;
-  start_date?: string;
-  frequency?: string;
+  categories: CategorySummary[];
+  source?: string;
 };
 
-type Category = { id: string; name: string; type: string };
-type CategorySummary = {
-  cat: Category;
-  total: number;
-  spent: number;
-  left: number;
-  percent: number;
-  budgets: Budget[];
+type SummaryResponse = {
+  month: number;
+  year: number;
+  total_income: number;
+  total_budgeted: number;
+  total_spent: number;
+  total_remaining: number;
+  budgets: BudgetSummaryItem[];
 };
 
 export default function BudgetScreen() {
   const router = useRouter();
-  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState('');
@@ -42,74 +48,87 @@ export default function BudgetScreen() {
   const [categoryId, setCategoryId] = useState<string>('');
   const [shared, setShared] = useState(false);
   const [frequency, setFrequency] = useState('monthly');
+  const [startDate, setStartDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [budgetFilter, setBudgetFilter] = useState<string>('all');
+  const [monthYear, setMonthYear] = useState(() => {
+    const now = new Date();
+    return { month: now.getMonth(), year: now.getFullYear() };
+  });
   const API_URL =
     Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
+    (Constants as any).manifest?.extra?.API_URL ??
     'http://localhost:8080';
 
-  useEffect(() => {
-    const load = async () => {
-      const user = await getCurrentUser();
-      if (!user?.id) return;
-      const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-      const [budRes, catRes] = await Promise.all([
-        fetch(`${API_URL}/budgets/user/${user.id}`, { credentials: 'include', headers }),
+  const monthLabel = useMemo(() => {
+    const date = new Date(monthYear.year, monthYear.month, 1);
+    return date.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+  }, [monthYear]);
+
+  const changeMonth = useCallback((delta: number) => {
+    setMonthYear((prev) => {
+      const next = new Date(prev.year, prev.month + delta, 1);
+      return { month: next.getMonth(), year: next.getFullYear() };
+    });
+  }, []);
+
+  const loadData = useCallback(async () => {
+    const user = await getCurrentUser();
+    if (!user?.id) return;
+    const headers: Record<string, string> = {};
+    if (user.token) headers['Authorization'] = `Bearer ${user.token}`;
+    const qs = `?month=${monthYear.month + 1}&year=${monthYear.year}`;
+    try {
+      const [summaryRes, catRes] = await Promise.all([
+        fetch(`${API_URL}/budgets/user/${user.id}/summary${qs}`, { credentials: 'include', headers }),
         fetch(`${API_URL}/categories/user/${user.id}`, { credentials: 'include', headers }),
       ]);
-      if (budRes.ok) {
-        const data = await budRes.json();
-        setBudgets(Array.isArray(data) ? data : []);
+      if (summaryRes.ok) {
+        const data: SummaryResponse = await summaryRes.json();
+        setSummary(data);
+      } else {
+        console.warn('Summary fetch failed', summaryRes.status);
       }
       if (catRes.ok) {
         const data = await catRes.json();
         setCategories(Array.isArray(data) ? data : []);
+      } else {
+        console.warn('Category fetch failed', catRes.status);
       }
-    };
-    load();
-  }, []);
+    } catch (e) {
+      console.error('Budget screen fetch error', e);
+    }
+  }, [API_URL, monthYear.month, monthYear.year]);
 
-  const filteredCategories = useMemo(
-    () => categories.filter((c) => (c.type || '').toLowerCase() === type),
-    [categories, type]
-  );
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    setCategoryId('');
+  }, [type]);
 
   const formatCurrency = (v: number) =>
     v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
 
-  const income = budgets.filter((b) => (b.type || '').toLowerCase() === 'income');
-  const expense = budgets.filter((b) => (b.type || '').toLowerCase() === 'expense');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const totalIncome = summary?.total_income ?? 0;
+  const totalBudgeted = summary?.total_budgeted ?? 0;
+  const totalSpent = summary?.total_spent ?? 0;
+  const totalRemaining = summary?.total_remaining ?? 0;
+  const budgetItems = summary?.budgets ?? [];
 
-  const expenseCategories = useMemo(
-    () => categories.filter((c) => (c.type || '').toLowerCase() === 'expense'),
-    [categories]
+  const visibleBudgets = useMemo(
+    () => budgetItems.filter((b) => (budgetFilter === 'all' ? true : b.id === budgetFilter)),
+    [budgetItems, budgetFilter]
   );
 
-  const categorySummaries: CategorySummary[] = useMemo(() => {
-    return expenseCategories
-      .map((cat) => {
-        const catBudgets = expense.filter((b) => (b.category_id || '') === cat.id);
-        const total = catBudgets.reduce((sum, b) => sum + (b.amount || 0), 0);
-        const spent = catBudgets.reduce((sum, b) => sum + (b.amount || 0) * 0.72, 0); // placeholder utilization
-        const left = Math.max(total - spent, 0);
-        const percent = total ? Math.min(100, Math.round((spent / total) * 100)) : 0;
-        return { cat, total, spent, left, percent, budgets: catBudgets };
-      })
-      .filter((s) => s.budgets.length > 0);
-  }, [expense, expenseCategories]);
-
-  const visibleCategories = useMemo(
-    () =>
-      categorySummaries.filter((s) =>
-        categoryFilter === 'all' ? true : s.cat.id === categoryFilter
-      ),
-    [categorySummaries, categoryFilter]
-  );
-
-  const totalBudget = visibleCategories.reduce((sum, s) => sum + s.total, 0);
-  const totalSpent = visibleCategories.reduce((sum, s) => sum + s.spent, 0);
-  const totalRemaining = Math.max(totalBudget - totalSpent, 0);
+  const filteredCategories = useMemo(() => {
+    return categories.filter((c) => {
+      const t = (c.type || '').toLowerCase();
+      return t === type || t === '' || t === 'category';
+    });
+  }, [categories, type]);
 
   const handleSave = async () => {
     const user = await getCurrentUser();
@@ -118,7 +137,7 @@ export default function BudgetScreen() {
       return;
     }
     setSaving(true);
-    const body: any = {
+    const body: Record<string, unknown> = {
       id: uuidv4(),
       user_id: user.id,
       name: name.trim(),
@@ -126,24 +145,24 @@ export default function BudgetScreen() {
       type,
       category_id: categoryId || null,
       frequency,
-      start_date: new Date().toISOString(),
-      household_id: shared ? undefined : '',
+      start_date: startDate.toISOString(),
+      household_id: shared ? undefined : null,
     };
-    const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (user.token) headers['Authorization'] = `Bearer ${user.token}`;
     const res = await fetch(`${API_URL}/budgets`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
+      headers,
       credentials: 'include',
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const saved = await res.json();
-      setBudgets((prev) => [...prev, saved]);
       setName('');
       setAmount('');
       setCategoryId('');
       setShared(false);
       setShowAdd(false);
+      loadData();
     }
     setSaving(false);
   };
@@ -163,9 +182,13 @@ export default function BudgetScreen() {
           </View>
 
           <View style={styles.monthSwitcher}>
-            <Ionicons name="chevron-back" size={16} color="#cbd5e1" />
-            <Text style={styles.monthLabel}>Dec 2025</Text>
-            <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+            <TouchableOpacity onPress={() => changeMonth(-1)} style={styles.monthBtn}>
+              <Ionicons name="chevron-back" size={16} color="#cbd5e1" />
+            </TouchableOpacity>
+            <Text style={styles.monthLabel}>{monthLabel}</Text>
+            <TouchableOpacity onPress={() => changeMonth(1)} style={styles.monthBtn}>
+              <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
@@ -173,18 +196,20 @@ export default function BudgetScreen() {
               <Text style={styles.sectionLabel}>Monthly Overview</Text>
               <View style={styles.pillBadge}>
                 <Text style={styles.pillText}>
-                  {totalBudget ? `${Math.round((totalSpent / Math.max(totalBudget, 1)) * 100)}% used` : '0% used'}
+                  {totalBudgeted
+                    ? `${Math.round((totalSpent / Math.max(totalBudgeted, 1)) * 100)}% used`
+                    : '0% used'}
                 </Text>
               </View>
             </View>
             <View style={styles.overviewRow}>
               <View>
-                <Text style={styles.subText}>Total Budget</Text>
-                <Text style={styles.value}>{formatCurrency(totalBudget)}</Text>
+                <Text style={styles.subText}>Total Income</Text>
+                <Text style={styles.value}>{formatCurrency(totalIncome)}</Text>
               </View>
               <View>
-                <Text style={styles.subText}>Spent</Text>
-                <Text style={[styles.value, { color: '#f59e0b' }]}>{formatCurrency(totalSpent)}</Text>
+                <Text style={styles.subText}>Budgeted</Text>
+                <Text style={[styles.value, { color: '#f59e0b' }]}>{formatCurrency(totalBudgeted)}</Text>
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={styles.subText}>Remaining</Text>
@@ -195,108 +220,115 @@ export default function BudgetScreen() {
               <View
                 style={[
                   styles.progressBarFillWide,
-                  { width: `${totalBudget ? Math.min((totalSpent / totalBudget) * 100, 100) : 0}%` },
+                  { width: `${totalBudgeted ? Math.min((totalSpent / totalBudgeted) * 100, 100) : 0}%` },
                 ]}
               />
             </View>
             <View style={styles.overviewFooter}>
               <Text style={styles.footerText}>{formatCurrency(totalSpent)} spent</Text>
-              <Text style={styles.footerText}>{formatCurrency(totalRemaining)} left</Text>
+              <Text style={styles.footerText}>{formatCurrency(Math.max(totalBudgeted - totalSpent, 0))} left to spend</Text>
             </View>
           </View>
 
-          <View style={styles.alertCard}>
-            <View style={styles.iconCircleAlt}>
-              <Ionicons name="sparkles" size={18} color="#8b5cf6" />
+          {budgetItems.some((b) => b.percent >= 90) && (
+            <View style={styles.alertCard}>
+              <View style={styles.iconCircleAlt}>
+                <Ionicons name="sparkles" size={18} color="#8b5cf6" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.alertTitle}>Spending Alert</Text>
+                <Text style={styles.alertText}>
+                  {budgetItems.filter((b) => b.percent >= 100).length > 0
+                    ? `You've exceeded ${budgetItems.filter((b) => b.percent >= 100).map((b) => b.name).join(', ')} budget(s).`
+                    : `You're close to your ${budgetItems.filter((b) => b.percent >= 90).map((b) => b.name).join(', ')} budget(s). Consider cutting back to stay on track!`}
+                </Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.alertTitle}>Spending Alert</Text>
-              <Text style={styles.alertText}>
-                You are close to your dining budget. Consider cooking at home this weekend to stay on track!
-              </Text>
-              <TouchableOpacity style={styles.suggestionBtn}>
-                <Text style={styles.suggestionText}>View Suggestions</Text>
-                <Ionicons name="arrow-forward" size={14} color="#c084fc" />
-              </TouchableOpacity>
-            </View>
-          </View>
+          )}
 
           <View style={styles.listHeader}>
-            <Text style={styles.sectionLabel}>Categories ({visibleCategories.length})</Text>
+            <Text style={styles.sectionLabel}>Budgets ({visibleBudgets.length})</Text>
             <TouchableOpacity
               style={styles.filterBtn}
               onPress={() =>
-                setCategoryFilter((prev) => (prev === 'all' ? (expenseCategories[0]?.id || 'all') : 'all'))
+                setBudgetFilter((prev) => (prev === 'all' ? (budgetItems[0]?.id || 'all') : 'all'))
               }
             >
               <Ionicons name="filter" size={16} color="#cbd5e1" />
-              <Text style={styles.filterText}>{categoryFilter === 'all' ? 'All' : 'Filtered'}</Text>
+              <Text style={styles.filterText}>{budgetFilter === 'all' ? 'All' : 'Filtered'}</Text>
             </TouchableOpacity>
           </View>
 
-          {visibleCategories.map((catSummary) => {
-            const { cat, total, spent, left, percent, budgets: catBudgets } = catSummary;
-            const alertLabel = percent >= 100 ? 'Over budget' : percent >= 90 ? 'Approaching limit' : '';
-            const alertColor = percent >= 100 ? '#f87171' : '#fbbf24';
-            const firstBudget = catBudgets[0];
+          {visibleBudgets.map((b) => {
+            const alertLabel = b.spent > b.budgeted ? 'Over budget' : b.spent === b.budgeted && b.budgeted > 0 ? 'On target' : b.percent >= 90 ? 'Approaching limit' : '';
+            const alertColor = b.spent > b.budgeted ? '#f87171' : b.spent === b.budgeted ? '#34d399' : '#fbbf24';
             return (
               <TouchableOpacity
-                key={cat.id}
+                key={b.id}
                 style={styles.budgetCard}
                 onPress={() =>
-                  firstBudget
-                    ? router.push({
-                        pathname: '/budget/edit/[id]',
-                        params: {
-                          id: firstBudget.id,
-                          name: firstBudget.name,
-                          amount: String(firstBudget.amount),
-                          type: firstBudget.type,
-                          category_id: firstBudget.category_id || '',
-                          household_id: firstBudget.household_id || '',
-                          frequency: firstBudget.frequency || '',
-                          start_date: firstBudget.start_date || '',
-                        },
-                      })
-                    : null
+                  router.push({
+                    pathname: '/budget/edit/[id]',
+                    params: {
+                      id: b.id,
+                      name: b.name,
+                      amount: String(b.budgeted),
+                      type: b.type,
+                      category_id: '',
+                      household_id: b.household_id || '',
+                      frequency: b.frequency || '',
+                      start_date: '',
+                    },
+                  })
                 }
               >
                 <View style={styles.budgetHeader}>
-                  <View style={styles.iconCircle}>
-                    <Ionicons name="cart-outline" size={18} color="#c084fc" />
+                  <View style={[styles.iconCircle, b.source === 'bill' && { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
+                    <Ionicons
+                      name={b.source === 'bill' ? 'receipt-outline' : 'cart-outline'}
+                      size={18}
+                      color={b.source === 'bill' ? '#60a5fa' : '#c084fc'}
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.budgetTitle}>{cat.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.budgetTitle}>{b.name}</Text>
+                      {b.source === 'bill' && (
+                        <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(96,165,250,0.12)' }}>
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#60a5fa' }}>Bill</Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={styles.budgetSub}>
-                      {formatCurrency(spent)} of {formatCurrency(total)}
+                      {formatCurrency(b.spent)} of {formatCurrency(b.budgeted)}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.percent}>{percent}%</Text>
-                    {firstBudget?.household_id ? <Text style={styles.sharedBadge}>Shared</Text> : null}
+                    <Text style={styles.percent}>{b.percent}%</Text>
+                    {b.household_id ? <Text style={styles.sharedBadge}>Shared</Text> : null}
                   </View>
                 </View>
                 <View style={styles.progressBarTrack}>
-                  <View style={[styles.progressBarFill, { width: `${Math.min(percent, 100)}%` }]} />
+                  <View style={[styles.progressBarFill, { width: `${Math.min(b.percent, 100)}%` }]} />
                 </View>
                 <View style={styles.budgetFooter}>
                   <View>
-                    <Text style={styles.footerText}>{formatCurrency(spent)} spent</Text>
-                    <Text style={styles.footerText}>Recent</Text>
+                    <Text style={styles.footerText}>{formatCurrency(b.spent)} spent</Text>
+                    <Text style={styles.footerText}>Categories</Text>
                     <Text style={styles.footerTextFaint}>
-                      {catBudgets.length > 1 ? `${catBudgets.length} items` : '-'}
+                      {b.categories.length > 0 ? `${b.categories.length} items` : '-'}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <TouchableOpacity>
                       <Text style={styles.viewAll}>View all</Text>
                     </TouchableOpacity>
-                    <Text style={styles.footerText}>{formatCurrency(left)} left</Text>
+                    <Text style={styles.footerText}>{formatCurrency(b.remaining)} left</Text>
                   </View>
                 </View>
                 {alertLabel ? (
                   <View style={[styles.alertPillRow, { borderColor: alertColor + '55' }]}>
-                    <Ionicons name={alertLabel === 'Over budget' ? 'warning' : 'alert-circle'} size={14} color={alertColor} />
+                    <Ionicons name={alertLabel === 'Over budget' ? 'warning' : alertLabel === 'On target' ? 'checkmark-circle' : 'alert-circle'} size={14} color={alertColor} />
                     <Text style={[styles.alertPillText, { color: alertColor }]}>{alertLabel}</Text>
                   </View>
                 ) : null}
@@ -364,6 +396,37 @@ export default function BudgetScreen() {
                   ))}
                 </View>
 
+                <Text style={styles.sheetLabel}>Start Date</Text>
+                <TouchableOpacity
+                  style={styles.datePickerBtn}
+                  onPress={() => setShowDatePicker(true)}
+                >
+                  <Ionicons name="calendar-outline" size={18} color="#c084fc" />
+                  <Text style={styles.datePickerText}>
+                    {startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                  </Text>
+                </TouchableOpacity>
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={startDate}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
+                    onChange={(_, selected) => {
+                      if (Platform.OS === 'android') setShowDatePicker(false);
+                      if (selected) setStartDate(selected);
+                    }}
+                    themeVariant="dark"
+                  />
+                )}
+                {showDatePicker && Platform.OS === 'ios' && (
+                  <TouchableOpacity
+                    style={styles.datePickerDone}
+                    onPress={() => setShowDatePicker(false)}
+                  >
+                    <Text style={styles.datePickerDoneText}>Done</Text>
+                  </TouchableOpacity>
+                )}
+
                 <View style={styles.toggleRow}>
                   <Text style={[styles.sheetLabel, { flex: 1, marginBottom: 0 }]}>Share with partner</Text>
                   <Switch
@@ -412,6 +475,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
+  monthBtn: { padding: 4 },
   monthLabel: { color: '#e5e7eb', fontWeight: '800', fontSize: 14 },
   card: {
     backgroundColor: 'rgba(255,255,255,0.06)',
@@ -458,17 +522,6 @@ const styles = StyleSheet.create({
   },
   alertTitle: { color: '#e5e7eb', fontWeight: '800', fontSize: 15, marginBottom: 4 },
   alertText: { color: '#cbd5e1', fontSize: 13, lineHeight: 18 },
-  suggestionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(124,58,237,0.2)',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginTop: 10,
-  },
-  suggestionText: { color: '#c084fc', fontWeight: '800' },
   listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 8 },
   filterBtn: {
     flexDirection: 'row',
@@ -508,8 +561,6 @@ const styles = StyleSheet.create({
   footerText: { color: '#cbd5e1', fontSize: 12 },
   footerTextFaint: { color: 'rgba(226,232,240,0.5)', fontSize: 12 },
   viewAll: { color: '#c084fc', fontWeight: '700', fontSize: 12, marginBottom: 6 },
-  listTitle: { color: '#f8fafc', fontWeight: '700', fontSize: 14 },
-  listAmount: { color: '#c084fc', fontWeight: '700' },
   sharedBadge: {
     marginTop: 6,
     alignSelf: 'flex-start',
@@ -571,6 +622,27 @@ const styles = StyleSheet.create({
   },
   catPillActive: { borderColor: '#c084fc', backgroundColor: 'rgba(192,132,252,0.12)' },
   catText: { color: '#f8fafc', fontWeight: '700' },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  toggle: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  toggleActive: {
+    borderColor: '#c084fc',
+    backgroundColor: 'rgba(192,132,252,0.15)',
+  },
+  toggleText: { color: '#cbd5e1', fontWeight: '700', textTransform: 'capitalize' },
+  toggleTextActive: { color: '#c084fc', fontWeight: '700', textTransform: 'capitalize' },
   saveBtn: {
     backgroundColor: '#7c3aed',
     borderRadius: 12,
@@ -591,4 +663,37 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)',
   },
   alertPillText: { fontWeight: '700', fontSize: 12 },
+  suggestionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(124,58,237,0.2)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  suggestionText: { color: '#c084fc', fontWeight: '800' },
+  datePickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 10,
+  },
+  datePickerText: { color: '#f8fafc', fontWeight: '700', fontSize: 14 },
+  datePickerDone: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(192,132,252,0.15)',
+    marginBottom: 10,
+  },
+  datePickerDoneText: { color: '#c084fc', fontWeight: '700', fontSize: 13 },
 });

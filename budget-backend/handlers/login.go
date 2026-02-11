@@ -21,6 +21,11 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if loginReq.Email == "" || loginReq.Password == "" {
+		validationError(w, "Email and password are required")
+		return
+	}
+
 	conn, err := db.Init()
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
@@ -28,9 +33,10 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	row := conn.QueryRow("SELECT id, email, password FROM users WHERE email = $1", loginReq.Email)
+	row := conn.QueryRow("SELECT id, email, COALESCE(full_name,''), password, COALESCE(onboarding_complete, FALSE) FROM users WHERE email = $1", loginReq.Email)
 	var user models.User
-	if err := row.Scan(&user.ID, &user.Email, &user.Password); err != nil {
+	var onboardingComplete bool
+	if err := row.Scan(&user.ID, &user.Email, &user.FullName, &user.Password, &onboardingComplete); err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -54,10 +60,34 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 		"status": "login successful",
 		"token":  token,
 		"user": map[string]any{
-			"id":           user.ID,
-			"email":        user.Email,
-			"isFirstLogin": false,
+			"id":                  user.ID,
+			"email":               user.Email,
+			"full_name":           user.FullName,
+			"onboarding_complete": onboardingComplete,
 		},
+	})
+}
+
+// RefreshTokenHandler accepts a valid Bearer token and returns a new one
+// with a fresh expiry. The client should call this before the token expires.
+func RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || len(authHeader) < 8 {
+		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
+		return
+	}
+	tokenStr := authHeader[7:] // strip "Bearer "
+
+	newToken, userID, err := auth.RefreshToken(tokenStr)
+	if err != nil {
+		http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"token":   newToken,
+		"user_id": userID,
 	})
 }
 

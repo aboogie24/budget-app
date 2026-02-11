@@ -16,6 +16,8 @@ func SetupRoutes(r *mux.Router) {
 
 	plaid := plaidclient.NewClient()
 
+	r.Use(middleware.Logging)
+
 	authRoutes := r.PathPrefix("/auth").Subrouter()
 	authRoutes.Use(middleware.RequireAuth)
 
@@ -23,6 +25,46 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
+	authRoutes.HandleFunc("/savings-goals", handlers.ListSavingsGoals).Methods("GET")
+	authRoutes.HandleFunc("/savings-goals", handlers.CreateSavingsGoal).Methods("POST")
+	authRoutes.HandleFunc("/savings-goals/{id}", handlers.UpdateSavingsGoal).Methods("PUT")
+	authRoutes.HandleFunc("/savings-goals/{id}/progress", handlers.UpdateSavingsProgress).Methods("PATCH")
+	authRoutes.HandleFunc("/linked-accounts", handlers.ListLinkedAccounts).Methods("GET")
+	authRoutes.HandleFunc("/linked-accounts", handlers.DeleteLinkedAccount).Methods("DELETE")
+	authRoutes.HandleFunc("/debts", handlers.ListDebts).Methods("GET")
+	authRoutes.HandleFunc("/debts", handlers.CreateDebt).Methods("POST")
+	authRoutes.HandleFunc("/debts/{id}", handlers.UpdateDebt).Methods("PUT")
+	authRoutes.HandleFunc("/debts/{id}/payment", handlers.ApplyDebtPayment).Methods("PATCH")
+	authRoutes.HandleFunc("/priorities", handlers.ListFinancialPriorities).Methods("GET")
+	authRoutes.HandleFunc("/priorities", handlers.CreateFinancialPriority).Methods("POST")
+	authRoutes.HandleFunc("/priorities/{id}", handlers.UpdateFinancialPriority).Methods("PUT")
+	authRoutes.HandleFunc("/priorities/{id}", handlers.DeleteFinancialPriority).Methods("DELETE")
+	authRoutes.HandleFunc("/priorities/reorder", handlers.ReorderFinancialPriorities).Methods("PATCH")
+	authRoutes.HandleFunc("/trips", handlers.ListTrips).Methods("GET")
+	authRoutes.HandleFunc("/trips", handlers.CreateTrip).Methods("POST")
+	authRoutes.HandleFunc("/sharing-preferences", handlers.GetSharingPreferences).Methods("GET")
+	authRoutes.HandleFunc("/sharing-preferences", handlers.UpsertSharingPreferences).Methods("POST")
+	authRoutes.HandleFunc("/plaid/sync", handlers.SyncTransactions(plaid)).Methods("POST")
+	authRoutes.HandleFunc("/plaid/investments", handlers.SyncInvestments(plaid)).Methods("POST")
+	authRoutes.HandleFunc("/plaid/investments", handlers.GetInvestmentHoldings).Methods("GET")
+	authRoutes.HandleFunc("/plaid/liabilities", handlers.SyncLiabilities(plaid)).Methods("POST")
+	authRoutes.HandleFunc("/plaid/liabilities", handlers.GetLiabilities).Methods("GET")
+	authRoutes.HandleFunc("/plaid/balances", handlers.SyncAccountBalances(plaid)).Methods("POST")
+	authRoutes.HandleFunc("/plaid/balances", handlers.GetAccountBalances).Methods("GET")
+	authRoutes.HandleFunc("/recurring/process", handlers.ProcessRecurring).Methods("POST")
+	authRoutes.HandleFunc("/insights", handlers.GetSpendingInsights).Methods("GET")
+	authRoutes.HandleFunc("/top-categories", handlers.GetTopMerchants).Methods("GET")
+	authRoutes.HandleFunc("/refresh", handlers.RefreshTokenHandler).Methods("POST")
+	authRoutes.HandleFunc("/onboarding/complete", handlers.CompleteOnboarding).Methods("POST")
+
+	// Bills
+	authRoutes.HandleFunc("/bills", handlers.ListBills).Methods("GET")
+	authRoutes.HandleFunc("/bills", handlers.CreateBill).Methods("POST")
+	authRoutes.HandleFunc("/bills/auto-detect", handlers.AutoDetectBillPayments).Methods("POST")
+	authRoutes.HandleFunc("/bills/{id}", handlers.UpdateBill).Methods("PUT")
+	authRoutes.HandleFunc("/bills/{id}", handlers.DeleteBill).Methods("DELETE")
+	authRoutes.HandleFunc("/bills/{id}/pay", handlers.MarkBillPaid).Methods("POST")
+	authRoutes.HandleFunc("/bills/{id}/payments", handlers.ListBillPayments).Methods("GET")
 
 	// Auth (Login, Register)
 	r.HandleFunc("/users/register", handlers.RegisterUser).Methods("POST")
@@ -41,10 +83,18 @@ func SetupRoutes(r *mux.Router) {
 	// Budgets
 	r.HandleFunc("/budgets", handlers.CreateBudget).Methods("POST")
 	r.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
+	r.HandleFunc("/budgets/user/{user_id}/summary", handlers.GetBudgetSummary).Methods("GET")
 	r.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
 	r.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
 
 	//Plaid
+	r.HandleFunc("/link_token", handlers.CreateLinkToken(plaid)).Methods("GET")
 	r.HandleFunc("/exchange_token", handlers.ExchangeToken(plaid)).Methods("POST")
+	r.HandleFunc("/plaid/link-page", handlers.PlaidLinkPage).Methods("GET")
+	r.HandleFunc("/households", handlers.CreateHousehold).Methods("POST")
+	r.HandleFunc("/households/invite", handlers.CreateHouseholdInvite).Methods("POST")
+	r.HandleFunc("/households/accept", handlers.AcceptHouseholdInvite).Methods("POST")
+	r.HandleFunc("/households/invites", handlers.ListHouseholdInvites).Methods("GET")
+	r.HandleFunc("/households/me", handlers.GetHouseholdForUser).Methods("GET")
 
 }

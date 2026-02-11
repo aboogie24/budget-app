@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,6 +19,24 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validation
+	if tx.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+	if tx.Amount <= 0 {
+		validationError(w, "Amount must be greater than zero")
+		return
+	}
+	if !isValidBudgetType(tx.Type) {
+		validationError(w, "Type must be 'income' or 'expense'")
+		return
+	}
+	if tx.Date.IsZero() {
+		validationError(w, "Date is required")
+		return
+	}
+
 	dbClient, err := db.New()
 	if err != nil {
 		http.Error(w, "DB connection error", http.StatusInternalServerError)
@@ -25,10 +44,16 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dbClient.Close()
 
+	if tx.HouseholdID == nil || *tx.HouseholdID == "" {
+		if hh := db.ResolveHouseholdID(dbClient.Conn, tx.UserID); hh != "" {
+			tx.HouseholdID = &hh
+		}
+	}
+
 	_, err = dbClient.Exec(`
-		INSERT INTO transactions (id, user_id, type, amount, category, note, date, frequency, due_day)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		tx.ID, tx.UserID, tx.Type, tx.Amount, tx.Category, tx.Note, tx.Date, tx.Frequency, tx.DueDay)
+		INSERT INTO transactions (id, user_id, household_id, category_id, type, amount, category_name, note, date, frequency, due_day, source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		tx.ID, tx.UserID, tx.HouseholdID, tx.CategoryID, tx.Type, tx.Amount, tx.Category, tx.Note, tx.Date, tx.Frequency, tx.DueDay, tx.Source)
 	if err != nil {
 		http.Error(w, "Failed to insert transaction", http.StatusInternalServerError)
 		return
@@ -59,23 +84,53 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 	// 	FROM transactions WHERE user_id = $1
 	// `, userID)
 	log.Printf("User_ID: %v", userID)
-	rows, err := dbClient.Query(`
-		SELECT 
-			t.id,          -- 1
-			t.user_id,     -- 2
-			t.budget_id,   -- 3
-			t.type,        -- 4
-			t.amount,      -- 5
-			t.note,        -- 6
-			t.date,        -- 7
-			t.frequency,   -- 8
-			t.due_day,     -- 9
-			c.name,        -- 10 = category name
-			c.color        -- 11
-		FROM transactions t
-		LEFT JOIN categories c ON t.category_id = c.id
-		WHERE t.user_id = $1
-	`, userID)
+	hh := db.ResolveHouseholdID(dbClient.Conn, userID)
+
+	var rows *sql.Rows
+	if hh == "" {
+		rows, err = dbClient.Query(`
+			SELECT 
+				t.id,          -- 1
+				t.user_id,     -- 2
+				t.household_id,
+				t.budget_id,   -- 4
+				t.category_id, -- 5
+				t.type,        -- 6
+				t.amount,      -- 7
+				t.note,        -- 8
+				t.date,        -- 9
+				t.frequency,   -- 10
+				t.due_day,     -- 11
+				COALESCE(c.name, t.category_name), -- 12
+				c.color,       -- 13
+				t.source       -- 14
+			FROM transactions t
+			LEFT JOIN categories c ON t.category_id = c.id
+			WHERE t.household_id IS NULL AND t.user_id = $1
+		`, userID)
+	} else {
+		rows, err = dbClient.Query(`
+			SELECT 
+				t.id,          -- 1
+				t.user_id,     -- 2
+				t.household_id,
+				t.budget_id,   -- 4
+				t.category_id, -- 5
+				t.type,        -- 6
+				t.amount,      -- 7
+				t.note,        -- 8
+				t.date,        -- 9
+				t.frequency,   -- 10
+				t.due_day,     -- 11
+				COALESCE(c.name, t.category_name), -- 12
+				c.color,       -- 13
+				t.source       -- 14
+			FROM transactions t
+			LEFT JOIN categories c ON t.category_id = c.id
+			WHERE t.household_id = $1
+			   OR (t.household_id IS NULL AND t.user_id = $2)
+		`, hh, userID)
+	}
 
 	if err != nil {
 		http.Error(w, "Database query error", http.StatusInternalServerError)
@@ -91,27 +146,35 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 	rowCount := 0
 	for rows.Next() {
 		var t models.Transaction
+		var hh, freq, note sql.NullString
 		rowCount++
 		log.Print("Scanning")
-		columns, _ := rows.Columns()
-		log.Printf("Columes returned: %v", columns)
 		err := rows.Scan(
-			&t.ID,     // 1
-			&t.UserID, // 2
-			&t.BudgetID,
-			&t.Type,      // 3
-			&t.Amount,    // 4
-			&t.Note,      // 5
-			&t.Date,      // 6
-			&t.Frequency, // 7
-			&t.DueDay,    // 8
-			&t.Category,  // 9
-			&t.Color,     // 10
+			&t.ID,         // 1
+			&t.UserID,     // 2
+			&hh,           // 3 household_id
+			&t.BudgetID,   // 4
+			&t.CategoryID, // 5
+			&t.Type,       // 6
+			&t.Amount,     // 7
+			&note,         // 8 note
+			&t.Date,       // 9
+			&freq,         // 10 frequency
+			&t.DueDay,     // 11
+			&t.Category,   // 12
+			&t.Color,      // 13
+			&t.Source,     // 14
 		)
+		if hh.Valid {
+			val := hh.String
+			t.HouseholdID = &val
+		}
+		t.Frequency = freq.String
+		t.Note = note.String
 
 		if err != nil {
 			http.Error(w, "Failed to scan row", http.StatusInternalServerError)
-			log.Printf("Failed to scan", err)
+			log.Printf("Failed to scan: %v", err)
 			return
 		}
 		log.Print("Scan worked")

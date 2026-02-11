@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import Constants from 'expo-constants';
 import { getCurrentUser } from '@/utils/storage';
 import { v4 as uuidv4 } from 'uuid';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 type Category = { id: string; name: string; type: string };
 
@@ -24,7 +25,15 @@ export default function EditBudget() {
   const [categoryId, setCategoryId] = useState((params.category_id as string) || '');
   const [categories, setCategories] = useState<Category[]>([]);
   const [frequency, setFrequency] = useState((params.frequency as string) || 'monthly');
-  const [startDate, setStartDate] = useState((params.start_date as string) || '');
+  const [startDate, setStartDate] = useState(() => {
+    const raw = params.start_date as string;
+    if (raw) {
+      const d = new Date(raw);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return new Date();
+  });
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [shared, setShared] = useState(((params.household_id as string) || '') !== '');
   const [saving, setSaving] = useState(false);
 
@@ -59,7 +68,7 @@ export default function EditBudget() {
         amount: parseFloat(amount),
         type,
         category_id: categoryId || undefined,
-        start_date: startDate || undefined,
+        start_date: startDate.toISOString(),
         frequency: frequency || 'monthly',
         user_id: user.id,
         id: params.id || uuidv4(),
@@ -92,7 +101,7 @@ export default function EditBudget() {
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+            <TouchableOpacity onPress={() => router.replace('/(tabs)/budget')} style={styles.iconBtn}>
               <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
             </TouchableOpacity>
             <Text style={styles.header}>Edit Budget</Text>
@@ -171,14 +180,36 @@ export default function EditBudget() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.label}>Start date (ISO)</Text>
-            <TextInput
-              value={startDate}
-              onChangeText={setStartDate}
-              placeholder="2025-01-01"
-              placeholderTextColor="#94a3b8"
-              style={styles.input}
-            />
+            <Text style={styles.label}>Start Date</Text>
+            <TouchableOpacity
+              style={styles.datePickerBtn}
+              onPress={() => setShowDatePicker(true)}
+            >
+              <Ionicons name="calendar-outline" size={18} color="#c084fc" />
+              <Text style={styles.datePickerText}>
+                {startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+              </Text>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <DateTimePicker
+                value={startDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
+                onChange={(_, selected) => {
+                  if (Platform.OS === 'android') setShowDatePicker(false);
+                  if (selected) setStartDate(selected);
+                }}
+                themeVariant="dark"
+              />
+            )}
+            {showDatePicker && Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={styles.datePickerDone}
+                onPress={() => setShowDatePicker(false)}
+              >
+                <Text style={styles.datePickerDoneText}>Done</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
               <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save Budget'}</Text>
@@ -267,4 +298,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  datePickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  datePickerText: { color: '#f8fafc', fontWeight: '700', fontSize: 14 },
+  datePickerDone: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(192,132,252,0.15)',
+    marginTop: 4,
+  },
+  datePickerDoneText: { color: '#c084fc', fontWeight: '700', fontSize: 13 },
 });

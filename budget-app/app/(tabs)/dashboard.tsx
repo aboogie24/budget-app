@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { fetchUserTransactions } from '@/utils/api';
+import { fetchUserTransactions, fetchInvestmentHoldings, fetchAccountBalances } from '@/utils/api';
 import Constants from 'expo-constants';
 import { getCurrentUser } from '@/utils/storage';
 
@@ -26,6 +26,9 @@ export default function DashboardScreen() {
   const [budgetsData, setBudgetsData] = useState<any[]>([]);
   const [debtSummary, setDebtSummary] = useState({ total: 0, minPayment: 0, count: 0 });
   const [savingsSummary, setSavingsSummary] = useState({ totalTarget: 0, totalCurrent: 0, count: 0 });
+  const [billsSummary, setBillsSummary] = useState({ paid: 0, total: 0 });
+  const [investmentTotal, setInvestmentTotal] = useState(0);
+  const [cashTotal, setCashTotal] = useState(0);
   const [userName, setUserName] = useState<string | null>(null);
   const API_URL =
     Constants.expoConfig?.extra?.API_URL ??
@@ -66,6 +69,27 @@ export default function DashboardScreen() {
       });
       const budgets = budgetRes.ok ? await budgetRes.json() : [];
       setBudgetsData(Array.isArray(budgets) ? budgets : []);
+
+      const billsRes = await fetch(`${API_URL}/auth/bills?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
+      const bills = billsRes.ok ? await billsRes.json() : [];
+      const billsArr = Array.isArray(bills) ? bills : [];
+      const paidCount = billsArr.filter((b: any) => b.status === 'paid').length;
+      setBillsSummary({ paid: paidCount, total: billsArr.length });
+
+      try {
+        const [holdingsData, balancesData] = await Promise.all([
+          fetchInvestmentHoldings(),
+          fetchAccountBalances('depository'),
+        ]);
+        const invTotal = (Array.isArray(holdingsData) ? holdingsData : []).reduce(
+          (sum: number, h: any) => sum + (h.institution_value || 0), 0
+        );
+        setInvestmentTotal(invTotal);
+        const cash = (Array.isArray(balancesData) ? balancesData : []).reduce(
+          (sum: number, a: any) => sum + (a.current_balance || 0), 0
+        );
+        setCashTotal(cash);
+      } catch {}
     };
     load();
   }, []);
@@ -110,7 +134,8 @@ export default function DashboardScreen() {
   const savingsPercent = savingsSummary.totalTarget
     ? Math.round((savingsSummary.totalCurrent / savingsSummary.totalTarget) * 100)
     : 0;
-  const billsPercent = expenseData.length ? Math.min(100, Math.round((expenseData.length / Math.max(expenseData.length, 5)) * 100)) : 0;
+  const billsPercent = billsSummary.total > 0 ? Math.round((billsSummary.paid / billsSummary.total) * 100) : 0;
+  const netWorth = cashTotal + investmentTotal - debtSummary.total;
 
   const formatCurrency = (v: number) =>
     v.toLocaleString('en-US', {
@@ -131,8 +156,10 @@ export default function DashboardScreen() {
             <Text style={styles.logoText}>CoupleFlow</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity onPress={() => router.push('/insights' as any)}>
+              <Ionicons name="bar-chart-outline" size={20} color="#cbd5e1" />
+            </TouchableOpacity>
             <Ionicons name="sunny-outline" size={18} color="#cbd5e1" />
-            <Ionicons name="menu-outline" size={22} color="#cbd5e1" />
           </View>
         </View>
 
@@ -154,9 +181,13 @@ export default function DashboardScreen() {
           <Text style={styles.sectionLabel}>This Month's Progress</Text>
           <View style={styles.progressRow}>
             {[
-              { label: 'Budget', percent: isNaN(budgetPercent) ? 0 : budgetPercent, sub: `${formatCurrency(Math.max(budgetIncomeTotal - budgetExpenseTotal, 0))} left` },
+              {
+                label: 'Budget',
+                percent: isNaN(budgetPercent) ? 0 : budgetPercent,
+                sub: `${formatCurrency(Math.max(budgetIncomeTotal - budgetExpenseTotal, 0))} `,
+              },
               { label: 'Savings', percent: isNaN(savingsPercent) ? 0 : savingsPercent, sub: `${formatCurrency(savingsSummary.totalCurrent)} / ${formatCurrency(savingsSummary.totalTarget)}` },
-              { label: 'Bills', percent: isNaN(billsPercent) ? 0 : billsPercent, sub: `${expenseData.length} of 5 paid` },
+              { label: 'Bills', percent: isNaN(billsPercent) ? 0 : billsPercent, sub: `${billsSummary.paid} of ${billsSummary.total} paid` },
             ].map((item) => (
               <View key={item.label} style={styles.progressItem}>
                 <View style={styles.ringOuter}>
@@ -169,6 +200,48 @@ export default function DashboardScreen() {
             ))}
           </View>
         </View>
+
+        {(cashTotal > 0 || investmentTotal > 0 || debtSummary.total > 0) && (
+          <View style={styles.card}>
+            <Text style={styles.sectionLabel}>Net Worth</Text>
+            <View style={{ marginTop: 4, gap: 6 }}>
+              {cashTotal > 0 && (
+                <View style={styles.nwRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="wallet-outline" size={16} color="#60a5fa" />
+                    <Text style={styles.nwLabel}>Cash</Text>
+                  </View>
+                  <Text style={[styles.nwValue, { color: '#60a5fa' }]}>{formatCurrency(cashTotal)}</Text>
+                </View>
+              )}
+              {investmentTotal > 0 && (
+                <TouchableOpacity style={styles.nwRow} onPress={() => router.push('/investments' as any)}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="trending-up-outline" size={16} color="#34d399" />
+                    <Text style={styles.nwLabel}>Investments</Text>
+                  </View>
+                  <Text style={[styles.nwValue, { color: '#34d399' }]}>{formatCurrency(investmentTotal)}</Text>
+                </TouchableOpacity>
+              )}
+              {debtSummary.total > 0 && (
+                <TouchableOpacity style={styles.nwRow} onPress={() => router.push('/debts' as any)}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="card-outline" size={16} color="#f87171" />
+                    <Text style={styles.nwLabel}>Debts</Text>
+                  </View>
+                  <Text style={[styles.nwValue, { color: '#f87171' }]}>-{formatCurrency(debtSummary.total)}</Text>
+                </TouchableOpacity>
+              )}
+              <View style={styles.nwDivider} />
+              <View style={styles.nwRow}>
+                <Text style={styles.nwTotalLabel}>Net Worth</Text>
+                <Text style={[styles.nwTotalValue, { color: netWorth >= 0 ? '#34d399' : '#f87171' }]}>
+                  {netWorth < 0 ? '-' : ''}{formatCurrency(Math.abs(netWorth))}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
 
           <View style={styles.cardMuted}>
             <Text style={styles.cardMutedText}>Viewing shared household activity</Text>
@@ -319,6 +392,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   viewAllText: { color: '#f8fafc', fontWeight: '800', fontSize: 12 },
+  nwRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  nwLabel: { color: '#cbd5e1', fontSize: 13 },
+  nwValue: { fontWeight: '700', fontSize: 14 },
+  nwDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 4 },
+  nwTotalLabel: { color: '#f8fafc', fontWeight: '800', fontSize: 15 },
+  nwTotalValue: { fontWeight: '800', fontSize: 18 },
   fab: {
     position: 'absolute',
     bottom: 90,

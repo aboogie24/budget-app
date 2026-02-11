@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Switch, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { getCurrentUser } from '@/utils/storage';
@@ -14,9 +15,17 @@ type Category = {
   color?: string;
   limit_amount?: number;
   rollover_enabled?: boolean;
+  budget_id?: string | null;
 };
 
-const presetColors = ['#7c3aed', '#22c55e', '#ef4444', '#06b6d4', '#f59e0b', '#3b82f6'];
+type BudgetGroup = {
+  id: string;
+  name: string;
+  type: 'income' | 'expense';
+};
+
+const PRESET_COLORS = ['#7c3aed', '#22c55e', '#ef4444', '#06b6d4', '#f59e0b', '#3b82f6', '#ec4899', '#14b8a6'];
+
 const formatCurrency = (v?: number) =>
   (v ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 });
 
@@ -27,8 +36,11 @@ export default function BudgetSettingsScreen() {
   const [newColor, setNewColor] = useState('#7c3aed');
   const [newLimit, setNewLimit] = useState('');
   const [newRollover, setNewRollover] = useState(false);
+  const [newBudgetId, setNewBudgetId] = useState('');
   const [sharePartner, setSharePartner] = useState(false);
   const [auth, setAuth] = useState<{ id: string; token?: string } | null>(null);
+  const [budgets, setBudgets] = useState<BudgetGroup[]>([]);
+
   const API_URL =
     Constants.expoConfig?.extra?.API_URL ??
     Constants.manifest?.extra?.API_URL ??
@@ -44,19 +56,27 @@ export default function BudgetSettingsScreen() {
       const data = await res.json();
       setCategories(Array.isArray(data) ? data : []);
     }
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+    const budgetRes = await fetch(`${API_URL}/budgets/user/${user.id}?month=${month}&year=${year}`, {
+      headers,
+      credentials: 'include',
+    });
+    if (budgetRes.ok) {
+      const data = await budgetRes.json();
+      setBudgets(Array.isArray(data) ? data : []);
+    }
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   const filtered = categories.filter((c) => c.type === type);
+  const budgetOptions = budgets.filter((b) => b.type === type);
+  const totalMonthlyBudget = filtered.reduce((sum, c) => sum + (c.limit_amount || 0), 0);
 
   const updateCategory = async (cat: Category, updates: Partial<Category>) => {
-    if (!auth?.id) {
-      Alert.alert('Session', 'Please log in again.');
-      return;
-    }
+    if (!auth?.id) { Alert.alert('Session', 'Please log in again.'); return; }
     try {
       const res = await fetch(`${API_URL}/categories/${cat.id}`, {
         method: 'PUT',
@@ -70,25 +90,20 @@ export default function BudgetSettingsScreen() {
           color: updates.color ?? cat.color,
           limit_amount: updates.limit_amount ?? cat.limit_amount ?? 0,
           rollover_enabled: updates.rollover_enabled ?? cat.rollover_enabled ?? false,
+          budget_id: updates.budget_id ?? cat.budget_id ?? null,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
       const updated = await res.json();
       setCategories((prev) => prev.map((c) => (c.id === cat.id ? { ...c, ...updated } : c)));
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Could not update category');
     }
   };
 
   const handleAdd = async () => {
-    if (!auth?.id) {
-      Alert.alert('Session', 'Please log in again');
-      return;
-    }
-    if (!newName.trim()) {
-      Alert.alert('Missing name', 'Enter a category name');
-      return;
-    }
+    if (!auth?.id) { Alert.alert('Session', 'Please log in again'); return; }
+    if (!newName.trim()) { Alert.alert('Missing name', 'Enter a category name'); return; }
     try {
       const payload = {
         id: uuidv4(),
@@ -98,6 +113,7 @@ export default function BudgetSettingsScreen() {
         color: newColor,
         limit_amount: newLimit ? parseFloat(newLimit) : 0,
         rollover_enabled: newRollover,
+        budget_id: newBudgetId || null,
       };
       const res = await fetch(`${API_URL}/categories`, {
         method: 'POST',
@@ -114,325 +130,469 @@ export default function BudgetSettingsScreen() {
       setNewName('');
       setNewLimit('');
       setNewRollover(false);
-    } catch (e) {
+      setNewBudgetId('');
+    } catch {
       Alert.alert('Error', 'Could not add category');
     }
   };
 
-  const totalMonthlyBudget = filtered.reduce((sum, c) => sum + (c.limit_amount || 0), 0);
+  const deleteCategory = (cat: Category) => {
+    Alert.alert('Delete', `Remove "${cat.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const res = await fetch(`${API_URL}/categories/${cat.id}`, {
+              method: 'DELETE',
+              headers: auth?.token ? { Authorization: `Bearer ${auth.token}` } : undefined,
+              credentials: 'include',
+            });
+            if (!res.ok) throw new Error(await res.text());
+            setCategories((prev) => prev.filter((c) => c.id !== cat.id));
+          } catch {
+            Alert.alert('Error', 'Could not delete category');
+          }
+        },
+      },
+    ]);
+  };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.replace('/(tabs)/settings')} style={styles.iconBtn}>
-            <Ionicons name="arrow-back" size={20} color="#0f172a" />
-          </TouchableOpacity>
-          <Text style={styles.header}>Budget Settings</Text>
-          <View style={{ width: 40 }} />
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Manage categories, limits & rollovers</Text>
-          <View style={styles.toggleRow}>
-            {['expense', 'income'].map((t) => (
-              <TouchableOpacity
-                key={t}
-                style={[styles.toggle, type === t && styles.toggleActive]}
-                onPress={() => setType(t as 'income' | 'expense')}
-              >
-                <Text style={type === t ? styles.toggleTextActive : styles.toggleText}>
-                  {t === 'expense' ? 'Expenses' : 'Income'}
-                </Text>
-              </TouchableOpacity>
-            ))}
+    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => router.replace('/(tabs)/settings')} style={styles.backBtn}>
+              <Ionicons name="arrow-back" size={20} color="#c084fc" />
+            </TouchableOpacity>
+            <Text style={styles.header}>Budget Settings</Text>
+            <View style={{ width: 40 }} />
           </View>
 
-          <View style={styles.summaryCard}>
-            <View style={styles.summaryIcon}>
-              <Ionicons name="wallet-outline" size={18} color="#7c3aed" />
+          {/* Type toggle */}
+          <View style={styles.card}>
+            <View style={styles.toggleRow}>
+              {(['expense', 'income'] as const).map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.toggle, type === t && styles.toggleActive]}
+                  onPress={() => setType(t)}
+                >
+                  <Ionicons
+                    name={t === 'expense' ? 'cart-outline' : 'cash-outline'}
+                    size={16}
+                    color={type === t ? '#c084fc' : '#64748b'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={type === t ? styles.toggleTextActive : styles.toggleText}>
+                    {t === 'expense' ? 'Expenses' : 'Income'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.summaryLabel}>Total Monthly Budget</Text>
-              <Text style={styles.summaryValue}>{formatCurrency(totalMonthlyBudget)}</Text>
+
+            {/* Budget total */}
+            <View style={styles.totalRow}>
+              <View style={styles.totalIcon}>
+                <Ionicons name="wallet-outline" size={18} color="#c084fc" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.totalLabel}>Total Monthly Budget</Text>
+                <Text style={styles.totalValue}>{formatCurrency(totalMonthlyBudget)}</Text>
+              </View>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: 12, marginBottom: 4 }]}>
-            {type === 'expense' ? 'Expense Categories' : 'Income Categories'}
-          </Text>
-          {filtered.length > 0 && (
-            <View style={styles.reorderRow}>
-              <Ionicons name="reorder-three" size={18} color="#94a3b8" />
-              <Text style={styles.reorderText}>Reorder</Text>
-            </View>
-          )}
+          {/* Category list */}
+          <View style={styles.card}>
+            <Text style={styles.sectionLabel}>
+              {type === 'expense' ? 'EXPENSE CATEGORIES' : 'INCOME CATEGORIES'}
+            </Text>
 
-          {filtered.length === 0 ? (
-            <Text style={{ color: '#94a3b8', marginTop: 6 }}>No categories yet. Add one below.</Text>
-          ) : (
-            filtered.map((cat) => (
-              <View key={cat.id} style={styles.categoryCard}>
-                <View style={styles.nameRow}>
-                  <View
-                    style={[
-                      styles.iconPill,
-                      {
-                        backgroundColor: `${cat.color || '#a855f7'}22`,
-                        borderColor: cat.color || '#a855f7',
-                      },
-                    ]}
-                  >
-                    <Ionicons name={type === 'expense' ? 'cart-outline' : 'cash-outline'} size={18} color={cat.color || '#a855f7'} />
+            {filtered.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="folder-open-outline" size={28} color="rgba(255,255,255,0.15)" />
+                <Text style={styles.emptyText}>No categories yet</Text>
+              </View>
+            ) : (
+              filtered.map((cat) => (
+                <View key={cat.id} style={styles.catCard}>
+                  {/* Name row */}
+                  <View style={styles.catHeader}>
+                    <View style={[styles.catIcon, { backgroundColor: `${cat.color || '#a855f7'}20`, borderColor: `${cat.color || '#a855f7'}40` }]}>
+                      <Ionicons
+                        name={type === 'expense' ? 'cart-outline' : 'cash-outline'}
+                        size={16}
+                        color={cat.color || '#a855f7'}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.catName}>{cat.name}</Text>
+                      <Text style={styles.catSub}>
+                        {formatCurrency(cat.limit_amount)}/mo
+                        {cat.rollover_enabled ? ' · Rollover' : ''}
+                      </Text>
+                    </View>
+                    {cat.rollover_enabled && (
+                      <View style={styles.rollBadge}>
+                        <Ionicons name="refresh" size={11} color="#c084fc" />
+                      </View>
+                    )}
+                    <TouchableOpacity onPress={() => deleteCategory(cat)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Ionicons name="trash-outline" size={16} color="#64748b" />
+                    </TouchableOpacity>
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.itemName}>{cat.name}</Text>
-                    <Text style={styles.itemSub}>
-                      {formatCurrency(cat.limit_amount)} {cat.rollover_enabled ? '• Rollover' : ''}
-                    </Text>
+
+                  {/* Limit input */}
+                  <View style={styles.fieldRow}>
+                    <Text style={styles.fieldLabel}>Monthly limit</Text>
+                    <TextInput
+                      style={styles.fieldInput}
+                      keyboardType="numeric"
+                      placeholderTextColor="#475569"
+                      defaultValue={cat.limit_amount ? String(cat.limit_amount) : ''}
+                      onEndEditing={(e) =>
+                        updateCategory(cat, { limit_amount: e.nativeEvent.text ? parseFloat(e.nativeEvent.text) : 0 })
+                      }
+                      placeholder="$0"
+                    />
                   </View>
-                  {cat.rollover_enabled && (
-                    <View style={styles.tag}>
-                      <Ionicons name="refresh" size={12} color="#7c3aed" />
-                      <Text style={styles.tagText}>Rollover</Text>
+
+                  {/* Budget group */}
+                  {budgetOptions.length > 0 && (
+                    <View style={styles.fieldRow}>
+                      <Text style={styles.fieldLabel}>Group</Text>
+                      <View style={styles.segmented}>
+                        <TouchableOpacity
+                          style={[styles.segItem, !cat.budget_id && styles.segItemActive]}
+                          onPress={() => updateCategory(cat, { budget_id: null })}
+                        >
+                          <Text style={!cat.budget_id ? styles.segTextActive : styles.segText}>None</Text>
+                        </TouchableOpacity>
+                        {budgetOptions.map((b) => (
+                          <TouchableOpacity
+                            key={b.id}
+                            style={[styles.segItem, cat.budget_id === b.id && styles.segItemActive]}
+                            onPress={() => updateCategory(cat, { budget_id: b.id })}
+                          >
+                            <Text style={cat.budget_id === b.id ? styles.segTextActive : styles.segText}>{b.name}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
                     </View>
                   )}
-                  <TouchableOpacity onPress={() => router.push('/(tabs)/budget')}>
-                    <Ionicons name="ellipsis-horizontal" size={18} color="#94a3b8" />
-                  </TouchableOpacity>
-                </View>
 
-                <View style={[styles.limitRow, { marginTop: 10 }]}>
-                  <Text style={styles.label}>Monthly limit</Text>
-                  <TextInput
-                    style={[styles.limitInput, { flex: 0.6 }]}
-                    keyboardType="numeric"
-                    defaultValue={cat.limit_amount ? String(cat.limit_amount) : ''}
-                    onEndEditing={(e) =>
-                      updateCategory(cat, {
-                        limit_amount: e.nativeEvent.text ? parseFloat(e.nativeEvent.text) : 0,
-                      })
-                    }
-                    placeholder="$0"
-                  />
+                  {/* Rollover */}
+                  <View style={styles.switchRow}>
+                    <Text style={styles.fieldLabel}>Rollover</Text>
+                    <Switch
+                      value={!!cat.rollover_enabled}
+                      onValueChange={(v) => updateCategory(cat, { rollover_enabled: v })}
+                      thumbColor="#fff"
+                      trackColor={{ true: '#a855f7', false: 'rgba(255,255,255,0.15)' }}
+                    />
+                  </View>
                 </View>
-                <View style={styles.rollRow}>
-                  <Text style={styles.label}>Enable rollover</Text>
-                  <Switch
-                    value={!!cat.rollover_enabled}
-                    onValueChange={(v) => updateCategory(cat, { rollover_enabled: v })}
-                    thumbColor="#fff"
-                    trackColor={{ true: '#a855f7', false: '#cbd5e1' }}
-                  />
-                </View>
+              ))
+            )}
+          </View>
+
+          {/* Add new */}
+          <View style={styles.card}>
+            <Text style={styles.sectionLabel}>ADD NEW {type.toUpperCase()} CATEGORY</Text>
+
+            <View style={styles.addInputRow}>
+              <View style={[styles.catIcon, { backgroundColor: `${newColor}20`, borderColor: `${newColor}40` }]}>
+                <Ionicons name={type === 'expense' ? 'cart-outline' : 'cash-outline'} size={16} color={newColor} />
               </View>
-            ))
-          )}
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Add new {type} category</Text>
-          <View style={styles.inputRow}>
-            <View style={styles.iconInput}>
-              <Ionicons name={type === 'expense' ? 'cart-outline' : 'cash-outline'} size={18} color="#7c3aed" />
-            </View>
-            <TextInput
-              placeholder="Category name"
-              value={newName}
-              onChangeText={setNewName}
-              style={[styles.input, { flex: 1, marginBottom: 0 }]}
-            />
-          </View>
-          <TextInput
-            placeholder="Monthly limit (optional)"
-            value={newLimit}
-            onChangeText={setNewLimit}
-            keyboardType="numeric"
-            style={styles.input}
-          />
-          <View style={styles.rollRow}>
-            <Text style={styles.label}>Enable rollover</Text>
-            <Switch
-              value={newRollover}
-              onValueChange={setNewRollover}
-              thumbColor="#fff"
-              trackColor={{ true: '#a855f7', false: '#cbd5e1' }}
-            />
-          </View>
-          <View style={styles.rollRow}>
-            <View>
-              <Text style={styles.label}>Share with partner</Text>
-              <Text style={{ color: '#94a3b8', fontSize: 12 }}>Partner can see this category</Text>
-            </View>
-            <Switch
-              value={sharePartner}
-              onValueChange={setSharePartner}
-              thumbColor="#fff"
-              trackColor={{ true: '#a855f7', false: '#cbd5e1' }}
-            />
-          </View>
-          <Text style={styles.label}>Pick a color</Text>
-          <View style={styles.colorGrid}>
-            {presetColors.map((c) => (
-              <TouchableOpacity
-                key={c}
-                onPress={() => setNewColor(c)}
-                style={[styles.colorSwatch, c === newColor && styles.colorSwatchActive, { backgroundColor: c }]}
+              <TextInput
+                placeholder="Category name"
+                placeholderTextColor="#475569"
+                value={newName}
+                onChangeText={setNewName}
+                style={[styles.input, { flex: 1 }]}
               />
-            ))}
+            </View>
+
+            <TextInput
+              placeholder="Monthly limit (optional)"
+              placeholderTextColor="#475569"
+              value={newLimit}
+              onChangeText={setNewLimit}
+              keyboardType="numeric"
+              style={styles.input}
+            />
+
+            <View style={styles.switchRow}>
+              <Text style={styles.fieldLabel}>Enable rollover</Text>
+              <Switch
+                value={newRollover}
+                onValueChange={setNewRollover}
+                thumbColor="#fff"
+                trackColor={{ true: '#a855f7', false: 'rgba(255,255,255,0.15)' }}
+              />
+            </View>
+
+            <View style={styles.switchRow}>
+              <View>
+                <Text style={styles.fieldLabel}>Share with partner</Text>
+                <Text style={styles.fieldHint}>Partner can see this category</Text>
+              </View>
+              <Switch
+                value={sharePartner}
+                onValueChange={setSharePartner}
+                thumbColor="#fff"
+                trackColor={{ true: '#a855f7', false: 'rgba(255,255,255,0.15)' }}
+              />
+            </View>
+
+            <Text style={styles.fieldLabel}>Color</Text>
+            <View style={styles.colorGrid}>
+              {PRESET_COLORS.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => setNewColor(c)}
+                  style={[styles.colorSwatch, { backgroundColor: c }, c === newColor && styles.colorSwatchActive]}
+                />
+              ))}
+            </View>
+
+            {budgetOptions.length > 0 && (
+              <>
+                <Text style={styles.fieldLabel}>Budget group</Text>
+                <View style={styles.segmented}>
+                  <TouchableOpacity
+                    style={[styles.segItem, !newBudgetId && styles.segItemActive]}
+                    onPress={() => setNewBudgetId('')}
+                  >
+                    <Text style={!newBudgetId ? styles.segTextActive : styles.segText}>None</Text>
+                  </TouchableOpacity>
+                  {budgetOptions.map((b) => (
+                    <TouchableOpacity
+                      key={b.id}
+                      style={[styles.segItem, newBudgetId === b.id && styles.segItemActive]}
+                      onPress={() => setNewBudgetId(b.id)}
+                    >
+                      <Text style={newBudgetId === b.id ? styles.segTextActive : styles.segText}>{b.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <TouchableOpacity style={styles.saveBtn} onPress={handleAdd}>
+              <Ionicons name="add-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+              <Text style={styles.saveText}>Save Category</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.saveBtn} onPress={handleAdd}>
-            <Text style={styles.saveText}>Save Category</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#f5f3ff' },
   container: { padding: 16, paddingBottom: 48 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  iconBtn: {
+
+  /* Header */
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  backBtn: {
     width: 40,
     height: 40,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  header: { fontSize: 20, fontWeight: '800', color: '#0f172a' },
+  header: { fontSize: 20, fontWeight: '800', color: '#f8fafc' },
+
+  /* Card */
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 18,
-    marginTop: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  sectionTitle: { color: '#4b5563', fontWeight: '700', marginBottom: 12, fontSize: 14 },
-  toggleRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  sectionLabel: {
+    color: '#64748b',
+    fontSize: 11,
+    letterSpacing: 1.2,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+
+  /* Toggle */
+  toggleRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
   toggle: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   toggleActive: {
-    backgroundColor: '#ede9fe',
-    borderColor: '#c084fc',
-    shadowColor: '#7c3aed',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+    backgroundColor: 'rgba(192,132,252,0.12)',
+    borderColor: 'rgba(192,132,252,0.3)',
   },
-  toggleText: { color: '#94a3b8', fontWeight: '700' },
-  toggleTextActive: { color: '#6d28d9', fontWeight: '800' },
-  itemRow: { borderTopWidth: 1, borderColor: '#e2e8f0', paddingVertical: 12, gap: 8 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  itemName: { fontWeight: '700', color: '#0f172a', flex: 1 },
-  colorDot: { width: 12, height: 12, borderRadius: 6 },
-  limitRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  label: { color: '#475569', fontWeight: '600' },
-  limitInput: {
-    flex: 1,
+  toggleText: { color: '#64748b', fontWeight: '700' },
+  toggleTextActive: { color: '#c084fc', fontWeight: '800' },
+
+  /* Total */
+  totalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    padding: 14,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: '#f8fafc',
+    borderColor: 'rgba(255,255,255,0.06)',
+    gap: 12,
   },
-  rollRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+  totalIcon: {
+    width: 40,
+    height: 40,
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginBottom: 12,
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(192,132,252,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  colorGrid: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginVertical: 8 },
-  colorSwatch: { width: 34, height: 34, borderRadius: 10, borderWidth: 2, borderColor: 'transparent' },
-  colorSwatchActive: { borderColor: '#7c3aed' },
-  categoryCard: {
-    backgroundColor: '#f8fafc',
+  totalLabel: { color: '#94a3b8', fontWeight: '600', fontSize: 12 },
+  totalValue: { color: '#f8fafc', fontWeight: '800', fontSize: 22 },
+
+  /* Category card */
+  catCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginTop: 10,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.02,
-    shadowRadius: 6,
+    borderColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 10,
   },
-  itemSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  saveBtn: {
-    backgroundColor: '#7c3aed',
-    borderRadius: 12,
-    paddingVertical: 14,
+  catHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  catIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     alignItems: 'center',
-    marginTop: 12,
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  catName: { color: '#f8fafc', fontWeight: '700', fontSize: 15 },
+  catSub: { color: '#64748b', fontSize: 12, marginTop: 1 },
+  rollBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    backgroundColor: 'rgba(192,132,252,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  /* Fields */
+  fieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    gap: 12,
+  },
+  fieldLabel: { color: '#94a3b8', fontWeight: '600', fontSize: 13 },
+  fieldHint: { color: '#475569', fontSize: 11, marginTop: 1 },
+  fieldInput: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: '#f8fafc',
+    fontWeight: '600',
+    fontSize: 14,
+    minWidth: 90,
+    textAlign: 'right',
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+  },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 10,
+    color: '#f8fafc',
+    fontSize: 15,
+  },
+  addInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+
+  /* Segmented */
+  segmented: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  segItem: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  segItemActive: { borderColor: 'rgba(192,132,252,0.4)', backgroundColor: 'rgba(192,132,252,0.12)' },
+  segText: { color: '#64748b', fontWeight: '700', fontSize: 12 },
+  segTextActive: { color: '#c084fc', fontWeight: '800', fontSize: 12 },
+
+  /* Colors */
+  colorGrid: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginVertical: 10 },
+  colorSwatch: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  colorSwatchActive: { borderColor: '#fff' },
+
+  /* Empty */
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 8,
+  },
+  emptyText: { color: 'rgba(255,255,255,0.3)', fontSize: 14, fontWeight: '600' },
+
+  /* Save */
+  saveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7c3aed',
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginTop: 14,
   },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 16 },
-  summaryCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f1f5f9',
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginBottom: 12,
-  },
-  summaryIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#ede9fe',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  summaryLabel: { color: '#475569', fontWeight: '700', fontSize: 12 },
-  summaryValue: { color: '#0f172a', fontWeight: '900', fontSize: 20 },
-  reorderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  reorderText: { color: '#94a3b8', fontWeight: '600', fontSize: 12 },
-  iconPill: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    backgroundColor: '#eef2ff',
-  },
-  tag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ede9fe',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-  },
-  tagText: { color: '#6d28d9', fontWeight: '700', fontSize: 12 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-  iconInput: {
-    width: 46,
-    height: 46,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ede9fe',
-  },
 });

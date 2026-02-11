@@ -11,11 +11,20 @@ import (
 
 func NewClient() *models.Client {
 	config := plaid.NewConfiguration()
-	log.Print(os.Getenv("PLAID_CLIENT_ID"))
 	config.AddDefaultHeader("PLAID-CLIENT-ID", os.Getenv("PLAID_CLIENT_ID"))
 	config.AddDefaultHeader("PLAID-SECRET", os.Getenv("PLAID_SECRET"))
-	config.UseEnvironment(plaid.Sandbox) // or Development/Production
 
+	env := os.Getenv("PLAID_ENV")
+	switch env {
+	case "production":
+		config.UseEnvironment(plaid.Production)
+	case "development":
+		config.UseEnvironment(plaid.Development)
+	default:
+		config.UseEnvironment(plaid.Sandbox)
+	}
+
+	log.Printf("Plaid client initialized (env=%s)", env)
 	apiClient := plaid.NewAPIClient(config)
 	return &models.Client{API: apiClient}
 }

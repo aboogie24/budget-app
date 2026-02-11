@@ -126,6 +126,7 @@ export default function AddTransactionScreen() {
       user_id: currentUser.id,
       type,
       amount: parseFloat(amount),
+      category_id: selectedCategory?.id,
       category: selectedCategory.name,
       note,
       date: new Date().toISOString(),

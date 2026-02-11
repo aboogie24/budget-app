@@ -47,26 +47,13 @@ export default function BudgetAppLogin() {
 			const session = { ...user, token: data.token };
 			await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
 	
-			router.replace(user.isFirstLogin ? '/setup' : '/(tabs)/dashboard');
+			router.replace(user.onboarding_complete ? '/(tabs)/dashboard' : '/setup');
 		} catch (err) {
 			console.error('Login error:', err);
 			alert('Unable to login. Check your connection.');
 		}
-    // console.log(`Attempting login with ${email}`);
+	};
 
-    
-		// const result = await authenticateUser(email, password);
-		// console.log('result =' + result.success)
-		// console.log('first login =' + result.isFirstLogin)
-		// if (result.success) {
-		// 	await setUserSession(email);
-		// 	router.replace(result.isFirstLogin ? '/setup' : '/login'); 
-		// } else {
-		// 	alert('Invalid login')
-		// }
-  
-  
-  };
 
   const handleRegister = () => {
     // Navigate to registration screen

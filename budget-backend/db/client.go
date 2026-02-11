@@ -8,6 +8,15 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// DBTX is the minimal interface our handlers rely on. It allows swapping a mock in tests.
+type DBTX interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	Close() error
+	Raw() *sql.DB
+}
+
 // DB wraps a sql.DB connection
 type DB struct {
 	Conn *sql.DB
@@ -46,7 +55,17 @@ func (d *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	return d.Conn.Query(query, args...)
 }
 
+// QueryRow utility wrapper
+func (d *DB) QueryRow(query string, args ...interface{}) *sql.Row {
+	return d.Conn.QueryRow(query, args...)
+}
+
 // Exec utility wrapper
 func (d *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return d.Conn.Exec(query, args...)
+}
+
+// Raw exposes the underlying *sql.DB for helpers that need it.
+func (d *DB) Raw() *sql.DB {
+	return d.Conn
 }
