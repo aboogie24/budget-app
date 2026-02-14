@@ -60,6 +60,7 @@ export default function DebtsScreen() {
   const [strategy, setStrategy] = useState('');
   const [createBill, setCreateBill] = useState(false);
   const [billFrequency, setBillFrequency] = useState('monthly');
+  const [isShared, setIsShared] = useState(true);
 
   const loadDebts = useCallback(async () => {
     try {
@@ -91,6 +92,7 @@ export default function DebtsScreen() {
     setStrategy('');
     setCreateBill(false);
     setBillFrequency('monthly');
+    setIsShared(true);
     setEditing(null);
   };
 
@@ -102,6 +104,7 @@ export default function DebtsScreen() {
     setMinPayment(String(d.min_payment));
     setDueDay(d.due_day != null ? String(d.due_day) : '');
     setStrategy(d.strategy || '');
+    setIsShared(d.is_shared);
     setShowForm(true);
   };
 
@@ -129,7 +132,7 @@ export default function DebtsScreen() {
       min_payment: parseFloat(minPayment) || 0,
       due_day: dueDay ? parseInt(dueDay) : null,
       strategy: strategy.trim(),
-      is_shared: false,
+      is_shared: isShared,
     };
 
     try {
@@ -148,7 +151,7 @@ export default function DebtsScreen() {
               frequency: billFrequency,
               debt_account_id: newDebt.id,
               is_autopay: false,
-              is_shared: false,
+              is_shared: isShared,
             });
           } catch (billErr) {
             console.error('Auto-create bill error:', billErr);
@@ -419,6 +422,21 @@ export default function DebtsScreen() {
                       </Text>
                     </TouchableOpacity>
                   ))}
+                </View>
+
+                <View style={styles.billToggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.billToggleLabel}>Share with partner</Text>
+                    <Text style={styles.billToggleDesc}>
+                      Visible to your household partner
+                    </Text>
+                  </View>
+                  <Switch
+                    value={isShared}
+                    onValueChange={setIsShared}
+                    trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(168,85,247,0.4)' }}
+                    thumbColor={isShared ? '#c084fc' : '#64748b'}
+                  />
                 </View>
 
                 {/* Create Associated Bill toggle — only for new debts */}

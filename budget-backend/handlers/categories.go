@@ -148,10 +148,10 @@ func GetCategoriesForUser(userID string) ([]models.Category, error) {
 			FROM categories c
 			LEFT JOIN budget_categories bc ON bc.category_id = c.id
 			WHERE c.household_id = $1
-			   OR (c.household_id IS NULL AND c.user_id = $2)
+			   OR c.user_id IN (SELECT user_id FROM household_members WHERE household_id = $1)
 			   OR c.user_id IS NULL
 			ORDER BY c.name ASC
-		`, hh, userID)
+		`, hh)
 	}
 	if err != nil {
 		log.Printf("Query error: %v", err)

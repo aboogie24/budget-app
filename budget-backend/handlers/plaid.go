@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/models"
@@ -88,6 +89,8 @@ func CreateLinkToken(client *models.Client) http.HandlerFunc {
 		req := plaid.NewLinkTokenCreateRequest("Budget App", "en", []plaid.CountryCode{plaid.COUNTRYCODE_US}, user)
 		req.SetProducts([]plaid.Products{
 			plaid.PRODUCTS_TRANSACTIONS,
+		})
+		req.SetOptionalProducts([]plaid.Products{
 			plaid.PRODUCTS_INVESTMENTS,
 			plaid.PRODUCTS_LIABILITIES,
 		})
@@ -676,12 +679,18 @@ func SyncLiabilities(client *models.Client) http.HandlerFunc {
 
 			debtAPRs := map[string]float64{}
 			debtMinPays := map[string]float64{}
+			debtDueDays := map[string]int{}
 
 			for _, cc := range liabs.GetCredit() {
 				aid := cc.GetAccountId()
 				debtMinPays[aid] = cc.GetMinimumPaymentAmount()
 				if aprs := cc.GetAprs(); len(aprs) > 0 {
 					debtAPRs[aid] = aprs[0].GetAprPercentage()
+				}
+				if dd := cc.GetNextPaymentDueDate(); dd != "" {
+					if t, err := time.Parse("2006-01-02", dd); err == nil {
+						debtDueDays[aid] = t.Day()
+					}
 				}
 			}
 			for _, m := range liabs.GetMortgage() {
@@ -690,11 +699,21 @@ func SyncLiabilities(client *models.Client) http.HandlerFunc {
 				if ir := m.GetInterestRate(); ir.Percentage.IsSet() {
 					debtAPRs[aid] = ir.GetPercentage()
 				}
+				if dd := m.GetNextPaymentDueDate(); dd != "" {
+					if t, err := time.Parse("2006-01-02", dd); err == nil {
+						debtDueDays[aid] = t.Day()
+					}
+				}
 			}
 			for _, sl := range liabs.GetStudent() {
 				aid := sl.GetAccountId()
 				debtMinPays[aid] = sl.GetMinimumPaymentAmount()
 				debtAPRs[aid] = sl.GetInterestRatePercentage()
+				if dd := sl.GetNextPaymentDueDate(); dd != "" {
+					if t, err := time.Parse("2006-01-02", dd); err == nil {
+						debtDueDays[aid] = t.Day()
+					}
+				}
 			}
 
 			for aid := range debtMinPays {
@@ -709,14 +728,37 @@ func SyncLiabilities(client *models.Client) http.HandlerFunc {
 				if debtName == "" {
 					debtName = "Linked Account"
 				}
-				_, debtErr := dbClient.Exec(`
+				var debtID string
+				debtErr := dbClient.QueryRow(`
 					INSERT INTO debt_accounts (id, user_id, household_id, name, balance, apr, min_payment, is_shared, plaid_account_id, linked_account_id, source)
 					VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, 'plaid')
 					ON CONFLICT (user_id, plaid_account_id) WHERE plaid_account_id IS NOT NULL
 					DO UPDATE SET balance = EXCLUDED.balance, min_payment = EXCLUDED.min_payment, name = EXCLUDED.name, apr = EXCLUDED.apr
-				`, newID, userID, effectiveHH, debtName, debtBalance, debtAPRs[aid], debtMinPays[aid], aid, acct.id)
+					RETURNING id
+				`, newID, userID, effectiveHH, debtName, debtBalance, debtAPRs[aid], debtMinPays[aid], aid, acct.id).Scan(&debtID)
 				if debtErr != nil {
 					log.Printf("Failed to upsert debt for plaid acct %s: %v", aid, debtErr)
+					continue
+				}
+
+				// Auto-create a bill linked to this debt if none exists yet.
+				var billCount int
+				_ = dbClient.QueryRow(`SELECT COUNT(*) FROM bills WHERE debt_account_id = $1`, debtID).Scan(&billCount)
+				if billCount == 0 {
+					dueDay := 1
+					if dd, ok := debtDueDays[aid]; ok {
+						dueDay = dd
+					}
+					billID := uuid.Must(uuid.NewV4()).String()
+					_, billErr := dbClient.Exec(`
+						INSERT INTO bills (id, user_id, household_id, name, amount_due, due_day, frequency, debt_account_id, is_autopay, is_shared)
+						VALUES ($1, $2, $3, $4, $5, $6, 'monthly', $7, false, false)
+					`, billID, userID, effectiveHH, debtName+" Payment", debtMinPays[aid], dueDay, debtID)
+					if billErr != nil {
+						log.Printf("Failed to auto-create bill for debt %s: %v", debtID, billErr)
+					} else {
+						log.Printf("Auto-created bill '%s Payment' for Plaid debt %s (due day %d)", debtName, debtID, dueDay)
+					}
 				}
 			}
 		}

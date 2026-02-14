@@ -15,4 +15,5 @@ type Budget struct {
 	StartDate    time.Time `json:"start_date"`
 	Frequency    string    `json:"frequency,omitempty"`
 	HouseholdID  *string   `json:"household_id,omitempty"`
+	IsShared     bool      `json:"is_shared"`
 }

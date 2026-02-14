@@ -77,7 +77,9 @@ export default function SharingPreferencesScreen() {
       try {
         const user = await getCurrentUser();
         if (!user?.id) return;
-        // load household id
+
+        // Resolve household id first, use the value directly (not stale state)
+        let hhId: string | undefined;
         try {
           const res = await fetch(`${API_URL}/households/me?user_id=${user.id}`, {
             headers: user.token ? { Authorization: `Bearer ${user.token}` } : undefined,
@@ -85,13 +87,16 @@ export default function SharingPreferencesScreen() {
           });
           if (res.ok) {
             const hh = await res.json();
-            if (hh?.household_id) setHouseholdId(hh.household_id);
+            if (hh?.household_id) {
+              hhId = String(hh.household_id);
+              setHouseholdId(hhId);
+            }
           }
         } catch (_) {}
 
-        // fetch server prefs
+        // Fetch server prefs using the freshly resolved hhId
         const qp = new URLSearchParams({ user_id: user.id });
-        if (householdId) qp.set('household_id', householdId);
+        if (hhId) qp.set('household_id', hhId);
         const serverRes = await fetch(`${API_URL}/auth/sharing-preferences?${qp.toString()}`, {
           headers: user.token ? { Authorization: `Bearer ${user.token}` } : undefined,
           credentials: 'include',
@@ -120,7 +125,7 @@ export default function SharingPreferencesScreen() {
       }
     };
     load();
-  }, [householdId]);
+  }, []);
 
   const savePrefs = async () => {
     setSaving(true);

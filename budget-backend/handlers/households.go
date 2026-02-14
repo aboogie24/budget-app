@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -32,13 +33,14 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	rows, err := client.Query(`
-		SELECT 
+		SELECT
 			h.id,
 			h.name,
-			json_agg(json_build_object('user_id', hm.user_id, 'role', hm.role, 'email', u.email)) AS members
+			json_agg(json_build_object('user_id', am.user_id, 'role', am.role, 'email', u.email)) AS members
 		FROM household_members hm
 		JOIN households h ON hm.household_id = h.id
-		LEFT JOIN users u ON hm.user_id = u.id
+		JOIN household_members am ON am.household_id = h.id
+		LEFT JOIN users u ON am.user_id = u.id
 		WHERE hm.user_id = $1
 		GROUP BY h.id, h.name
 	`, userID)
@@ -236,6 +238,9 @@ func AcceptHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Delete the accepted invite so it no longer appears in pending lists
+	_, _ = client.Exec(`DELETE FROM household_invites WHERE code = $1`, body.Code)
+
 	json.NewEncoder(w).Encode(map[string]any{"household_id": hhID})
 }
 
@@ -256,47 +261,55 @@ func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
 
 	var email string
 	if err := client.Raw().QueryRow(`SELECT email FROM users WHERE id=$1`, userID).Scan(&email); err != nil {
+		log.Printf("ListHouseholdInvites: user not found for id=%s err=%v", userID, err)
 		http.Error(w, "User not found", http.StatusBadRequest)
 		return
 	}
+	log.Printf("ListHouseholdInvites: looking up invites for email=%s (user_id=%s)", email, userID)
 
 	rows, err := client.Query(`
-		SELECT i.code, i.household_id, h.name, i.created_by, i.expires_at, i.invitee_email, u.email AS inviter_email
+		SELECT i.code, i.household_id, COALESCE(h.name,''), i.created_by, i.expires_at, i.invitee_email, u.email AS inviter_email
 		FROM household_invites i
 		JOIN households h ON h.id = i.household_id
 		LEFT JOIN users u ON u.id = i.created_by
-		WHERE LOWER(i.invitee_email) = LOWER($1)
+		WHERE LOWER(TRIM(i.invitee_email)) = LOWER(TRIM($1))
 		  AND (i.expires_at IS NULL OR i.expires_at > NOW())
 	`, email)
 	if err != nil {
+		log.Printf("ListHouseholdInvites: query error email=%s err=%v", email, err)
 		http.Error(w, "Query error", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var invites []map[string]any
+	invites := make([]map[string]any, 0)
 	for rows.Next() {
 		var code uuid.UUID
 		var householdID uuid.UUID
 		var name string
-		var createdBy uuid.UUID
+		var createdBy sql.NullString
 		var expires time.Time
 		var inviteeEmail *string
 		var inviterEmail *string
 		if err := rows.Scan(&code, &householdID, &name, &createdBy, &expires, &inviteeEmail, &inviterEmail); err != nil {
+			log.Printf("ListHouseholdInvites: scan error err=%v", err)
 			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
 		}
-		invites = append(invites, map[string]any{
+		inv := map[string]any{
 			"code":           code,
 			"household_id":   householdID,
 			"household_name": name,
-			"created_by":     createdBy,
-			"inviter_email":  inviterEmail,
 			"expires_at":     expires,
 			"invitee_email":  inviteeEmail,
-		})
+			"inviter_email":  inviterEmail,
+		}
+		if createdBy.Valid {
+			inv["created_by"] = createdBy.String
+		}
+		invites = append(invites, inv)
 	}
+	log.Printf("ListHouseholdInvites: found %d invites for email=%s", len(invites), email)
 
 	json.NewEncoder(w).Encode(invites)
 }

@@ -76,6 +76,7 @@ export default function BillsScreen() {
   const [categoryId, setCategoryId] = useState('');
   const [debtAccountId, setDebtAccountId] = useState('');
   const [isAutopay, setIsAutopay] = useState(false);
+  const [isShared, setIsShared] = useState(true);
 
   const loadBills = useCallback(async () => {
     try {
@@ -120,6 +121,7 @@ export default function BillsScreen() {
     setCategoryId('');
     setDebtAccountId('');
     setIsAutopay(false);
+    setIsShared(true);
     setEditing(null);
   };
 
@@ -133,6 +135,7 @@ export default function BillsScreen() {
     setCategoryId(b.category_id || '');
     setDebtAccountId(b.debt_account_id || '');
     setIsAutopay(b.is_autopay);
+    setIsShared(b.is_shared);
     setShowForm(true);
   };
 
@@ -167,7 +170,7 @@ export default function BillsScreen() {
       category_id: categoryId || null,
       debt_account_id: debtAccountId || null,
       is_autopay: isAutopay,
-      is_shared: false,
+      is_shared: isShared,
     };
 
     try {
@@ -499,6 +502,16 @@ export default function BillsScreen() {
                     onValueChange={setIsAutopay}
                     trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(96,165,250,0.4)' }}
                     thumbColor={isAutopay ? '#60a5fa' : '#94a3b8'}
+                  />
+                </View>
+
+                <View style={styles.switchRow}>
+                  <Text style={styles.switchLabel}>Share with partner</Text>
+                  <Switch
+                    value={isShared}
+                    onValueChange={setIsShared}
+                    trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(168,85,247,0.4)' }}
+                    thumbColor={isShared ? '#c084fc' : '#64748b'}
                   />
                 </View>
 

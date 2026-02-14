@@ -71,9 +71,9 @@ func CreateBudget(w http.ResponseWriter, r *http.Request) {
 
 	_, err = dbClient.Exec(`
 		INSERT INTO budgets (
-			id, user_id, household_id, name, amount, type, category_id, created_at, updated_at, start_date, frequency
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, budget.ID, budget.UserID, budget.HouseholdID, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.CreatedAt, budget.UpdatedAt, budget.StartDate, budget.Frequency)
+			id, user_id, household_id, name, amount, type, category_id, created_at, updated_at, start_date, frequency, is_shared
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, budget.ID, budget.UserID, budget.HouseholdID, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.CreatedAt, budget.UpdatedAt, budget.StartDate, budget.Frequency, budget.IsShared)
 	if err != nil {
 		http.Error(w, "Failed to create budget", http.StatusInternalServerError)
 		return
@@ -123,10 +123,10 @@ func GetBudgetsByUser(w http.ResponseWriter, r *http.Request) {
 		if hhID == "" {
 			// Return all budgets owned by this user regardless of household_id
 			return dbClient.Query(`
-				SELECT 
-					b.id, b.user_id, b.household_id, b.name, b.amount, b.type, 
-					b.category_id, c.name AS category_name, 
-					b.created_at, b.updated_at, b.start_date, b.frequency
+				SELECT
+					b.id, b.user_id, b.household_id, b.name, b.amount, b.type,
+					b.category_id, c.name AS category_name,
+					b.created_at, b.updated_at, b.start_date, b.frequency, b.is_shared
 				FROM budgets b
 				LEFT JOIN categories c ON b.category_id = c.id
 				WHERE b.user_id = $1
@@ -134,14 +134,21 @@ func GetBudgetsByUser(w http.ResponseWriter, r *http.Request) {
 		}
 		// Include budgets in the household OR owned by the user (covers older data)
 		return dbClient.Query(`
-			SELECT 
-				b.id, b.user_id, b.household_id, b.name, b.amount, b.type, 
-				b.category_id, c.name AS category_name, 
-				b.created_at, b.updated_at, b.start_date, b.frequency
+			SELECT
+				b.id, b.user_id, b.household_id, b.name, b.amount, b.type,
+				b.category_id, c.name AS category_name,
+				b.created_at, b.updated_at, b.start_date, b.frequency, b.is_shared
 			FROM budgets b
 			LEFT JOIN categories c ON b.category_id = c.id
-			WHERE b.household_id = $1 
-			   OR b.user_id = $2
+			WHERE b.user_id = $2
+			   OR (b.is_shared = true AND b.user_id IN (
+			       SELECT hm.user_id FROM household_members hm
+			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			           AND (sp.household_id::text = $1 OR sp.household_id IS NULL)
+			       WHERE hm.household_id::text = $1
+			         AND hm.user_id != $2
+			         AND COALESCE(sp.share_budgets, true) = true
+			   ))
 		`, hhID, userID)
 	}()
 	if err != nil {
@@ -158,7 +165,7 @@ func GetBudgetsByUser(w http.ResponseWriter, r *http.Request) {
 		var catID sql.NullString
 		var catName sql.NullString
 		var start sql.NullTime
-		if err := rows.Scan(&b.ID, &b.UserID, &hh, &b.Name, &b.Amount, &b.Type, &catID, &catName, &b.CreatedAt, &b.UpdatedAt, &start, &b.Frequency); err == nil {
+		if err := rows.Scan(&b.ID, &b.UserID, &hh, &b.Name, &b.Amount, &b.Type, &catID, &catName, &b.CreatedAt, &b.UpdatedAt, &start, &b.Frequency, &b.IsShared); err == nil {
 			if hh.Valid {
 				val := hh.String
 				b.HouseholdID = &val
@@ -217,9 +224,9 @@ func UpdateBudget(w http.ResponseWriter, r *http.Request) {
 
 	_, err = dbClient.Exec(`
 		UPDATE budgets
-		SET name = $1, amount = $2, type = $3, category_id = $4, updated_at = $5, start_date = $6, frequency = $7, household_id = $8
-		WHERE id = $9
-	`, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.UpdatedAt, budget.StartDate, budget.Frequency, budget.HouseholdID, id)
+		SET name = $1, amount = $2, type = $3, category_id = $4, updated_at = $5, start_date = $6, frequency = $7, household_id = $8, is_shared = $9
+		WHERE id = $10
+	`, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.UpdatedAt, budget.StartDate, budget.Frequency, budget.HouseholdID, budget.IsShared, id)
 	if err != nil {
 		http.Error(w, "Failed to update budget", http.StatusInternalServerError)
 		return
@@ -271,7 +278,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			b.id, b.user_id, b.household_id, b.name, b.amount, b.type,
 			b.category_id, COALESCE(c.name, '') AS category_name,
-			b.start_date, b.frequency
+			b.start_date, b.frequency, b.is_shared
 		FROM budgets b
 		LEFT JOIN categories c ON b.category_id = c.id
 	`
@@ -279,7 +286,17 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 	if hhID == "" {
 		budgetRows, err = dbClient.Query(budgetQuery+" WHERE b.user_id = $1", userID)
 	} else {
-		budgetRows, err = dbClient.Query(budgetQuery+" WHERE b.household_id = $1 OR b.user_id = $2", hhID, userID)
+		budgetRows, err = dbClient.Query(budgetQuery+`
+			WHERE b.user_id = $2
+			   OR (b.is_shared = true AND b.user_id IN (
+			       SELECT hm.user_id FROM household_members hm
+			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			           AND (sp.household_id::text = $1 OR sp.household_id IS NULL)
+			       WHERE hm.household_id::text = $1
+			         AND hm.user_id != $2
+			         AND COALESCE(sp.share_budgets, true) = true
+			   ))
+		`, hhID, userID)
 	}
 	if err != nil {
 		http.Error(w, "Failed to fetch budgets", http.StatusInternalServerError)
@@ -299,6 +316,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		CategoryName string
 		StartDate    *time.Time
 		Frequency    string
+		IsShared     bool
 	}
 
 	var budgetList []budgetInfo
@@ -306,7 +324,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		var b budgetInfo
 		var hh, catID, catName, freq sql.NullString
 		var start sql.NullTime
-		if err := budgetRows.Scan(&b.ID, &b.UserID, &hh, &b.Name, &b.Amount, &b.Type, &catID, &catName, &start, &freq); err != nil {
+		if err := budgetRows.Scan(&b.ID, &b.UserID, &hh, &b.Name, &b.Amount, &b.Type, &catID, &catName, &start, &freq, &b.IsShared); err != nil {
 			log.Printf("budget summary: scan budget: %v", err)
 			continue
 		}
@@ -370,7 +388,18 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 	if hhID == "" {
 		txRows, err = dbClient.Query(txQuery+" AND t.user_id = $3", monthStart, monthEnd, userID)
 	} else {
-		txRows, err = dbClient.Query(txQuery+" AND (t.household_id = $3 OR (t.household_id IS NULL AND t.user_id = $4))", monthStart, monthEnd, hhID, userID)
+		txRows, err = dbClient.Query(txQuery+`
+			AND (t.user_id = $4
+			   OR t.household_id::text = $3
+			   OR (t.household_id IS NOT NULL AND t.user_id IN (
+			       SELECT hm.user_id FROM household_members hm
+			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			           AND (sp.household_id::text = $3 OR sp.household_id IS NULL)
+			       WHERE hm.household_id::text = $3
+			         AND hm.user_id != $4
+			         AND COALESCE(sp.share_transactions, true) = true
+			   )))
+		`, monthStart, monthEnd, hhID, userID)
 	}
 	if err != nil {
 		http.Error(w, "Failed to fetch transactions", http.StatusInternalServerError)
@@ -401,7 +430,17 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 	if hhID == "" {
 		billRows, err = dbClient.Query(billQuery+" WHERE b.user_id = $1", userID)
 	} else {
-		billRows, err = dbClient.Query(billQuery+" WHERE b.household_id = $1 OR (b.household_id IS NULL AND b.user_id = $2)", hhID, userID)
+		billRows, err = dbClient.Query(billQuery+`
+			WHERE b.user_id = $2
+			   OR (b.is_shared = true AND b.user_id IN (
+			       SELECT hm.user_id FROM household_members hm
+			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			           AND (sp.household_id::text = $1 OR sp.household_id IS NULL)
+			       WHERE hm.household_id::text = $1
+			         AND hm.user_id != $2
+			         AND COALESCE(sp.share_budgets, true) = true
+			   ))
+		`, hhID, userID)
 	}
 	if err != nil {
 		log.Printf("budget summary: fetch bills: %v", err)
@@ -461,6 +500,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		Percent     int               `json:"percent"`
 		Frequency   string            `json:"frequency"`
 		HouseholdID *string           `json:"household_id,omitempty"`
+		IsShared    bool              `json:"is_shared"`
 		Categories  []categorySummary `json:"categories"`
 		Source      string            `json:"source,omitempty"`
 	}
@@ -490,7 +530,8 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 
 		if b.Type == "income" {
 			totalIncome += effective
-			continue
+		} else {
+			totalBudgeted += effective
 		}
 
 		cats := budgetCats[b.ID]
@@ -527,8 +568,6 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		totalBudgeted += effective
-
 		if catSummaries == nil {
 			catSummaries = []categorySummary{}
 		}
@@ -543,6 +582,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 			Percent:     pct,
 			Frequency:   b.Frequency,
 			HouseholdID: b.HouseholdID,
+			IsShared:    b.IsShared,
 			Categories:  catSummaries,
 		})
 	}

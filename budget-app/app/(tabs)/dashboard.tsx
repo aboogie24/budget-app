@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { fetchUserTransactions, fetchInvestmentHoldings, fetchAccountBalances } from '@/utils/api';
 import Constants from 'expo-constants';
 import { getCurrentUser } from '@/utils/storage';
@@ -40,59 +40,66 @@ export default function DashboardScreen() {
   const monthStart = new Date(currentYear, currentMonth, 1);
   const monthEnd = new Date(currentYear, currentMonth + 1, 0);
 
+  const loadDashboard = useCallback(async () => {
+    const data = await fetchUserTransactions();
+    if (data) setTransactions(data as Tx[]);
+
+    const user = await getCurrentUser();
+    if (user) setUserName(user.full_name || user.email || null);
+
+    if (!user?.id) return;
+    const authHeaders = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
+
+    const debtsRes = await fetch(`${API_URL}/auth/debts?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
+    const debts = debtsRes.ok ? await debtsRes.json() : [];
+    const totalDebt = (Array.isArray(debts) ? debts : []).reduce((sum, d) => sum + (d.balance || 0), 0);
+    const minPayments = (Array.isArray(debts) ? debts : []).reduce((sum, d) => sum + (d.min_payment || 0), 0);
+    setDebtSummary({ total: totalDebt, minPayment: minPayments, count: Array.isArray(debts) ? debts.length : 0 });
+
+    const savingsRes = await fetch(`${API_URL}/auth/savings-goals?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
+    const goals = savingsRes.ok ? await savingsRes.json() : [];
+    const totalTarget = (Array.isArray(goals) ? goals : []).reduce((sum, g) => sum + (g.target_amount || 0), 0);
+    const totalCurrent = (Array.isArray(goals) ? goals : []).reduce((sum, g) => sum + (g.current_amount || 0), 0);
+    setSavingsSummary({ totalTarget, totalCurrent, count: Array.isArray(goals) ? goals.length : 0 });
+
+    const budgetRes = await fetch(`${API_URL}/budgets/user/${user.id}?month=${currentMonth}&year=${currentYear}`, {
+      credentials: 'include',
+      headers: authHeaders,
+    });
+    const budgets = budgetRes.ok ? await budgetRes.json() : [];
+    setBudgetsData(Array.isArray(budgets) ? budgets : []);
+
+    const billsRes = await fetch(`${API_URL}/auth/bills?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
+    const bills = billsRes.ok ? await billsRes.json() : [];
+    const billsArr = Array.isArray(bills) ? bills : [];
+    const paidCount = billsArr.filter((b: any) => b.status === 'paid').length;
+    setBillsSummary({ paid: paidCount, total: billsArr.length });
+
+    try {
+      const [holdingsData, balancesData] = await Promise.all([
+        fetchInvestmentHoldings(),
+        fetchAccountBalances('depository'),
+      ]);
+      const invTotal = (Array.isArray(holdingsData) ? holdingsData : []).reduce(
+        (sum: number, h: any) => sum + (h.institution_value || 0), 0
+      );
+      setInvestmentTotal(invTotal);
+      const cash = (Array.isArray(balancesData) ? balancesData : []).reduce(
+        (sum: number, a: any) => sum + (a.current_balance || 0), 0
+      );
+      setCashTotal(cash);
+    } catch {}
+  }, [API_URL, currentMonth, currentYear]);
+
   useEffect(() => {
-    const load = async () => {
-      const data = await fetchUserTransactions();
-      if (data) setTransactions(data as Tx[]);
+    loadDashboard();
+  }, [loadDashboard]);
 
-      const user = await getCurrentUser();
-      if (user) setUserName(user.full_name || user.email || null);
-
-      if (!user?.id) return;
-      const authHeaders = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-
-      const debtsRes = await fetch(`${API_URL}/auth/debts?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
-      const debts = debtsRes.ok ? await debtsRes.json() : [];
-      const totalDebt = (Array.isArray(debts) ? debts : []).reduce((sum, d) => sum + (d.balance || 0), 0);
-      const minPayments = (Array.isArray(debts) ? debts : []).reduce((sum, d) => sum + (d.min_payment || 0), 0);
-      setDebtSummary({ total: totalDebt, minPayment: minPayments, count: Array.isArray(debts) ? debts.length : 0 });
-
-      const savingsRes = await fetch(`${API_URL}/auth/savings-goals?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
-      const goals = savingsRes.ok ? await savingsRes.json() : [];
-      const totalTarget = (Array.isArray(goals) ? goals : []).reduce((sum, g) => sum + (g.target_amount || 0), 0);
-      const totalCurrent = (Array.isArray(goals) ? goals : []).reduce((sum, g) => sum + (g.current_amount || 0), 0);
-      setSavingsSummary({ totalTarget, totalCurrent, count: Array.isArray(goals) ? goals.length : 0 });
-
-      const budgetRes = await fetch(`${API_URL}/budgets/user/${user.id}?month=${currentMonth}&year=${currentYear}`, {
-        credentials: 'include',
-        headers: authHeaders,
-      });
-      const budgets = budgetRes.ok ? await budgetRes.json() : [];
-      setBudgetsData(Array.isArray(budgets) ? budgets : []);
-
-      const billsRes = await fetch(`${API_URL}/auth/bills?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
-      const bills = billsRes.ok ? await billsRes.json() : [];
-      const billsArr = Array.isArray(bills) ? bills : [];
-      const paidCount = billsArr.filter((b: any) => b.status === 'paid').length;
-      setBillsSummary({ paid: paidCount, total: billsArr.length });
-
-      try {
-        const [holdingsData, balancesData] = await Promise.all([
-          fetchInvestmentHoldings(),
-          fetchAccountBalances('depository'),
-        ]);
-        const invTotal = (Array.isArray(holdingsData) ? holdingsData : []).reduce(
-          (sum: number, h: any) => sum + (h.institution_value || 0), 0
-        );
-        setInvestmentTotal(invTotal);
-        const cash = (Array.isArray(balancesData) ? balancesData : []).reduce(
-          (sum: number, a: any) => sum + (a.current_balance || 0), 0
-        );
-        setCashTotal(cash);
-      } catch {}
-    };
-    load();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadDashboard();
+    }, [loadDashboard])
+  );
 
   const expenseData = transactions.filter((t) => t.type === 'expense');
   const incomeData = transactions.filter((t) => t.type === 'income');

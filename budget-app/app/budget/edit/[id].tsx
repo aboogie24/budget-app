@@ -34,7 +34,7 @@ export default function EditBudget() {
     return new Date();
   });
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [shared, setShared] = useState(((params.household_id as string) || '') !== '');
+  const [shared, setShared] = useState((params.is_shared as string) === '1');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -72,7 +72,7 @@ export default function EditBudget() {
         frequency: frequency || 'monthly',
         user_id: user.id,
         id: params.id || uuidv4(),
-        household_id: shared ? (params.household_id as string) || '' : '',
+        is_shared: shared,
       };
       const res = await fetch(`${API_URL}/budgets/${params.id}`, {
         method: 'PUT',

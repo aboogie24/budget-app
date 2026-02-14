@@ -37,7 +37,15 @@ const DAY_NAMES = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const formatCurrency = (v: number) =>
   v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
 
-const toKey = (d: Date) => d.toISOString().slice(0, 10);
+const toKey = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+// Parse a backend ISO timestamp as a local-time date (avoids UTC midnight rolling to previous day)
+const parseCalDate = (raw: string): Date => new Date(raw.slice(0, 10) + 'T12:00:00');
 
 const dateLabel = (s: string) => {
   const d = new Date(s + 'T12:00:00');
@@ -163,7 +171,7 @@ export default function CalendarScreen() {
 
       (Array.isArray(budgets) ? budgets : []).forEach((b) => {
         if (!b.start_date) return;
-        const date = new Date(b.start_date);
+        const date = parseCalDate(b.start_date);
         if (isNaN(date.getTime())) return;
         expandFrequency(date, b.frequency || '', {
           id: b.id || b.name, name: b.name || 'Budget', amount: b.amount || 0,
@@ -174,7 +182,7 @@ export default function CalendarScreen() {
 
       (Array.isArray(transactions) ? transactions : []).forEach((t) => {
         if (!t.date) return;
-        const date = new Date(t.date);
+        const date = parseCalDate(t.date);
         if (isNaN(date.getTime())) return;
         expandFrequency(date, t.frequency || '', {
           id: t.id || t.note || 'tx',
@@ -303,7 +311,7 @@ export default function CalendarScreen() {
               key={calKey}
               style={styles.fullCal}
               current={toKey(month)}
-              onMonthChange={(m) => setMonth(new Date(m.dateString))}
+              onMonthChange={(m) => setMonth(new Date(m.year, m.month - 1, 1))}
               onDayPress={(d) => pick(d.dateString)}
               markedDates={displayMarks}
               markingType="multi-dot"

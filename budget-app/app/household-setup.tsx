@@ -22,6 +22,8 @@ type Invite = {
   invitee_email: string;
   expires_at: string;
   household_id: string;
+  household_name?: string;
+  inviter_email?: string;
 };
 
 export default function HouseholdManagement() {
@@ -38,6 +40,7 @@ export default function HouseholdManagement() {
   const [createName, setCreateName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [acceptingCode, setAcceptingCode] = useState<string | null>(null);
 
   const API_URL =
     Constants.expoConfig?.extra?.API_URL ??
@@ -80,6 +83,18 @@ export default function HouseholdManagement() {
       } else {
         setHouseholdId(null);
         setMembers([]);
+
+        // No household — check for pending invites so we can show them prominently
+        try {
+          const invRes = await fetch(
+            `${API_URL}/households/invites?user_id=${user.id}`,
+            { credentials: 'include', headers }
+          );
+          if (invRes.ok) {
+            const invData = await invRes.json();
+            setPendingInvites(Array.isArray(invData) ? invData : []);
+          }
+        } catch (_) {}
       }
     } catch (e) {
       // ignore
@@ -145,7 +160,7 @@ export default function HouseholdManagement() {
       const headers: any = { 'Content-Type': 'application/json' };
       if (user.token) headers.Authorization = `Bearer ${user.token}`;
 
-      const res = await fetch(`${API_URL}/households/invites`, {
+      const res = await fetch(`${API_URL}/households/invite`, {
         method: 'POST',
         headers,
         credentials: 'include',
@@ -167,6 +182,45 @@ export default function HouseholdManagement() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleAcceptInvite = async (code: string, householdName: string) => {
+    Alert.alert(
+      'Accept Invite',
+      `Join "${householdName}"? You can only be in one household at a time.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Join',
+          onPress: async () => {
+            setAcceptingCode(code);
+            try {
+              const user = await getCurrentUser();
+              if (!user?.id) return;
+              const headers: any = { 'Content-Type': 'application/json' };
+              if (user.token) headers.Authorization = `Bearer ${user.token}`;
+
+              const res = await fetch(`${API_URL}/households/accept`, {
+                method: 'POST',
+                headers,
+                credentials: 'include',
+                body: JSON.stringify({ code, user_id: user.id }),
+              });
+              if (!res.ok) {
+                const text = await res.text();
+                throw new Error(text);
+              }
+              Alert.alert('Joined!', `You are now a member of "${householdName}".`);
+              await loadData();
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Could not accept invite.');
+            } finally {
+              setAcceptingCode(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleLeave = () => {
@@ -332,12 +386,68 @@ export default function HouseholdManagement() {
                 </View>
                 <Text style={styles.emptyTitle}>No Household Yet</Text>
                 <Text style={styles.emptySub}>
-                  Create a household to start sharing budgets, transactions, and goals with your partner.
+                  {pendingInvites.length > 0
+                    ? 'You have a pending invite! Accept it to join your partner\'s household.'
+                    : 'Create a household to start sharing budgets, transactions, and goals with your partner.'}
                 </Text>
               </View>
 
+              {/* Show pending invites first if any exist */}
+              {pendingInvites.length > 0 && (
+                <View style={styles.card}>
+                  <Text style={styles.sectionLabel}>PENDING INVITES</Text>
+                  <Text style={styles.fieldDesc}>
+                    Your partner has invited you to join their household.
+                  </Text>
+                  {pendingInvites.map((inv) => {
+                    const expired = new Date(inv.expires_at).getTime() < Date.now();
+                    const isAccepting = acceptingCode === inv.code;
+                    return (
+                      <View key={inv.code} style={styles.inlineInviteCard}>
+                        <View style={styles.inlineInviteHeader}>
+                          <View style={styles.inlineInviteIcon}>
+                            <Ionicons name="home" size={20} color="#c084fc" />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.inviteEmail}>
+                              {inv.household_name || 'Household'}
+                            </Text>
+                            {inv.inviter_email && (
+                              <Text style={styles.inviteExpiry}>
+                                Invited by {inv.inviter_email}
+                              </Text>
+                            )}
+                          </View>
+                        </View>
+                        {!expired ? (
+                          <TouchableOpacity
+                            onPress={() => handleAcceptInvite(inv.code, inv.household_name || 'Household')}
+                            disabled={isAccepting}
+                          >
+                            <LinearGradient colors={['#a855f7', '#7c3aed']} style={styles.primaryBtnInner}>
+                              {isAccepting ? (
+                                <ActivityIndicator size="small" color="#fff" />
+                              ) : (
+                                <>
+                                  <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+                                  <Text style={styles.primaryBtnText}>Accept & Join</Text>
+                                </>
+                              )}
+                            </LinearGradient>
+                          </TouchableOpacity>
+                        ) : (
+                          <Text style={styles.inviteExpiry}>This invite has expired</Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
               <View style={styles.card}>
-                <Text style={styles.sectionLabel}>CREATE HOUSEHOLD</Text>
+                <Text style={styles.sectionLabel}>
+                  {pendingInvites.length > 0 ? 'OR CREATE YOUR OWN' : 'CREATE HOUSEHOLD'}
+                </Text>
                 <Text style={styles.fieldDesc}>Give your shared space a name.</Text>
                 <TextInput
                   placeholder="e.g., The Johnsons, Casa del Amor"
@@ -360,20 +470,22 @@ export default function HouseholdManagement() {
                 </TouchableOpacity>
               </View>
 
-              {/* Check for invites */}
-              <View style={styles.card}>
-                <Text style={styles.sectionLabel}>GOT AN INVITE?</Text>
-                <Text style={styles.fieldDesc}>
-                  If your partner already created a household and sent you an invite, check your pending invites.
-                </Text>
-                <TouchableOpacity
-                  style={styles.secondaryBtn}
-                  onPress={() => router.push('/pending-invites')}
-                >
-                  <Ionicons name="mail-unread-outline" size={16} color="#c084fc" />
-                  <Text style={styles.secondaryBtnText}>Check Pending Invites</Text>
-                </TouchableOpacity>
-              </View>
+              {/* Link to full pending invites screen */}
+              {pendingInvites.length === 0 && (
+                <View style={styles.card}>
+                  <Text style={styles.sectionLabel}>GOT AN INVITE?</Text>
+                  <Text style={styles.fieldDesc}>
+                    If your partner already created a household and sent you an invite, check your pending invites.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.secondaryBtn}
+                    onPress={() => router.push('/pending-invites')}
+                  >
+                    <Ionicons name="mail-unread-outline" size={16} color="#c084fc" />
+                    <Text style={styles.secondaryBtnText}>Check Pending Invites</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </>
           )}
         </ScrollView>
@@ -561,6 +673,31 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(248,113,113,0.15)',
   },
   leaveText: { color: '#f87171', fontWeight: '700' },
+
+  /* Inline invite cards (no-household state) */
+  inlineInviteCard: {
+    backgroundColor: 'rgba(168,85,247,0.08)',
+    borderRadius: 14,
+    padding: 14,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(168,85,247,0.15)',
+  },
+  inlineInviteHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  inlineInviteIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: 'rgba(192,132,252,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(192,132,252,0.2)',
+  },
 
   /* Empty state */
   emptyCard: {

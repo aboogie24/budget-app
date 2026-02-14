@@ -4,7 +4,7 @@
     "slug": "coupleflow",
     "version": "1.0.0",
     "extra": {
-      "API_URL": "http://localhost:8080",
+      "API_URL": "http://172.18.126.29:8080",
       "router": {},
       "eas": {
         "projectId": "15c3004a-989d-45ed-ae17-903dae308ca9"

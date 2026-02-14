@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { getCurrentUser } from '@/utils/storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { v4 as uuidv4 } from 'uuid';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -23,6 +23,7 @@ type BudgetSummaryItem = {
   percent: number;
   frequency: string;
   household_id?: string | null;
+  is_shared?: boolean;
   categories: CategorySummary[];
   source?: string;
 };
@@ -105,6 +106,12 @@ export default function BudgetScreen() {
     loadData();
   }, [loadData]);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
+
   useEffect(() => {
     setCategoryId('');
   }, [type]);
@@ -122,6 +129,27 @@ export default function BudgetScreen() {
     () => budgetItems.filter((b) => (budgetFilter === 'all' ? true : b.id === budgetFilter)),
     [budgetItems, budgetFilter]
   );
+
+  const budgetOnly = useMemo(() => visibleBudgets.filter((b) => b.source !== 'bill'), [visibleBudgets]);
+  const billOnly = useMemo(() => visibleBudgets.filter((b) => b.source === 'bill'), [visibleBudgets]);
+  const [budgetsExpanded, setBudgetsExpanded] = useState(true);
+  const [billsExpanded, setBillsExpanded] = useState(true);
+
+  const budgetsSummary = useMemo(() => {
+    const incomeItems = budgetOnly.filter((b) => b.type === 'income');
+    const expenseItems = budgetOnly.filter((b) => b.type !== 'income');
+    const incomeTotal = incomeItems.reduce((s, b) => s + b.budgeted, 0);
+    const expenseTotal = expenseItems.reduce((s, b) => s + b.budgeted, 0);
+    const incomeCount = incomeItems.length;
+    const expenseCount = expenseItems.length;
+    return { incomeTotal, expenseTotal, incomeCount, expenseCount };
+  }, [budgetOnly]);
+
+  const billsSummary = useMemo(() => {
+    const total = billOnly.reduce((s, b) => s + b.budgeted, 0);
+    const paid = billOnly.filter((b) => b.spent >= b.budgeted && b.budgeted > 0).length;
+    return { total, paid, count: billOnly.length };
+  }, [billOnly]);
 
   const filteredCategories = useMemo(() => {
     return categories.filter((c) => {
@@ -146,7 +174,7 @@ export default function BudgetScreen() {
       category_id: categoryId || null,
       frequency,
       start_date: startDate.toISOString(),
-      household_id: shared ? undefined : null,
+      is_shared: shared,
     };
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (user.token) headers['Authorization'] = `Bearer ${user.token}`;
@@ -247,7 +275,7 @@ export default function BudgetScreen() {
           )}
 
           <View style={styles.listHeader}>
-            <Text style={styles.sectionLabel}>Budgets ({visibleBudgets.length})</Text>
+            <Text style={styles.sectionLabel}>Overview</Text>
             <TouchableOpacity
               style={styles.filterBtn}
               onPress={() =>
@@ -259,9 +287,34 @@ export default function BudgetScreen() {
             </TouchableOpacity>
           </View>
 
-          {visibleBudgets.map((b) => {
-            const alertLabel = b.spent > b.budgeted ? 'Over budget' : b.spent === b.budgeted && b.budgeted > 0 ? 'On target' : b.percent >= 90 ? 'Approaching limit' : '';
-            const alertColor = b.spent > b.budgeted ? '#f87171' : b.spent === b.budgeted ? '#34d399' : '#fbbf24';
+          {/* Budgets Section */}
+          <TouchableOpacity style={styles.sectionHeader} onPress={() => setBudgetsExpanded((v) => !v)}>
+            <View style={styles.sectionHeaderLeft}>
+              <View style={[styles.sectionIcon, { backgroundColor: 'rgba(192,132,252,0.12)' }]}>
+                <Ionicons name="wallet-outline" size={16} color="#c084fc" />
+              </View>
+              <View>
+                <Text style={styles.sectionTitle}>Budgets ({budgetOnly.length})</Text>
+                <Text style={styles.sectionSub}>
+                  <Text style={{ color: '#34d399' }}>{budgetsSummary.incomeCount} income</Text>
+                  {' · '}
+                  <Text style={{ color: '#f87171' }}>{budgetsSummary.expenseCount} expense</Text>
+                  {' · '}
+                  {formatCurrency(budgetsSummary.incomeTotal - budgetsSummary.expenseTotal)} net
+                </Text>
+              </View>
+            </View>
+            <Ionicons name={budgetsExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#cbd5e1" />
+          </TouchableOpacity>
+
+          {budgetsExpanded && budgetOnly.map((b) => {
+            const isIncome = b.type === 'income';
+            const accentColor = isIncome ? '#34d399' : '#f87171';
+            const iconName = isIncome ? 'trending-up-outline' : 'trending-down-outline';
+            const iconBg = isIncome ? 'rgba(52,211,153,0.12)' : 'rgba(248,113,113,0.12)';
+            const barColor = isIncome ? '#34d399' : '#22c55e';
+            const alertLabel = b.spent > b.budgeted ? (isIncome ? 'Goal reached' : 'Over budget') : b.spent === b.budgeted && b.budgeted > 0 ? 'On target' : b.percent >= 90 ? (isIncome ? 'Almost there' : 'Approaching limit') : '';
+            const alertColor = b.spent > b.budgeted ? (isIncome ? '#34d399' : '#f87171') : b.spent === b.budgeted ? '#34d399' : '#fbbf24';
             return (
               <TouchableOpacity
                 key={b.id}
@@ -276,6 +329,7 @@ export default function BudgetScreen() {
                       type: b.type,
                       category_id: '',
                       household_id: b.household_id || '',
+                      is_shared: b.is_shared ? '1' : '0',
                       frequency: b.frequency || '',
                       start_date: '',
                     },
@@ -283,37 +337,33 @@ export default function BudgetScreen() {
                 }
               >
                 <View style={styles.budgetHeader}>
-                  <View style={[styles.iconCircle, b.source === 'bill' && { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
-                    <Ionicons
-                      name={b.source === 'bill' ? 'receipt-outline' : 'cart-outline'}
-                      size={18}
-                      color={b.source === 'bill' ? '#60a5fa' : '#c084fc'}
-                    />
+                  <View style={[styles.iconCircle, { backgroundColor: iconBg }]}>
+                    <Ionicons name={iconName} size={18} color={accentColor} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <Text style={styles.budgetTitle}>{b.name}</Text>
-                      {b.source === 'bill' && (
-                        <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(96,165,250,0.12)' }}>
-                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#60a5fa' }}>Bill</Text>
-                        </View>
-                      )}
+                      <View style={[styles.billStatusChip, { backgroundColor: isIncome ? 'rgba(52,211,153,0.12)' : 'rgba(248,113,113,0.12)' }]}>
+                        <Text style={[styles.billStatusText, { color: accentColor }]}>
+                          {isIncome ? 'Income' : 'Expense'}
+                        </Text>
+                      </View>
                     </View>
                     <Text style={styles.budgetSub}>
                       {formatCurrency(b.spent)} of {formatCurrency(b.budgeted)}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.percent}>{b.percent}%</Text>
-                    {b.household_id ? <Text style={styles.sharedBadge}>Shared</Text> : null}
+                    <Text style={[styles.percent, { color: accentColor }]}>{b.percent}%</Text>
+                    {b.is_shared ? <Text style={styles.sharedBadge}>Shared</Text> : null}
                   </View>
                 </View>
                 <View style={styles.progressBarTrack}>
-                  <View style={[styles.progressBarFill, { width: `${Math.min(b.percent, 100)}%` }]} />
+                  <View style={[styles.progressBarFill, { width: `${Math.min(b.percent, 100)}%`, backgroundColor: barColor }]} />
                 </View>
                 <View style={styles.budgetFooter}>
                   <View>
-                    <Text style={styles.footerText}>{formatCurrency(b.spent)} spent</Text>
+                    <Text style={styles.footerText}>{formatCurrency(b.spent)} {isIncome ? 'earned' : 'spent'}</Text>
                     <Text style={styles.footerText}>Categories</Text>
                     <Text style={styles.footerTextFaint}>
                       {b.categories.length > 0 ? `${b.categories.length} items` : '-'}
@@ -321,20 +371,95 @@ export default function BudgetScreen() {
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <TouchableOpacity>
-                      <Text style={styles.viewAll}>View all</Text>
+                      <Text style={[styles.viewAll, { color: accentColor }]}>View all</Text>
                     </TouchableOpacity>
                     <Text style={styles.footerText}>{formatCurrency(b.remaining)} left</Text>
                   </View>
                 </View>
                 {alertLabel ? (
                   <View style={[styles.alertPillRow, { borderColor: alertColor + '55' }]}>
-                    <Ionicons name={alertLabel === 'Over budget' ? 'warning' : alertLabel === 'On target' ? 'checkmark-circle' : 'alert-circle'} size={14} color={alertColor} />
+                    <Ionicons name={alertLabel === 'Over budget' ? 'warning' : alertLabel === 'Goal reached' || alertLabel === 'On target' ? 'checkmark-circle' : 'alert-circle'} size={14} color={alertColor} />
                     <Text style={[styles.alertPillText, { color: alertColor }]}>{alertLabel}</Text>
                   </View>
                 ) : null}
               </TouchableOpacity>
             );
           })}
+
+          {/* Bills Section */}
+          {billOnly.length > 0 && (
+            <>
+              <TouchableOpacity style={[styles.sectionHeader, { marginTop: 6 }]} onPress={() => setBillsExpanded((v) => !v)}>
+                <View style={styles.sectionHeaderLeft}>
+                  <View style={[styles.sectionIcon, { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
+                    <Ionicons name="receipt-outline" size={16} color="#60a5fa" />
+                  </View>
+                  <View>
+                    <Text style={styles.sectionTitle}>Bills ({billOnly.length})</Text>
+                    <Text style={styles.sectionSub}>
+                      {billsSummary.paid} of {billsSummary.count} paid &middot; {formatCurrency(billsSummary.total)} total
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons name={billsExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#cbd5e1" />
+              </TouchableOpacity>
+
+              {billsExpanded && billOnly.map((b) => {
+                const isPaid = b.spent >= b.budgeted && b.budgeted > 0;
+                return (
+                  <TouchableOpacity
+                    key={b.id}
+                    style={styles.budgetCard}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/budget/edit/[id]',
+                        params: {
+                          id: b.id,
+                          name: b.name,
+                          amount: String(b.budgeted),
+                          type: b.type,
+                          category_id: '',
+                          household_id: b.household_id || '',
+                          is_shared: b.is_shared ? '1' : '0',
+                          frequency: b.frequency || '',
+                          start_date: '',
+                        },
+                      })
+                    }
+                  >
+                    <View style={styles.budgetHeader}>
+                      <View style={[styles.iconCircle, { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
+                        <Ionicons name="receipt-outline" size={18} color="#60a5fa" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={styles.budgetTitle}>{b.name}</Text>
+                          <View style={[styles.billStatusChip, isPaid ? styles.billStatusPaid : styles.billStatusUnpaid]}>
+                            <Text style={[styles.billStatusText, { color: isPaid ? '#34d399' : '#fbbf24' }]}>
+                              {isPaid ? 'Paid' : 'Unpaid'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.budgetSub}>
+                          {formatCurrency(b.budgeted)} due
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        {b.is_shared ? <Text style={styles.sharedBadge}>Shared</Text> : null}
+                      </View>
+                    </View>
+                    <View style={styles.progressBarTrack}>
+                      <View style={[styles.progressBarFill, { width: `${Math.min(b.percent, 100)}%`, backgroundColor: isPaid ? '#34d399' : '#60a5fa' }]} />
+                    </View>
+                    <View style={styles.budgetFooter}>
+                      <Text style={styles.footerText}>{formatCurrency(b.spent)} paid</Text>
+                      <Text style={styles.footerText}>{formatCurrency(b.remaining)} remaining</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </>
+          )}
         </ScrollView>
         <TouchableOpacity style={styles.fab} onPress={() => setShowAdd(true)}>
           <Text style={{ color: 'white', fontSize: 28, fontWeight: '700' }}>+</Text>
@@ -696,4 +821,37 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   datePickerDoneText: { color: '#c084fc', fontWeight: '700', fontSize: 13 },
+
+  /* Collapsible section headers */
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  sectionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionTitle: { color: '#f8fafc', fontWeight: '800', fontSize: 15 },
+  sectionSub: { color: '#94a3b8', fontSize: 12, marginTop: 2 },
+
+  /* Bill status chips */
+  billStatusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  billStatusPaid: { backgroundColor: 'rgba(52,211,153,0.12)' },
+  billStatusUnpaid: { backgroundColor: 'rgba(251,191,36,0.12)' },
+  billStatusText: { fontSize: 10, fontWeight: '700' },
 });

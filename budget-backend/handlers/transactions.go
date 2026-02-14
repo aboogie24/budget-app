@@ -110,7 +110,7 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 		`, userID)
 	} else {
 		rows, err = dbClient.Query(`
-			SELECT 
+			SELECT
 				t.id,          -- 1
 				t.user_id,     -- 2
 				t.household_id,
@@ -127,8 +127,16 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 				t.source       -- 14
 			FROM transactions t
 			LEFT JOIN categories c ON t.category_id = c.id
-			WHERE t.household_id = $1
-			   OR (t.household_id IS NULL AND t.user_id = $2)
+			WHERE t.user_id = $2
+			   OR t.household_id::text = $1
+			   OR (t.household_id IS NOT NULL AND t.user_id IN (
+			       SELECT hm.user_id FROM household_members hm
+			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			           AND (sp.household_id::text = $1 OR sp.household_id IS NULL)
+			       WHERE hm.household_id::text = $1
+			         AND hm.user_id != $2
+			         AND COALESCE(sp.share_transactions, true) = true
+			   ))
 		`, hh, userID)
 	}
 

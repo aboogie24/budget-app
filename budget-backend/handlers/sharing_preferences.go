@@ -32,13 +32,18 @@ func GetSharingPreferences(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	// Try lookup; if not found, return defaults.
+	// Convert empty household_id to nil for proper NULL comparison.
+	var hhParam interface{}
+	if householdID != "" {
+		hhParam = householdID
+	}
 	row := client.QueryRow(`
 		SELECT id, user_id, household_id, share_budgets, share_transactions, share_debts,
 		       share_savings, share_priorities, share_notes, notify_partner, created_at, updated_at
 		FROM sharing_preferences
-		WHERE user_id = $1 AND (household_id = $2 OR ($2 = '' AND household_id IS NULL))
+		WHERE user_id = $1 AND household_id IS NOT DISTINCT FROM $2::uuid
 		LIMIT 1
-	`, userID, householdID)
+	`, userID, hhParam)
 
 	var pref models.SharingPreferences
 	var hh sql.NullString
@@ -108,7 +113,7 @@ func UpsertSharingPreferences(w http.ResponseWriter, r *http.Request) {
 
 	// Existing row?
 	row := client.QueryRow(`
-		SELECT id FROM sharing_preferences WHERE user_id = $1 AND (household_id = $2 OR ($2 = '' AND household_id IS NULL)) LIMIT 1
+		SELECT id FROM sharing_preferences WHERE user_id = $1 AND household_id IS NOT DISTINCT FROM $2::uuid LIMIT 1
 	`, body.UserID, nullableString(body.HouseholdID))
 
 	var existingID string

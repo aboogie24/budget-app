@@ -1,0 +1,1 @@
+ALTER TABLE budgets DROP COLUMN IF EXISTS is_shared;

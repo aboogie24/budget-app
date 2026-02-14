@@ -80,7 +80,18 @@ func ListBills(w http.ResponseWriter, r *http.Request) {
 	if hh == "" {
 		rows, err = client.Query(query+" WHERE b.user_id = $1 ORDER BY b.due_day", userID)
 	} else {
-		rows, err = client.Query(query+" WHERE b.household_id = $1 OR (b.household_id IS NULL AND b.user_id = $2) ORDER BY b.due_day", hh, userID)
+		rows, err = client.Query(query+`
+			WHERE b.user_id = $2
+			   OR (b.is_shared = true AND b.user_id IN (
+			       SELECT hm.user_id FROM household_members hm
+			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			           AND (sp.household_id::text = $1 OR sp.household_id IS NULL)
+			       WHERE hm.household_id::text = $1
+			         AND hm.user_id != $2
+			         AND COALESCE(sp.share_budgets, true) = true
+			   ))
+			ORDER BY b.due_day
+		`, hh, userID)
 	}
 	if err != nil {
 		log.Printf("ListBills query error: %v", err)
