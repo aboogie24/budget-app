@@ -58,7 +58,7 @@ export default function HouseholdManagement() {
       if (user.token) headers.Authorization = `Bearer ${user.token}`;
 
       // Fetch household
-      const hhRes = await fetch(`${API_URL}/households/me?user_id=${user.id}`, {
+      const hhRes = await fetch(`${API_URL}/auth/households/me?user_id=${user.id}`, {
         credentials: 'include',
         headers,
       });
@@ -72,7 +72,7 @@ export default function HouseholdManagement() {
         // Fetch sent invites for this household
         try {
           const invRes = await fetch(
-            `${API_URL}/households/invites/sent?user_id=${user.id}&household_id=${data.household_id || data.id}`,
+            `${API_URL}/auth/households/invites/sent?user_id=${user.id}&household_id=${data.household_id || data.id}`,
             { credentials: 'include', headers }
           );
           if (invRes.ok) {
@@ -87,7 +87,7 @@ export default function HouseholdManagement() {
         // No household — check for pending invites so we can show them prominently
         try {
           const invRes = await fetch(
-            `${API_URL}/households/invites?user_id=${user.id}`,
+            `${API_URL}/auth/households/invites?user_id=${user.id}`,
             { credentials: 'include', headers }
           );
           if (invRes.ok) {
@@ -128,7 +128,7 @@ export default function HouseholdManagement() {
       const headers: any = { 'Content-Type': 'application/json' };
       if (user.token) headers.Authorization = `Bearer ${user.token}`;
 
-      const res = await fetch(`${API_URL}/households`, {
+      const res = await fetch(`${API_URL}/auth/households`, {
         method: 'POST',
         headers,
         credentials: 'include',
@@ -160,7 +160,7 @@ export default function HouseholdManagement() {
       const headers: any = { 'Content-Type': 'application/json' };
       if (user.token) headers.Authorization = `Bearer ${user.token}`;
 
-      const res = await fetch(`${API_URL}/households/invite`, {
+      const res = await fetch(`${API_URL}/auth/households/invite`, {
         method: 'POST',
         headers,
         credentials: 'include',
@@ -200,7 +200,7 @@ export default function HouseholdManagement() {
               const headers: any = { 'Content-Type': 'application/json' };
               if (user.token) headers.Authorization = `Bearer ${user.token}`;
 
-              const res = await fetch(`${API_URL}/households/accept`, {
+              const res = await fetch(`${API_URL}/auth/households/accept`, {
                 method: 'POST',
                 headers,
                 credentials: 'include',

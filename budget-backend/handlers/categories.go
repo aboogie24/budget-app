@@ -23,7 +23,7 @@ func GetCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		http.Error(w, "DB connection error", http.StatusInternalServerError)
 		log.Print("DB connection error")
@@ -83,7 +83,7 @@ func CreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		http.Error(w, "DB connection error", http.StatusInternalServerError)
 		log.Print("DB connection error")
@@ -92,7 +92,7 @@ func CreateCategory(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	if category.UserID != nil {
-		if hhStr := db.ResolveHouseholdID(conn, category.UserID.String()); hhStr != "" {
+		if hhStr := db.ResolveHouseholdID(conn.Conn, category.UserID.String()); hhStr != "" {
 			hhUUID, err := uuid.FromString(hhStr)
 			if err == nil {
 				category.HouseholdID = &hhUUID
@@ -123,14 +123,14 @@ func CreateCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetCategoriesForUser(userID string) ([]models.Category, error) {
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		log.Printf("DB connection error: %v", err)
 		return nil, err
 	}
 	defer conn.Close()
 
-	hh := db.ResolveHouseholdID(conn, userID)
+	hh := db.ResolveHouseholdID(conn.Conn, userID)
 
 	var rows *sql.Rows
 	if hh == "" {
@@ -215,7 +215,7 @@ func UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		http.Error(w, "DB connection error", http.StatusInternalServerError)
 		log.Print("DB connection error")
@@ -259,7 +259,7 @@ func DeleteCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		http.Error(w, "DB connection error", http.StatusInternalServerError)
 		log.Print("DB connection error")

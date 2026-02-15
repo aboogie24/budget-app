@@ -81,7 +81,7 @@ export default function LinkAccountScreen() {
     setUserId(user.id);
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/link_token?user_id=${user.id}`, {
+      const res = await fetch(`${API_URL}/auth/link_token?user_id=${user.id}`, {
         credentials: 'include',
         headers: user.token
           ? { Authorization: `Bearer ${user.token}` }
@@ -113,7 +113,7 @@ export default function LinkAccountScreen() {
     institutionName?: string,
   ) => {
     try {
-      const res = await fetch(`${API_URL}/exchange_token`, {
+      const res = await fetch(`${API_URL}/auth/exchange_token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

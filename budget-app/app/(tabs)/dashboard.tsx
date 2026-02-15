@@ -62,7 +62,7 @@ export default function DashboardScreen() {
     const totalCurrent = (Array.isArray(goals) ? goals : []).reduce((sum, g) => sum + (g.current_amount || 0), 0);
     setSavingsSummary({ totalTarget, totalCurrent, count: Array.isArray(goals) ? goals.length : 0 });
 
-    const budgetRes = await fetch(`${API_URL}/budgets/user/${user.id}?month=${currentMonth}&year=${currentYear}`, {
+    const budgetRes = await fetch(`${API_URL}/auth/budgets/user/${user.id}?month=${currentMonth}&year=${currentYear}`, {
       credentials: 'include',
       headers: authHeaders,
     });

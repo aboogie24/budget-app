@@ -51,7 +51,7 @@ export default function BudgetSettingsScreen() {
     if (!user?.id) return;
     setAuth({ id: user.id, token: user.token });
     const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-    const res = await fetch(`${API_URL}/categories/user/${user.id}`, { headers, credentials: 'include' });
+    const res = await fetch(`${API_URL}/auth/categories/user/${user.id}`, { headers, credentials: 'include' });
     if (res.ok) {
       const data = await res.json();
       setCategories(Array.isArray(data) ? data : []);
@@ -59,7 +59,7 @@ export default function BudgetSettingsScreen() {
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-    const budgetRes = await fetch(`${API_URL}/budgets/user/${user.id}?month=${month}&year=${year}`, {
+    const budgetRes = await fetch(`${API_URL}/auth/budgets/user/${user.id}?month=${month}&year=${year}`, {
       headers,
       credentials: 'include',
     });
@@ -78,7 +78,7 @@ export default function BudgetSettingsScreen() {
   const updateCategory = async (cat: Category, updates: Partial<Category>) => {
     if (!auth?.id) { Alert.alert('Session', 'Please log in again.'); return; }
     try {
-      const res = await fetch(`${API_URL}/categories/${cat.id}`, {
+      const res = await fetch(`${API_URL}/auth/categories/${cat.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -115,7 +115,7 @@ export default function BudgetSettingsScreen() {
         rollover_enabled: newRollover,
         budget_id: newBudgetId || null,
       };
-      const res = await fetch(`${API_URL}/categories`, {
+      const res = await fetch(`${API_URL}/auth/categories`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -144,7 +144,7 @@ export default function BudgetSettingsScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const res = await fetch(`${API_URL}/categories/${cat.id}`, {
+            const res = await fetch(`${API_URL}/auth/categories/${cat.id}`, {
               method: 'DELETE',
               headers: auth?.token ? { Authorization: `Bearer ${auth.token}` } : undefined,
               credentials: 'include',

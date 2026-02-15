@@ -42,7 +42,7 @@ export default function EditBudget() {
       const user = await getCurrentUser();
       if (!user?.id) return;
       const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-      const res = await fetch(`${API_URL}/categories/user/${user.id}`, { headers, credentials: 'include' });
+      const res = await fetch(`${API_URL}/auth/categories/user/${user.id}`, { headers, credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setCategories(Array.isArray(data) ? data : []);
@@ -74,7 +74,7 @@ export default function EditBudget() {
         id: params.id || uuidv4(),
         is_shared: shared,
       };
-      const res = await fetch(`${API_URL}/budgets/${params.id}`, {
+      const res = await fetch(`${API_URL}/auth/budgets/${params.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

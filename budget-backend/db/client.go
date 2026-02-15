@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"sync"
 
 	_ "github.com/lib/pq"
 )
@@ -19,12 +20,18 @@ type DBTX interface {
 
 // DB wraps a sql.DB connection
 type DB struct {
-	Conn *sql.DB
+	Conn   *sql.DB
+	shared bool // if true, Close() is a no-op (pool is shared)
 }
 
-// New creates a reusable DB client
-func New() (*DB, error) {
-	connStr := fmt.Sprintf(
+var (
+	pool     *sql.DB
+	poolOnce sync.Once
+	poolErr  error
+)
+
+func connStr() string {
+	return fmt.Sprintf(
 		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
 		os.Getenv("PG_USER"),
 		os.Getenv("PG_PASS"),
@@ -32,21 +39,42 @@ func New() (*DB, error) {
 		os.Getenv("PG_PORT"),
 		os.Getenv("PG_DB"),
 	)
+}
 
-	conn, err := sql.Open("postgres", connStr)
+// Pool returns the shared connection pool, creating it on first call.
+func Pool() (*sql.DB, error) {
+	poolOnce.Do(func() {
+		p, err := sql.Open("postgres", connStr())
+		if err != nil {
+			poolErr = err
+			return
+		}
+		p.SetMaxOpenConns(25)
+		p.SetMaxIdleConns(5)
+		if err := p.Ping(); err != nil {
+			poolErr = err
+			return
+		}
+		pool = p
+	})
+	return pool, poolErr
+}
+
+// New returns a DB handle backed by the shared pool.
+// Close() is a no-op — the pool lives for the process lifetime.
+func New() (*DB, error) {
+	p, err := Pool()
 	if err != nil {
 		return nil, err
 	}
-
-	if err := conn.Ping(); err != nil {
-		return nil, err
-	}
-
-	return &DB{Conn: conn}, nil
+	return &DB{Conn: p, shared: true}, nil
 }
 
-// Close shuts down the DB connection
+// Close is a no-op for the shared pool. Only non-shared connections are closed.
 func (d *DB) Close() error {
+	if d.shared {
+		return nil // pool stays open
+	}
 	return d.Conn.Close()
 }
 

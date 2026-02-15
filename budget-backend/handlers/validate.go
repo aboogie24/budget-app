@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"net/http"
 	"regexp"
 	"strings"
@@ -27,5 +28,41 @@ func isValidFrequency(f string) bool {
 	case "", "one-time", "weekly", "biweekly", "monthly", "1st-15th":
 		return true
 	}
+	return false
+}
+
+// ownershipCheck verifies the requesting user owns the resource (or is in the same household).
+// table must be a trusted constant — never pass user input.
+// Returns true if the user is authorized, false otherwise (and writes an HTTP error).
+func ownershipCheck(w http.ResponseWriter, conn *sql.DB, table, resourceID, userID string) bool {
+	var ownerID string
+	var hhID sql.NullString
+	err := conn.QueryRow(
+		`SELECT user_id, household_id FROM `+table+` WHERE id = $1`, resourceID,
+	).Scan(&ownerID, &hhID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "DB error", http.StatusInternalServerError)
+		}
+		return false
+	}
+	// Direct owner
+	if ownerID == userID {
+		return true
+	}
+	// Same household
+	if hhID.Valid && hhID.String != "" {
+		var memberCount int
+		_ = conn.QueryRow(
+			`SELECT COUNT(*) FROM household_members WHERE household_id = $1 AND user_id = $2`,
+			hhID.String, userID,
+		).Scan(&memberCount)
+		if memberCount > 0 {
+			return true
+		}
+	}
+	http.Error(w, "Forbidden", http.StatusForbidden)
 	return false
 }

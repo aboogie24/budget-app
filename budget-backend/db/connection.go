@@ -2,19 +2,10 @@ package db
 
 import (
 	"database/sql"
-	"fmt"
-	"os"
-
-	_ "github.com/lib/pq"
 )
 
+// Init returns the shared connection pool.
+// Deprecated: prefer db.New() which returns a *DB wrapper with the DBTX interface.
 func Init() (*sql.DB, error) {
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		os.Getenv("PG_HOST"),
-		os.Getenv("PG_PORT"),
-		os.Getenv("PG_USER"),
-		os.Getenv("PG_PASS"),
-		os.Getenv("PG_DB"),
-	)
-	return sql.Open("postgres", connStr)
+	return Pool()
 }

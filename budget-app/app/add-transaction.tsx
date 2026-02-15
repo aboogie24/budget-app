@@ -40,7 +40,7 @@ export default function AddTransactionScreen() {
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const res = await fetch(`${API_URL}/categories?type=${type}`);
+        const res = await fetch(`${API_URL}/auth/categories?type=${type}`);
         const data = await res.json();
         setCategories(Array.isArray(data) ? data : []);
       } catch (e) {
@@ -90,7 +90,7 @@ export default function AddTransactionScreen() {
         }
 
         console.log(newCatPayload)
-        const categoryRes = await fetch(`${API_URL}/categories`, {
+        const categoryRes = await fetch(`${API_URL}/auth/categories`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -164,7 +164,7 @@ export default function CalendarScreen() {
 
     try {
       const [budgets, transactions, bills] = await Promise.all([
-        api.get<any[]>(`/budgets/user/${userId}`).catch(() => []),
+        api.get<any[]>(`/auth/budgets/user/${userId}`).catch(() => []),
         api.get<any[]>('/auth/transactions', { user_id: userId }).catch(() => []),
         api.get<any[]>('/auth/bills', { user_id: userId }).catch(() => []),
       ]);

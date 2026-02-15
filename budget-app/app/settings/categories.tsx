@@ -39,7 +39,7 @@ export default function CategorySettings() {
     try {
       const user = await getCurrentUser();
       const headers = user?.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-      const res = await fetch(`${API_URL}/categories/user/${user.id}`, { headers, credentials: 'include' });
+      const res = await fetch(`${API_URL}/auth/categories/user/${user.id}`, { headers, credentials: 'include' });
       const data = await res.json();
       setCategories((Array.isArray(data) ? data : []).filter((cat: any) => cat.type === type));
     } catch (err) {
@@ -56,7 +56,7 @@ export default function CategorySettings() {
       const payload = { id: uuidv4(), name: newName.trim(), type, user_id: currentUser.id, color: newColor };
       const headers: any = { 'Content-Type': 'application/json' };
       if (currentUser.token) headers.Authorization = `Bearer ${currentUser.token}`;
-      const res = await fetch(`${API_URL}/categories`, {
+      const res = await fetch(`${API_URL}/auth/categories`, {
         method: 'POST', headers, credentials: 'include', body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -79,7 +79,7 @@ export default function CategorySettings() {
             const user = await getCurrentUser();
             const headers: any = {};
             if (user?.token) headers.Authorization = `Bearer ${user.token}`;
-            const res = await fetch(`${API_URL}/categories/${id}`, { method: 'DELETE', headers, credentials: 'include' });
+            const res = await fetch(`${API_URL}/auth/categories/${id}`, { method: 'DELETE', headers, credentials: 'include' });
             if (!res.ok) throw new Error(await res.text());
             setCategories((prev) => prev.filter((c) => c.id !== id));
           } catch {
@@ -101,7 +101,7 @@ export default function CategorySettings() {
       const user = await getCurrentUser();
       const headers: any = { 'Content-Type': 'application/json' };
       if (user?.token) headers.Authorization = `Bearer ${user.token}`;
-      const res = await fetch(`${API_URL}/categories/${editingId}`, {
+      const res = await fetch(`${API_URL}/auth/categories/${editingId}`, {
         method: 'PUT', headers, credentials: 'include',
         body: JSON.stringify({ name: editName, color: editColor }),
       });

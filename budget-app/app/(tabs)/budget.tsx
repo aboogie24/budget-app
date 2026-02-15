@@ -82,8 +82,8 @@ export default function BudgetScreen() {
     const qs = `?month=${monthYear.month + 1}&year=${monthYear.year}`;
     try {
       const [summaryRes, catRes] = await Promise.all([
-        fetch(`${API_URL}/budgets/user/${user.id}/summary${qs}`, { credentials: 'include', headers }),
-        fetch(`${API_URL}/categories/user/${user.id}`, { credentials: 'include', headers }),
+        fetch(`${API_URL}/auth/budgets/user/${user.id}/summary${qs}`, { credentials: 'include', headers }),
+        fetch(`${API_URL}/auth/categories/user/${user.id}`, { credentials: 'include', headers }),
       ]);
       if (summaryRes.ok) {
         const data: SummaryResponse = await summaryRes.json();
@@ -178,7 +178,7 @@ export default function BudgetScreen() {
     };
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (user.token) headers['Authorization'] = `Bearer ${user.token}`;
-    const res = await fetch(`${API_URL}/budgets`, {
+    const res = await fetch(`${API_URL}/auth/budgets`, {
       method: 'POST',
       headers,
       credentials: 'include',

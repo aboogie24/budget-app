@@ -25,7 +25,7 @@ func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		http.Error(w, "Database connection error", http.StatusInternalServerError)
 		return
@@ -71,7 +71,7 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		http.Error(w, "Database connection error", http.StatusInternalServerError)
 		return

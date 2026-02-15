@@ -202,6 +202,10 @@ func UpdateBudget(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	if budget.UserID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
 	budget.UpdatedAt = time.Now()
 	if budget.Frequency == "" {
 		budget.Frequency = "monthly"
@@ -213,6 +217,10 @@ func UpdateBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "budgets", id, budget.UserID) {
+		return
+	}
 
 	if budget.HouseholdID == nil || *budget.HouseholdID == "" {
 		if hh := db.ResolveHouseholdID(dbClient.Conn, budget.UserID); hh != "" {
@@ -657,13 +665,22 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 
 func DeleteBudget(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
 
-	dbClient, err := db.Init()
+	dbClient, err := db.New()
 	if err != nil {
 		http.Error(w, "DB connection error", http.StatusInternalServerError)
 		return
 	}
 	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "budgets", id, userID) {
+		return
+	}
 
 	_, err = dbClient.Exec("DELETE FROM budgets WHERE id = $1", id)
 	if err != nil {

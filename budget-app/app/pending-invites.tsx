@@ -44,7 +44,7 @@ export default function PendingInvitesScreen() {
       const headers: any = { 'Content-Type': 'application/json' };
       if (user.token) headers.Authorization = `Bearer ${user.token}`;
 
-      const res = await fetch(`${API_URL}/households/invites?user_id=${user.id}`, {
+      const res = await fetch(`${API_URL}/auth/households/invites?user_id=${user.id}`, {
         credentials: 'include',
         headers,
       });
@@ -89,7 +89,7 @@ export default function PendingInvitesScreen() {
               const headers: any = { 'Content-Type': 'application/json' };
               if (user.token) headers.Authorization = `Bearer ${user.token}`;
 
-              const res = await fetch(`${API_URL}/households/accept`, {
+              const res = await fetch(`${API_URL}/auth/households/accept`, {
                 method: 'POST',
                 headers,
                 credentials: 'include',

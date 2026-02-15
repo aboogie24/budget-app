@@ -97,7 +97,7 @@ export default function BillsScreen() {
       if (!userId) return;
 
       const [cats, userDebts] = await Promise.all([
-        api.get<Category[]>(`/categories/user/${userId}`).catch(() => []),
+        api.get<Category[]>(`/auth/categories/user/${userId}`).catch(() => []),
         api.get<Debt[]>('/auth/debts', { user_id: userId }).catch(() => []),
       ]);
       setCategories(Array.isArray(cats) ? cats : []);

@@ -51,6 +51,35 @@ func computeBillingPeriod(dueDay int, frequency string, ref time.Time) (time.Tim
 	}
 }
 
+// isDueDatePassed determines whether the due date for a bill has passed within
+// the current billing period. Works for all frequencies, not just monthly.
+func isDueDatePassed(dueDay int, frequency string, periodStart, now time.Time) bool {
+	switch frequency {
+	case "weekly":
+		// Due on the Nth day of the week (dueDay 1=Mon..7=Sun).
+		// If we're past that weekday within the period, it's overdue.
+		wd := int(now.Weekday())
+		if wd == 0 {
+			wd = 7
+		}
+		return wd > dueDay
+	case "biweekly":
+		// Due on `dueDay` relative to the period start.
+		dueDate := periodStart.AddDate(0, 0, dueDay-1)
+		return now.After(dueDate)
+	case "1st-15th":
+		// Two pay periods per month: 1st-15th and 16th-end.
+		// Due on `dueDay` within whichever half we're in.
+		d := now.Day()
+		if d <= 15 {
+			return d > dueDay
+		}
+		return d > (15 + dueDay)
+	default: // monthly, quarterly, yearly
+		return now.Day() > dueDay
+	}
+}
+
 func ListBills(w http.ResponseWriter, r *http.Request) {
 	userID, err := sanitizeUserID(r.URL.Query().Get("user_id"))
 	if err != nil {
@@ -141,7 +170,7 @@ func ListBills(w http.ResponseWriter, r *http.Request) {
 
 		if paymentCount > 0 {
 			b.Status = "paid"
-		} else if now.Day() > b.DueDay && b.Frequency == "monthly" {
+		} else if isDueDatePassed(b.DueDay, b.Frequency, periodStart, now) {
 			b.Status = "overdue"
 		} else {
 			b.Status = "unpaid"
@@ -245,12 +274,25 @@ func UpdateBill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		userID = b.UserID
+	}
+	if userID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
+
 	client, err := billsDBFactory()
 	if err != nil {
 		http.Error(w, "DB connection error", http.StatusInternalServerError)
 		return
 	}
 	defer client.Close()
+
+	if !ownershipCheck(w, client.Raw(), "bills", billID, userID) {
+		return
+	}
 
 	res, err := client.Exec(`
 		UPDATE bills
@@ -278,6 +320,11 @@ func DeleteBill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing bill id", http.StatusBadRequest)
 		return
 	}
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
 
 	client, err := billsDBFactory()
 	if err != nil {
@@ -285,6 +332,10 @@ func DeleteBill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
+
+	if !ownershipCheck(w, client.Raw(), "bills", billID, userID) {
+		return
+	}
 
 	res, err := client.Exec(`DELETE FROM bills WHERE id=$1`, billID)
 	if err != nil {
@@ -362,6 +413,17 @@ func MarkBillPaid(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	periodStart, periodEnd := computeBillingPeriod(bill.DueDay, bill.Frequency, now)
+
+	// Double-counting guard: reject if already paid this period
+	var existingPayments int
+	_ = client.QueryRow(`
+		SELECT COUNT(*) FROM bill_payments
+		WHERE bill_id = $1 AND period_start = $2 AND period_end = $3
+	`, billID, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02")).Scan(&existingPayments)
+	if existingPayments > 0 {
+		http.Error(w, "Bill already paid for this period", http.StatusConflict)
+		return
+	}
 
 	paymentID := uuid.New().String()
 	txID := uuid.New().String()

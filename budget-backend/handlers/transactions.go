@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/models"
+	"github.com/gorilla/mux"
 )
 
 func CreateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -194,13 +194,16 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 }
 
 func DeleteTransaction(w http.ResponseWriter, r *http.Request) {
-	// Expecting URL format: /transactions/{id}
-	segments := strings.Split(r.URL.Path, "/")
-	if len(segments) < 3 {
+	id := mux.Vars(r)["id"]
+	if id == "" {
 		http.Error(w, "Missing transaction ID", http.StatusBadRequest)
 		return
 	}
-	id := segments[2]
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
 
 	dbClient, err := db.New()
 	if err != nil {
@@ -208,6 +211,10 @@ func DeleteTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "transactions", id, userID) {
+		return
+	}
 
 	_, err = dbClient.Exec("DELETE FROM transactions WHERE id = $1", id)
 	if err != nil {

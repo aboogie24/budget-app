@@ -81,7 +81,7 @@ export default function SharingPreferencesScreen() {
         // Resolve household id first, use the value directly (not stale state)
         let hhId: string | undefined;
         try {
-          const res = await fetch(`${API_URL}/households/me?user_id=${user.id}`, {
+          const res = await fetch(`${API_URL}/auth/households/me?user_id=${user.id}`, {
             headers: user.token ? { Authorization: `Bearer ${user.token}` } : undefined,
             credentials: 'include',
           });

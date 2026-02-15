@@ -85,7 +85,7 @@ export default function SettingsScreen() {
         'Content-Type': 'application/json',
         ...(user.token ? { Authorization: `Bearer ${user.token}` } : {}),
       };
-      const res = await fetch(`${API_URL}/households/me?user_id=${user.id}`, {
+      const res = await fetch(`${API_URL}/auth/households/me?user_id=${user.id}`, {
         credentials: 'include',
         headers,
       });
@@ -103,7 +103,7 @@ export default function SettingsScreen() {
 
       // Check pending invites
       try {
-        const invRes = await fetch(`${API_URL}/households/invites?user_id=${user.id}`, {
+        const invRes = await fetch(`${API_URL}/auth/households/invites?user_id=${user.id}`, {
           credentials: 'include',
           headers,
         });

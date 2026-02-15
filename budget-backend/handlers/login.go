@@ -26,7 +26,7 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := db.Init()
+	conn, err := db.New()
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return

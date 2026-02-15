@@ -42,12 +42,12 @@ export default function AddBudgetScreen() {
     const fetchCategories = async () => {
       try {
         const user = await getCurrentUser();
-        const defaultsRes = await fetch(`${API_URL}/categories?type=${type}`);
+        const defaultsRes = await fetch(`${API_URL}/auth/categories?type=${type}`);
         const defaults = defaultsRes.ok ? await defaultsRes.json() : [];
 
         let userCats: any[] = [];
         if (user?.id) {
-          const userRes = await fetch(`${API_URL}/categories/user/${user.id}`);
+          const userRes = await fetch(`${API_URL}/auth/categories/user/${user.id}`);
           userCats = userRes.ok ? await userRes.json() : [];
         }
 
@@ -78,7 +78,7 @@ export default function AddBudgetScreen() {
       const currentYear = new Date().getFullYear();
 
       try {
-        const response = await fetch(`${API_URL}/budgets/user/${currentUser.id}?month=${currentMonth}&year=${currentYear}`, {
+        const response = await fetch(`${API_URL}/auth/budgets/user/${currentUser.id}?month=${currentMonth}&year=${currentYear}`, {
           credentials: 'include',
           headers: currentUser.token ? { Authorization: `Bearer ${currentUser.token}` } : undefined,
         });
@@ -113,7 +113,7 @@ export default function AddBudgetScreen() {
     };
 
     try {
-      const res = await fetch(`${API_URL}/budgets`, {
+      const res = await fetch(`${API_URL}/auth/budgets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

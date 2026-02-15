@@ -73,28 +73,32 @@ func SetupRoutes(r *mux.Router) {
 	// User (Logut)
 	r.HandleFunc("/user/logout", handlers.LogoutUser).Methods("POST")
 
-	// Categories
-	r.HandleFunc("/categories", handlers.GetCategories).Methods("GET")
-	r.HandleFunc("/categories", handlers.CreateCategory).Methods("POST")
-	r.HandleFunc("/categories/user/{user_id}", handlers.GetCategoriesByUserID).Methods("GET") // ← new route
-	r.HandleFunc("/categories/{id}", handlers.UpdateCategory).Methods("PUT")
-	r.HandleFunc("/categories/{id}", handlers.DeleteCategory).Methods("DELETE")
+	// Categories (behind auth)
+	authRoutes.HandleFunc("/categories", handlers.GetCategories).Methods("GET")
+	authRoutes.HandleFunc("/categories", handlers.CreateCategory).Methods("POST")
+	authRoutes.HandleFunc("/categories/user/{user_id}", handlers.GetCategoriesByUserID).Methods("GET")
+	authRoutes.HandleFunc("/categories/{id}", handlers.UpdateCategory).Methods("PUT")
+	authRoutes.HandleFunc("/categories/{id}", handlers.DeleteCategory).Methods("DELETE")
 
-	// Budgets
-	r.HandleFunc("/budgets", handlers.CreateBudget).Methods("POST")
-	r.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
-	r.HandleFunc("/budgets/user/{user_id}/summary", handlers.GetBudgetSummary).Methods("GET")
-	r.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
-	r.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
+	// Budgets (behind auth)
+	authRoutes.HandleFunc("/budgets", handlers.CreateBudget).Methods("POST")
+	authRoutes.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
+	authRoutes.HandleFunc("/budgets/user/{user_id}/summary", handlers.GetBudgetSummary).Methods("GET")
+	authRoutes.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
+	authRoutes.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
 
-	//Plaid
-	r.HandleFunc("/link_token", handlers.CreateLinkToken(plaid)).Methods("GET")
-	r.HandleFunc("/exchange_token", handlers.ExchangeToken(plaid)).Methods("POST")
+	// Plaid (behind auth)
+	authRoutes.HandleFunc("/link_token", handlers.CreateLinkToken(plaid)).Methods("GET")
+	authRoutes.HandleFunc("/exchange_token", handlers.ExchangeToken(plaid)).Methods("POST")
+
+	// Plaid link page (public — serves HTML for WebView)
 	r.HandleFunc("/plaid/link-page", handlers.PlaidLinkPage).Methods("GET")
-	r.HandleFunc("/households", handlers.CreateHousehold).Methods("POST")
-	r.HandleFunc("/households/invite", handlers.CreateHouseholdInvite).Methods("POST")
-	r.HandleFunc("/households/accept", handlers.AcceptHouseholdInvite).Methods("POST")
-	r.HandleFunc("/households/invites", handlers.ListHouseholdInvites).Methods("GET")
-	r.HandleFunc("/households/me", handlers.GetHouseholdForUser).Methods("GET")
+
+	// Households (behind auth)
+	authRoutes.HandleFunc("/households", handlers.CreateHousehold).Methods("POST")
+	authRoutes.HandleFunc("/households/invite", handlers.CreateHouseholdInvite).Methods("POST")
+	authRoutes.HandleFunc("/households/accept", handlers.AcceptHouseholdInvite).Methods("POST")
+	authRoutes.HandleFunc("/households/invites", handlers.ListHouseholdInvites).Methods("GET")
+	authRoutes.HandleFunc("/households/me", handlers.GetHouseholdForUser).Methods("GET")
 
 }

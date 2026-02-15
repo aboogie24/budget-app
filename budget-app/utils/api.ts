@@ -15,13 +15,13 @@ export async function fetchUserTransactions() {
 export async function fetchBudgetSummary(month: number, year: number) {
   const userId = await api.getUserId();
   if (!userId) throw new Error('User not found');
-  return api.get(`/budgets/user/${userId}/summary`, { month, year });
+  return api.get(`/auth/budgets/user/${userId}/summary`, { month, year });
 }
 
 export async function fetchCategories() {
   const userId = await api.getUserId();
   if (!userId) throw new Error('User not found');
-  const data = await api.get<any[]>(`/categories/user/${userId}`);
+  const data = await api.get<any[]>(`/auth/categories/user/${userId}`);
   return Array.isArray(data) ? data : [];
 }
 
