@@ -6,20 +6,17 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  FlatList,
   ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getCurrentUser } from '../utils/storage';
-import Constants from 'expo-constants';
+import { api } from '../utils/apiClient';
 import { v4 as uuidv4 } from 'uuid';
+import { successHaptic, errorHaptic } from '../utils/haptics';
 
 const frequencyOptions = ['one-time', 'weekly', 'biweekly', 'monthly'];
-
-const generateId = () =>
-  Math.random().toString(36).substring(2, 10) + Date.now();
 
 export default function AddTransactionScreen() {
   const params = useLocalSearchParams();
@@ -28,20 +25,16 @@ export default function AddTransactionScreen() {
 
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('');
-  const [categories, setCategories] = useState([]);
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [note, setNote] = useState('');
   const [frequency, setFrequency] = useState('one-time');
   const [dueDay, setDueDay] = useState('');
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080'; // fallback
 
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const res = await fetch(`${API_URL}/auth/categories?type=${type}`);
-        const data = await res.json();
+        const currentUser = await getCurrentUser();
+        const data = await api.get(`/auth/categories`, { type, user_id: currentUser?.id });
         setCategories(Array.isArray(data) ? data : []);
       } catch (e) {
         console.error('Failed to fetch categories:', e);
@@ -84,36 +77,21 @@ export default function AddTransactionScreen() {
       try {
         const newCatPayload = {
           id: uuidv4(),
-          name: category, 
+          name: category,
           user_id: currentUser.id,
           type,
+          color: "#4CAF50",
         }
 
         console.log(newCatPayload)
-        const categoryRes = await fetch(`${API_URL}/auth/categories`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(currentUser.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            id: uuidv4(),
-            name: category,
-            user_id: currentUser.id,
-            type,
-            color: "#4CAF50", 
-          }),
-        });
+        const created = await api.post(`/auth/categories`, newCatPayload);
 
-        console.log(categoryRes)
+        console.log(created)
 
-        if (!categoryRes.ok) {
-          throw new Error(`Failed to create category: ${await categoryRes.text()}`);
+        selectedCategory = created;
+        if (created) {
+          setCategories((prev) => [...prev, created]);
         }
-
-        selectedCategory = await categoryRes.json();
-        setCategories((prev) => [...prev, selectedCategory]);
       } catch (err) {
         console.error('Failed to create category:', err);
         Alert.alert('Error', 'Failed to create category.');
@@ -122,12 +100,12 @@ export default function AddTransactionScreen() {
     }
 
     const transaction = {
-      id: generateId(),
+      id: uuidv4(),
       user_id: currentUser.id,
       type,
       amount: parseFloat(amount),
       category_id: selectedCategory?.id,
-      category: selectedCategory.name,
+      category: selectedCategory?.name,
       note,
       date: new Date().toISOString(),
       frequency,
@@ -136,27 +114,13 @@ export default function AddTransactionScreen() {
     };
 
     try {
-      const response = await fetch(`${API_URL}/auth/transactions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(currentUser.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
-        },
-        credentials: 'include',
-        body: JSON.stringify(transaction),
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        console.error('Failed to save:', err);
-        Alert.alert('Error', 'Failed to save transaction.');
-        return;
-      }
-
+      await api.post(`/auth/transactions`, transaction);
+      successHaptic();
       Alert.alert('Success', 'Transaction saved.');
       router.replace('/(tabs)/budget');
     } catch (err) {
       console.error('Error saving:', err);
+      errorHaptic();
       Alert.alert('Error', 'Could not save transaction.');
     }
   };
@@ -213,21 +177,21 @@ export default function AddTransactionScreen() {
             />
 
             {category.length > 0 && (
-              <FlatList
-                data={categories.filter((c) =>
-                  c.name.toLowerCase().includes(category.toLowerCase())
-                )}
-                keyExtractor={(item) => item.id.toString()}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    onPress={() => setCategory(item.name)}
-                    style={styles.suggestionItem}
-                  >
-                    <Text style={{ color: '#e5e7eb' }}>{item.name}</Text>
-                  </TouchableOpacity>
-                )}
-                style={{ maxHeight: 120, marginBottom: 12 }}
-              />
+              <View style={{ maxHeight: 120, marginBottom: 12 }}>
+                {categories
+                  .filter((c) =>
+                    c.name.toLowerCase().includes(category.toLowerCase())
+                  )
+                  .map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      onPress={() => setCategory(item.name)}
+                      style={styles.suggestionItem}
+                    >
+                      <Text style={{ color: '#e5e7eb' }}>{item.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+              </View>
             )}
 
             <LabeledInput

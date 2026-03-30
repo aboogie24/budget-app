@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -202,6 +203,9 @@ func StartRecurringTicker() {
 			log.Printf("recurring ticker: initial sync created %d transactions", created)
 		}
 
+		RunBillReminders()
+		RunBudgetAlerts()
+
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -210,6 +214,149 @@ func StartRecurringTicker() {
 			} else {
 				log.Printf("recurring ticker: created %d transactions", created)
 			}
+			RunBillReminders()
+			RunBudgetAlerts()
 		}
 	}()
+}
+
+// RunBillReminders sends push notifications for bills that are due today, due tomorrow, or overdue.
+func RunBillReminders() {
+	client, err := db.New()
+	if err != nil {
+		log.Printf("bill reminders: db error: %v", err)
+		return
+	}
+	defer client.Close()
+
+	now := time.Now().UTC()
+	today := now.Day()
+	tomorrow := now.AddDate(0, 0, 1).Day()
+
+	// Find all bills with enabled push tokens
+	rows, err := client.Query(`
+		SELECT DISTINCT b.id, b.user_id, b.name, b.amount_due, b.due_day, b.frequency
+		FROM bills b
+		INNER JOIN push_tokens pt ON pt.user_id = b.user_id AND pt.enabled = true
+		WHERE b.due_day IN ($1, $2)
+	`, today, tomorrow)
+	if err != nil {
+		log.Printf("bill reminders: query error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	sent := 0
+	for rows.Next() {
+		var id, userID, name string
+		var amount float64
+		var dueDay int
+		var freq string
+		if err := rows.Scan(&id, &userID, &name, &amount, &dueDay, &freq); err != nil {
+			continue
+		}
+
+		// Check if already paid this period
+		periodStart, periodEnd := computeBillingPeriod(dueDay, freq, now)
+		var paidCount int
+		_ = client.QueryRow(`
+			SELECT COUNT(*) FROM bill_payments
+			WHERE bill_id = $1 AND period_start = $2 AND period_end = $3
+		`, id, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02")).Scan(&paidCount)
+		if paidCount > 0 {
+			continue
+		}
+
+		var title, body string
+		if dueDay == today {
+			if isDueDatePassed(dueDay, freq, periodStart, now) {
+				title = "Overdue Bill"
+				body = fmt.Sprintf("%s ($%.2f) is overdue", name, amount)
+			} else {
+				title = "Bill Due Today"
+				body = fmt.Sprintf("%s — $%.2f is due today", name, amount)
+			}
+		} else {
+			title = "Bill Due Tomorrow"
+			body = fmt.Sprintf("%s — $%.2f is due tomorrow", name, amount)
+		}
+
+		SendPushNotification(userID, title, body, map[string]string{
+			"screen":  "/bills",
+			"bill_id": id,
+		})
+		sent++
+	}
+	log.Printf("bill reminders: sent %d notifications", sent)
+}
+
+// RunBudgetAlerts sends push notifications for budgets that have reached their configured alert threshold.
+// It respects custom thresholds from the spending_alerts table and sends to all household members.
+func RunBudgetAlerts() {
+	client, err := db.New()
+	if err != nil {
+		log.Printf("budget alerts: db error: %v", err)
+		return
+	}
+	defer client.Close()
+
+	now := time.Now().UTC()
+	month := int(now.Month())
+	year := now.Year()
+	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+
+	// Find budgets where spending meets or exceeds their configured threshold
+	// JOIN with spending_alerts to get custom thresholds, defaulting to 80%
+	rows, err := client.Query(`
+		SELECT b.id, b.household_id, b.name, b.amount,
+		       COALESCE(SUM(t.amount), 0) AS spent,
+		       COALESCE(sa.threshold_percent, 80) AS threshold
+		FROM budgets b
+		LEFT JOIN spending_alerts sa ON sa.budget_id = b.id AND sa.is_enabled = true
+		LEFT JOIN budget_categories bc ON bc.budget_id = b.id
+		LEFT JOIN transactions t ON t.category_id = bc.category_id
+			AND t.type = 'expense'
+			AND t.date >= $1 AND t.date < $2
+		WHERE b.type = 'expense' AND b.amount > 0 AND b.household_id IS NOT NULL
+		GROUP BY b.id, b.household_id, b.name, b.amount, sa.threshold_percent
+	`, monthStart.Format("2006-01-02"), monthEnd.Format("2006-01-02"))
+	if err != nil {
+		log.Printf("budget alerts: query error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	sent := 0
+	for rows.Next() {
+		var budgetID, householdID, name string
+		var budgeted, spent float64
+		var threshold int
+		if err := rows.Scan(&budgetID, &householdID, &name, &budgeted, &spent, &threshold); err != nil {
+			continue
+		}
+
+		// Check if spending meets or exceeds the threshold
+		pct := int(spent / budgeted * 100)
+		if pct < threshold {
+			continue
+		}
+
+		var title, body string
+		if pct >= 100 {
+			title = "Over Budget"
+			body = fmt.Sprintf("%s is at %d%% ($%.0f of $%.0f)", name, pct, spent, budgeted)
+		} else {
+			title = "Budget Alert"
+			body = fmt.Sprintf("%s is at %d%% ($%.0f of $%.0f)", name, pct, spent, budgeted)
+		}
+
+		// Send to all household members
+		SendHouseholdNotification(householdID, "", title, body, map[string]string{
+			"screen":    "/(tabs)/budget",
+			"budget_id": budgetID,
+		})
+		sent++
+	}
+	log.Printf("budget alerts: sent %d notifications", sent)
 }

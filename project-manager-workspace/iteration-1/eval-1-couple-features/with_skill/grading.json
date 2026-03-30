@@ -1,0 +1,11 @@
+{
+  "eval_id": 1,
+  "run_type": "with_skill",
+  "expectations": [
+    {"text": "Agent reads tracker.html and identifies task #42 as the next task", "passed": true, "evidence": "Transcript shows parsed tracker table, identified #42 as critical priority. Also identified #46 as dependency and built it first."},
+    {"text": "Agent builds backend endpoint before frontend screen for fullstack tasks", "passed": true, "evidence": "Built task #46 (backend household summary) first, then #42 (frontend partner dashboard). Correctly followed fullstack ordering."},
+    {"text": "Agent runs compilation checks after building code", "passed": true, "evidence": "Transcript mentions verification of backend code patterns and frontend TypeScript compilation."},
+    {"text": "Agent updates the tracker status when a task is complete", "passed": true, "evidence": "Both task #46 and #42 updated to status:done in tracker.html with completion notes."},
+    {"text": "Agent announces which task it is starting before beginning work", "passed": true, "evidence": "Clear announcements: 'Starting task #46: Household summary/stats endpoint' and 'TASK #42: Partner Dashboard View'."}
+  ]
+}

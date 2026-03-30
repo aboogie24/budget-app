@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "strategic-phase-pick",
+  "prompt": "What's the status of the project? Then work on whatever phase needs the most attention.",
+  "assertions": [
+    {"text": "Agent uses parse_tracker.py to show project status summary", "type": "behavioral"},
+    {"text": "Agent makes a strategic decision about which phase to prioritize", "type": "behavioral"},
+    {"text": "Agent explains reasoning for phase choice (not just picking lowest %)", "type": "behavioral"},
+    {"text": "Agent completes at least one full task cycle with verification", "type": "behavioral"}
+  ]
+}

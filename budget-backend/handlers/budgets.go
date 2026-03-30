@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -218,7 +219,7 @@ func UpdateBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dbClient.Close()
 
-	if !ownershipCheck(w, dbClient.Conn, "budgets", id, budget.UserID) {
+	if !householdAccessCheck(w, dbClient.Conn, "budgets", id, budget.UserID) {
 		return
 	}
 
@@ -232,9 +233,9 @@ func UpdateBudget(w http.ResponseWriter, r *http.Request) {
 
 	_, err = dbClient.Exec(`
 		UPDATE budgets
-		SET name = $1, amount = $2, type = $3, category_id = $4, updated_at = $5, start_date = $6, frequency = $7, household_id = $8, is_shared = $9
+		SET name = $1, amount = $2, type = $3, category_id = $4, updated_at = $5, start_date = $6, frequency = $7, household_id = $8, is_shared = $9, updated_by = $11
 		WHERE id = $10
-	`, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.UpdatedAt, budget.StartDate, budget.Frequency, budget.HouseholdID, budget.IsShared, id)
+	`, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.UpdatedAt, budget.StartDate, budget.Frequency, budget.HouseholdID, budget.IsShared, id, budget.UserID)
 	if err != nil {
 		http.Error(w, "Failed to update budget", http.StatusInternalServerError)
 		return
@@ -247,6 +248,15 @@ func UpdateBudget(w http.ResponseWriter, r *http.Request) {
 			ON CONFLICT (category_id) DO UPDATE SET budget_id = EXCLUDED.budget_id
 		`, id, *budget.CategoryID)
 	}
+
+	// Record activity event for shared budgets
+	if budget.IsShared {
+		hhID := db.ResolveHouseholdID(dbClient.Conn, budget.UserID)
+		if hhID != "" {
+			_ = RecordActivity(dbClient, hhID, budget.UserID, "budget_updated", id, "budget", budget.Amount, fmt.Sprintf("Updated budget: %s", budget.Name))
+		}
+	}
+
 	budget.ID = id
 	json.NewEncoder(w).Encode(budget)
 }

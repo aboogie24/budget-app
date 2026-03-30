@@ -1,0 +1,11 @@
+{
+  "eval_id": 1,
+  "run_type": "without_skill",
+  "expectations": [
+    {"text": "Agent reads tracker.html and identifies task #42 as the next task", "passed": true, "evidence": "Identified Task 42 (CRITICAL) and Task 46 (HIGH) from tracker analysis. Correctly prioritized."},
+    {"text": "Agent builds backend endpoint before frontend screen for fullstack tasks", "passed": true, "evidence": "Checked backend first (found existing endpoint), then built frontend dashboard changes."},
+    {"text": "Agent runs compilation checks after building code", "passed": true, "evidence": "Ran TypeScript compilation and linting checks. Reported 0 errors."},
+    {"text": "Agent updates the tracker status when a task is complete", "passed": false, "evidence": "No mention of updating tracker.html task statuses in the transcript."},
+    {"text": "Agent announces which task it is starting before beginning work", "passed": true, "evidence": "Listed priority determination and selected tasks 42 and 46 before starting."}
+  ]
+}

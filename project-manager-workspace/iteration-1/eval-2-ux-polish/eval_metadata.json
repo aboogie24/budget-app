@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "eval_name": "ux-polish-phase",
+  "prompt": "Continue building the app. Pick up where we left off on UX Polish.",
+  "assertions": [
+    {"text": "Agent correctly identifies UX Polish phase tasks from the tracker", "type": "behavioral"},
+    {"text": "Agent picks a high-priority task rather than starting with low priority", "type": "behavioral"},
+    {"text": "Agent references coupleflow-prototype.jsx for design guidance", "type": "behavioral"},
+    {"text": "Agent runs TypeScript compilation check after changes", "type": "behavioral"},
+    {"text": "Agent provides a visual description of the built UI", "type": "behavioral"}
+  ]
+}

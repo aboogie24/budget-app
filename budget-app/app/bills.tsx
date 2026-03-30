@@ -16,6 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
 
 type Bill = {
   id: string;
@@ -59,6 +61,7 @@ export default function BillsScreen() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Dropdown data
   const [categories, setCategories] = useState<Category[]>([]);
@@ -84,8 +87,10 @@ export default function BillsScreen() {
       if (!userId) return;
       const data = await api.get<Bill[]>('/auth/bills', { user_id: userId });
       setBills(Array.isArray(data) ? data : []);
+      setError(null);
     } catch (e) {
       console.error('Failed to load bills:', e);
+      setError('Failed to load bills');
     } finally {
       setLoading(false);
     }
@@ -316,14 +321,31 @@ export default function BillsScreen() {
           </TouchableOpacity>
 
           {/* Bill List */}
-          {loading ? (
+          {error && (
+            <ErrorState
+              title="Something went wrong"
+              message={error}
+              onRetry={() => {
+                setError(null);
+                setLoading(true);
+                loadBills();
+              }}
+            />
+          )}
+
+          {!error && loading ? (
             <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : bills.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="receipt-outline" size={48} color="#475569" />
-              <Text style={styles.emptyText}>No bills tracked yet</Text>
-              <Text style={styles.emptySubtext}>Tap + to add your first bill</Text>
-            </View>
+          ) : !error && bills.length === 0 ? (
+            <EmptyState
+              icon="document-text-outline"
+              title="No bills tracked"
+              description="Add your first bill to start tracking recurring payments"
+              actionLabel="Add Bill"
+              onAction={() => {
+                resetForm();
+                setShowForm(true);
+              }}
+            />
           ) : (
             bills.map((b) => {
               const status = STATUS_CONFIG[b.status || 'unpaid'];

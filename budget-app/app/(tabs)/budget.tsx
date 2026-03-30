@@ -1,13 +1,18 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, Dimensions, Platform, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, Dimensions, Platform, Modal, RefreshControl } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { v4 as uuidv4 } from 'uuid';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { checkBudgetThresholds } from '@/utils/api';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
+import { SkeletonCard } from '@/components/SkeletonLoader';
+import { ProgressRing } from '@/components/ProgressRing';
 
 type Category = { id: string; name: string; type: string; budget_id?: string | null };
 
@@ -53,14 +58,14 @@ export default function BudgetScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [budgetFilter, setBudgetFilter] = useState<string>('all');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [monthYear, setMonthYear] = useState(() => {
     const now = new Date();
     return { month: now.getMonth(), year: now.getFullYear() };
   });
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    (Constants as any).manifest?.extra?.API_URL ??
-    'http://localhost:8080';
+  const [alertedBudgets, setAlteredBudgets] = useState<Record<string, { percent: number; threshold: number }>>({});
+  const [error, setError] = useState<string | null>(null);
 
   const monthLabel = useMemo(() => {
     const date = new Date(monthYear.year, monthYear.month, 1);
@@ -77,30 +82,28 @@ export default function BudgetScreen() {
   const loadData = useCallback(async () => {
     const user = await getCurrentUser();
     if (!user?.id) return;
-    const headers: Record<string, string> = {};
-    if (user.token) headers['Authorization'] = `Bearer ${user.token}`;
-    const qs = `?month=${monthYear.month + 1}&year=${monthYear.year}`;
     try {
-      const [summaryRes, catRes] = await Promise.all([
-        fetch(`${API_URL}/auth/budgets/user/${user.id}/summary${qs}`, { credentials: 'include', headers }),
-        fetch(`${API_URL}/auth/categories/user/${user.id}`, { credentials: 'include', headers }),
+      const [data, catData] = await Promise.all([
+        api.get(`/auth/budgets/user/${user.id}/summary`, { month: monthYear.month + 1, year: monthYear.year }),
+        api.get(`/auth/categories/user/${user.id}`),
       ]);
-      if (summaryRes.ok) {
-        const data: SummaryResponse = await summaryRes.json();
-        setSummary(data);
-      } else {
-        console.warn('Summary fetch failed', summaryRes.status);
-      }
-      if (catRes.ok) {
-        const data = await catRes.json();
-        setCategories(Array.isArray(data) ? data : []);
-      } else {
-        console.warn('Category fetch failed', catRes.status);
-      }
+      const summary: SummaryResponse = data;
+      setSummary(summary);
+      setCategories(Array.isArray(catData) ? catData : []);
+      setError(null);
+      setLoading(false);
     } catch (e) {
       console.error('Budget screen fetch error', e);
+      setError('Failed to load budgets');
+      setLoading(false);
     }
-  }, [API_URL, monthYear.month, monthYear.year]);
+  }, [monthYear.month, monthYear.year]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  }, [loadData]);
 
   useEffect(() => {
     loadData();
@@ -109,6 +112,27 @@ export default function BudgetScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
+      // Check budget thresholds on screen focus
+      const checkThresholds = async () => {
+        try {
+          const alerts = await checkBudgetThresholds();
+          const alertMap: Record<string, { percent: number; threshold: number }> = {};
+          if (Array.isArray(alerts)) {
+            alerts.forEach((alert: any) => {
+              if (alert.over_threshold || alert.percentUsed >= alert.threshold_percent) {
+                alertMap[alert.budget_id] = {
+                  percent: alert.percent_used,
+                  threshold: alert.threshold_percent,
+                };
+              }
+            });
+          }
+          setAlteredBudgets(alertMap);
+        } catch (e) {
+          console.error('Failed to check budget thresholds', e);
+        }
+      };
+      checkThresholds();
     }, [loadData])
   );
 
@@ -165,40 +189,46 @@ export default function BudgetScreen() {
       return;
     }
     setSaving(true);
-    const body: Record<string, unknown> = {
-      id: uuidv4(),
-      user_id: user.id,
-      name: name.trim(),
-      amount: parseFloat(amount),
-      type,
-      category_id: categoryId || null,
-      frequency,
-      start_date: startDate.toISOString(),
-      is_shared: shared,
-    };
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (user.token) headers['Authorization'] = `Bearer ${user.token}`;
-    const res = await fetch(`${API_URL}/auth/budgets`, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
+    try {
+      const body: Record<string, unknown> = {
+        id: uuidv4(),
+        user_id: user.id,
+        name: name.trim(),
+        amount: parseFloat(amount),
+        type,
+        category_id: categoryId || null,
+        frequency,
+        start_date: startDate.toISOString(),
+        is_shared: shared,
+      };
+      await api.post(`/auth/budgets`, body);
       setName('');
       setAmount('');
       setCategoryId('');
       setShared(false);
       setShowAdd(false);
       loadData();
+    } catch (e) {
+      console.error('Failed to save budget:', e);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   return (
     <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#a855f7"
+              colors={['#a855f7']}
+            />
+          }
+        >
           <View style={styles.headerRow}>
             <View style={styles.logoRow}>
               <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
@@ -219,6 +249,13 @@ export default function BudgetScreen() {
             </TouchableOpacity>
           </View>
 
+          {loading ? (
+            <>
+              <SkeletonCard lines={4} />
+              <SkeletonCard lines={3} />
+              <SkeletonCard lines={3} />
+            </>
+          ) : (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.sectionLabel}>Monthly Overview</Text>
@@ -274,20 +311,43 @@ export default function BudgetScreen() {
             </View>
           )}
 
-          <View style={styles.listHeader}>
-            <Text style={styles.sectionLabel}>Overview</Text>
-            <TouchableOpacity
-              style={styles.filterBtn}
-              onPress={() =>
-                setBudgetFilter((prev) => (prev === 'all' ? (budgetItems[0]?.id || 'all') : 'all'))
-              }
-            >
-              <Ionicons name="filter" size={16} color="#cbd5e1" />
-              <Text style={styles.filterText}>{budgetFilter === 'all' ? 'All' : 'Filtered'}</Text>
-            </TouchableOpacity>
-          </View>
+          {error && (
+            <ErrorState
+              title="Something went wrong"
+              message={error}
+              onRetry={() => {
+                setError(null);
+                loadData();
+              }}
+            />
+          )}
 
-          {/* Budgets Section */}
+          {!error && budgetItems.length === 0 && (
+            <EmptyState
+              icon="wallet-outline"
+              title="No budgets yet"
+              description="Create your first budget to start tracking your spending and income"
+              actionLabel="Create Budget"
+              onAction={() => setShowAdd(true)}
+            />
+          )}
+
+          {!error && budgetItems.length > 0 && (
+            <>
+              <View style={styles.listHeader}>
+                <Text style={styles.sectionLabel}>Overview</Text>
+                <TouchableOpacity
+                  style={styles.filterBtn}
+                  onPress={() =>
+                    setBudgetFilter((prev) => (prev === 'all' ? (budgetItems[0]?.id || 'all') : 'all'))
+                  }
+                >
+                  <Ionicons name="filter" size={16} color="#cbd5e1" />
+                  <Text style={styles.filterText}>{budgetFilter === 'all' ? 'All' : 'Filtered'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Budgets Section */}
           <TouchableOpacity style={styles.sectionHeader} onPress={() => setBudgetsExpanded((v) => !v)}>
             <View style={styles.sectionHeaderLeft}>
               <View style={[styles.sectionIcon, { backgroundColor: 'rgba(192,132,252,0.12)' }]}>
@@ -348,14 +408,37 @@ export default function BudgetScreen() {
                           {isIncome ? 'Income' : 'Expense'}
                         </Text>
                       </View>
+                      {alertedBudgets[b.id] && !isIncome && (
+                        <View style={[
+                          styles.alertBadge,
+                          { backgroundColor: alertedBudgets[b.id].percent >= 100 ? '#ef4444' : '#eab308' }
+                        ]}>
+                          <Ionicons
+                            name={alertedBudgets[b.id].percent >= 100 ? 'warning' : 'alert-circle'}
+                            size={12}
+                            color="#fff"
+                          />
+                        </View>
+                      )}
                     </View>
                     <Text style={styles.budgetSub}>
                       {formatCurrency(b.spent)} of {formatCurrency(b.budgeted)}
                     </Text>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={[styles.percent, { color: accentColor }]}>{b.percent}%</Text>
-                    {b.is_shared ? <Text style={styles.sharedBadge}>Shared</Text> : null}
+                  <View style={{ alignItems: 'center', gap: 8 }}>
+                    <ProgressRing
+                      progress={Math.min(b.percent / 100, 1)}
+                      size={56}
+                      strokeWidth={4}
+                      color={b.percent > 80 ? '#ef4444' : b.percent > 60 ? '#f59e0b' : '#34d399'}
+                      backgroundColor="rgba(255,255,255,0.1)"
+                    />
+                    {b.is_shared && (
+                      <View style={styles.sharedBadgeNew}>
+                        <Ionicons name="people" size={12} color="#a855f7" />
+                        <Text style={styles.sharedBadgeText}>Shared</Text>
+                      </View>
+                    )}
                   </View>
                 </View>
                 <View style={styles.progressBarTrack}>
@@ -445,7 +528,12 @@ export default function BudgetScreen() {
                         </Text>
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
-                        {b.is_shared ? <Text style={styles.sharedBadge}>Shared</Text> : null}
+                        {b.is_shared && (
+                          <View style={styles.sharedBadgeNew}>
+                            <Ionicons name="people" size={12} color="#a855f7" />
+                            <Text style={styles.sharedBadgeText}>Shared</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                     <View style={styles.progressBarTrack}>
@@ -459,6 +547,8 @@ export default function BudgetScreen() {
                 );
               })}
             </>
+            </>
+          )}
           )}
         </ScrollView>
         <TouchableOpacity style={styles.fab} onPress={() => setShowAdd(true)}>
@@ -696,6 +786,23 @@ const styles = StyleSheet.create({
     color: '#c084fc',
     fontWeight: '700',
   },
+  sharedBadgeNew: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(168, 85, 247, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.3)',
+  },
+  sharedBadgeText: {
+    color: '#a855f7',
+    fontWeight: '700',
+    fontSize: 11,
+  },
   fab: {
     position: 'absolute',
     bottom: 30,
@@ -854,4 +961,13 @@ const styles = StyleSheet.create({
   billStatusPaid: { backgroundColor: 'rgba(52,211,153,0.12)' },
   billStatusUnpaid: { backgroundColor: 'rgba(251,191,36,0.12)' },
   billStatusText: { fontSize: 10, fontWeight: '700' },
+
+  /* Alert badge for budget threshold */
+  alertBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

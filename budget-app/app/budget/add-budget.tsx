@@ -12,11 +12,12 @@ import {
   FlatList,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import DropDownPicker from 'react-native-dropdown-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons } from '@expo/vector-icons';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 export default function AddBudgetScreen() {
   const router = useRouter();
@@ -33,23 +34,14 @@ export default function AddBudgetScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [budgets, setBudgets] = useState([]);
 
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ||
-    Constants.manifest?.extra?.API_URL ||
-    'http://localhost:8080';
-
   useEffect(() => {
     const fetchCategories = async () => {
       try {
         const user = await getCurrentUser();
-        const defaultsRes = await fetch(`${API_URL}/auth/categories?type=${type}`);
-        const defaults = defaultsRes.ok ? await defaultsRes.json() : [];
-
-        let userCats: any[] = [];
-        if (user?.id) {
-          const userRes = await fetch(`${API_URL}/auth/categories/user/${user.id}`);
-          userCats = userRes.ok ? await userRes.json() : [];
-        }
+        const [defaults, userCats] = await Promise.all([
+          api.get(`/auth/categories`, { type }).catch(() => []),
+          user?.id ? api.get(`/auth/categories/user/${user.id}`).catch(() => []) : Promise.resolve([]),
+        ]);
 
         const filteredUserCats = (Array.isArray(userCats) ? userCats : []).filter(
           (c) => c.type?.toLowerCase() === type.toLowerCase()
@@ -78,11 +70,7 @@ export default function AddBudgetScreen() {
       const currentYear = new Date().getFullYear();
 
       try {
-        const response = await fetch(`${API_URL}/auth/budgets/user/${currentUser.id}?month=${currentMonth}&year=${currentYear}`, {
-          credentials: 'include',
-          headers: currentUser.token ? { Authorization: `Bearer ${currentUser.token}` } : undefined,
-        });
-        const data = await response.json();
+        const data = await api.get(`/auth/budgets/user/${currentUser.id}`, { month: currentMonth, year: currentYear });
         setBudgets(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error('Failed to load budgets:', error);
@@ -119,12 +107,15 @@ export default function AddBudgetScreen() {
         body: JSON.stringify(body),
       });
       if (res.ok) {
+        successHaptic();
         router.back();
       } else {
+        errorHaptic();
         Alert.alert('Error', 'Failed to save budget.');
       }
     } catch (err) {
       console.error('Save error', err);
+      errorHaptic();
       Alert.alert('Error', 'Something went wrong.');
     }
   };

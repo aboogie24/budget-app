@@ -313,3 +313,112 @@ func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(invites)
 }
+
+// GET /auth/households/summary
+// Returns combined financial summary for all members of a household
+// Accepts either user_id (resolves household) or household_id directly
+func GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {
+	householdID := r.URL.Query().Get("household_id")
+	userID := r.URL.Query().Get("user_id")
+
+	if householdID == "" && userID == "" {
+		http.Error(w, `{"error": "Missing household_id or user_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	client, err := householdDBFactory()
+	if err != nil {
+		http.Error(w, `{"error": "DB connection error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer client.Close()
+
+	// If only user_id provided, resolve the household_id
+	if householdID == "" && userID != "" {
+		resolved := db.ResolveHouseholdID(client.Raw(), userID)
+		if resolved == "" {
+			// User has no household; return personal-only summary
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"household_id":           nil,
+				"household_name":         "Personal",
+				"member_count":           1,
+				"total_income":           0.0,
+				"total_expenses":         0.0,
+				"net_cash_flow":          0.0,
+				"total_debt":             0.0,
+				"total_savings_target":   0.0,
+				"total_savings_current":  0.0,
+				"savings_progress":       0.0,
+			})
+			return
+		}
+		householdID = resolved
+	}
+
+	// Aggregate all transactions, debts, and savings goals for the household
+	query := `
+		SELECT
+			COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS total_income,
+			COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expenses,
+			COALESCE(SUM(d.amount), 0) AS total_debt,
+			COALESCE(SUM(sg.target_amount), 0) AS total_savings_target,
+			COALESCE(SUM(sg.current_amount), 0) AS total_savings_current
+		FROM (
+			SELECT hm.household_id FROM household_members hm WHERE hm.household_id = $1
+		) hh
+		LEFT JOIN transactions t ON t.household_id = hh.household_id
+		LEFT JOIN debts d ON d.household_id = hh.household_id
+		LEFT JOIN savings_goals sg ON sg.household_id = hh.household_id
+	`
+
+	var totalIncome, totalExpenses, totalDebt, totalSavingsTarget, totalSavingsCurrent float64
+	err = client.Raw().QueryRow(query, householdID).Scan(&totalIncome, &totalExpenses, &totalDebt, &totalSavingsTarget, &totalSavingsCurrent)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("GetHouseholdSummary query error: %v", err)
+		http.Error(w, `{"error": "Query error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Get household name and member count
+	var hhName string
+	var memberCount int
+	err = client.Raw().QueryRow(`
+		SELECT COALESCE(h.name, 'Household'), COUNT(hm.user_id)
+		FROM households h
+		LEFT JOIN household_members hm ON hm.household_id = h.id
+		WHERE h.id = $1
+		GROUP BY h.id, h.name
+	`, householdID).Scan(&hhName, &memberCount)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("GetHouseholdSummary household info error: %v", err)
+		http.Error(w, `{"error": "Failed to fetch household info"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"household_id":           householdID,
+		"household_name":         hhName,
+		"member_count":           memberCount,
+		"total_income":           totalIncome,
+		"total_expenses":         totalExpenses,
+		"net_cash_flow":          totalIncome - totalExpenses,
+		"total_debt":             totalDebt,
+		"total_savings_target":   totalSavingsTarget,
+		"total_savings_current":  totalSavingsCurrent,
+		"savings_progress":       calculateSavingsProgress(totalSavingsCurrent, totalSavingsTarget),
+	})
+}
+
+// Helper function to calculate savings progress percentage
+func calculateSavingsProgress(current, target float64) float64 {
+	if target <= 0 {
+		return 0
+	}
+	progress := (current / target) * 100
+	if progress > 100 {
+		return 100
+	}
+	return progress
+}

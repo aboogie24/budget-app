@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
@@ -1102,4 +1103,177 @@ func nullableFloat(f float64) interface{} {
 
 func nullableBool(b bool) interface{} {
 	return b
+}
+
+// GetLinkedAccountStatus returns all linked accounts for the user with status information.
+// GET /auth/linked-accounts/status
+func GetLinkedAccountStatus(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, "Missing user ID", http.StatusUnauthorized)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	// Get household ID if user is in a household
+	hhID := db.ResolveHouseholdID(dbClient.Conn, userID)
+
+	// Query linked accounts for the user and household members
+	rows, err := dbClient.Query(`
+		SELECT id, institution_name, item_status, error_code, created_at, updated_at
+		FROM linked_accounts
+		WHERE user_id = $1 OR household_id = $2
+		ORDER BY created_at DESC
+	`, userID, nullable(hhID))
+	if err != nil {
+		http.Error(w, "Query error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type LinkedAccountStatus struct {
+		ID              string    `json:"id"`
+		InstitutionName string    `json:"institution_name"`
+		ItemStatus      string    `json:"item_status"`
+		ErrorCode       *string   `json:"error_code"`
+		CreatedAt       time.Time `json:"created_at"`
+		UpdatedAt       time.Time `json:"updated_at"`
+	}
+
+	var accounts []LinkedAccountStatus
+	for rows.Next() {
+		var acct LinkedAccountStatus
+		if err := rows.Scan(&acct.ID, &acct.InstitutionName, &acct.ItemStatus, &acct.ErrorCode, &acct.CreatedAt, &acct.UpdatedAt); err != nil {
+			log.Printf("Failed to scan linked account: %v", err)
+			continue
+		}
+		accounts = append(accounts, acct)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(accounts)
+}
+
+// CreateUpdateLinkToken creates an update-mode link token for re-authenticating an account.
+// POST /auth/plaid/update-link-token
+type updateLinkTokenRequest struct {
+	ItemID      string `json:"item_id"`
+	AccessToken string `json:"access_token"`
+}
+
+func CreateUpdateLinkToken(client *models.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req updateLinkTokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		userID := r.Header.Get("X-User-ID")
+		if userID == "" {
+			http.Error(w, "Missing user ID", http.StatusUnauthorized)
+			return
+		}
+
+		// If item_id is provided, fetch the access_token from the database
+		accessToken := req.AccessToken
+		if req.ItemID != "" && req.AccessToken == "" {
+			dbClient, err := db.New()
+			if err != nil {
+				http.Error(w, "DB connection error", http.StatusInternalServerError)
+				return
+			}
+			defer dbClient.Close()
+
+			var stored string
+			err = dbClient.QueryRow(`
+				SELECT access_token FROM linked_accounts WHERE id = $1 AND user_id = $2
+			`, req.ItemID, userID).Scan(&stored)
+			if err != nil {
+				http.Error(w, "Account not found", http.StatusNotFound)
+				return
+			}
+			accessToken = stored
+		}
+
+		if accessToken == "" {
+			http.Error(w, "Missing access_token or item_id", http.StatusBadRequest)
+			return
+		}
+
+		// Create update-mode link token
+		user := plaid.LinkTokenCreateRequestUser{ClientUserId: userID}
+		linkReq := plaid.NewLinkTokenCreateRequest("Budget App", "en", []plaid.CountryCode{plaid.COUNTRYCODE_US}, user)
+		// For update mode, set AccessToken instead of Products
+		linkReq.SetAccessToken(accessToken)
+		if redirect := os.Getenv("PLAID_REDIRECT_URI"); redirect != "" {
+			linkReq.SetRedirectUri(redirect)
+		}
+
+		resp, _, err := client.API.PlaidApi.LinkTokenCreate(context.Background()).
+			LinkTokenCreateRequest(*linkReq).
+			Execute()
+
+		if err != nil {
+			http.Error(w, "Failed to create link token: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"link_token": resp.GetLinkToken(),
+		})
+	}
+}
+
+// ResetItemError clears error state for a linked account after successful re-authentication.
+// PUT /auth/linked-accounts/{id}/reset
+func ResetItemError(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, "Missing user ID", http.StatusUnauthorized)
+		return
+	}
+
+	// Extract account ID from path
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	accountID := parts[len(parts)-2]
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	// Update the account status
+	result, err := dbClient.Exec(`
+		UPDATE linked_accounts
+		SET item_status = 'good', error_code = NULL, updated_at = NOW()
+		WHERE id = $1 AND user_id = $2
+	`, accountID, userID)
+
+	if err != nil {
+		http.Error(w, "Update failed", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil || rowsAffected == 0 {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
 }

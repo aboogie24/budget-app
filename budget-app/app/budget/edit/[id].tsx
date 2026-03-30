@@ -1,23 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView, Platform, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { v4 as uuidv4 } from 'uuid';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 type Category = { id: string; name: string; type: string };
+type BudgetData = { id: string; name: string; updated_by?: string; updated_by_name?: string; updated_at?: string };
 
 export default function EditBudget() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
 
   const [name, setName] = useState((params.name as string) || '');
   const [amount, setAmount] = useState((params.amount as string) || '');
@@ -36,20 +33,35 @@ export default function EditBudget() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [shared, setShared] = useState((params.is_shared as string) === '1');
   const [saving, setSaving] = useState(false);
+  const [budgetData, setBudgetData] = useState<BudgetData | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string>('');
 
   useEffect(() => {
-    const loadCats = async () => {
+    const loadData = async () => {
       const user = await getCurrentUser();
       if (!user?.id) return;
-      const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-      const res = await fetch(`${API_URL}/auth/categories/user/${user.id}`, { headers, credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        setCategories(Array.isArray(data) ? data : []);
+      setCurrentUserId(user.id);
+
+      // Load categories
+      try {
+        const catData = await api.get(`/auth/categories/user/${user.id}`);
+        setCategories(Array.isArray(catData) ? catData : []);
+      } catch (e) {
+        console.error('Failed to load categories:', e);
+      }
+
+      // Load budget data if editing existing budget
+      if (params.id) {
+        try {
+          const data = await api.get(`/auth/budgets/${params.id}`);
+          setBudgetData(data);
+        } catch (e) {
+          console.error('Failed to load budget:', e);
+        }
       }
     };
-    loadCats();
-  }, []);
+    loadData();
+  }, [params.id]);
 
   const handleSave = async () => {
     const user = await getCurrentUser();
@@ -74,19 +86,7 @@ export default function EditBudget() {
         id: params.id || uuidv4(),
         is_shared: shared,
       };
-      const res = await fetch(`${API_URL}/auth/budgets/${params.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(user.token ? { Authorization: `Bearer ${user.token}` } : {}),
-        },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt);
-      }
+      await api.put(`/auth/budgets/${params.id}`, body);
       Alert.alert('Saved', 'Budget updated.');
       router.replace('/(tabs)/budget');
     } catch (e) {
@@ -104,7 +104,12 @@ export default function EditBudget() {
             <TouchableOpacity onPress={() => router.replace('/(tabs)/budget')} style={styles.iconBtn}>
               <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
             </TouchableOpacity>
-            <Text style={styles.header}>Edit Budget</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.header}>Edit Budget</Text>
+              {budgetData && budgetData.updated_by && budgetData.updated_by !== currentUserId && (
+                <Text style={styles.lastEditedText}>Last edited by {budgetData.updated_by_name || 'partner'}</Text>
+              )}
+            </View>
             <View style={{ width: 40 }} />
           </View>
 
@@ -170,14 +175,17 @@ export default function EditBudget() {
               ))}
             </View>
 
-            <View style={[styles.toggleRow, { marginTop: 6 }]}>
-              <Text style={[styles.label, { flex: 1, marginBottom: 0 }]}>Share with household</Text>
-              <TouchableOpacity
-                style={[styles.toggleSmall, shared && styles.toggleActive]}
-                onPress={() => setShared((prev) => !prev)}
-              >
-                <Text style={shared ? styles.toggleTextActive : styles.toggleText}>{shared ? 'Shared' : 'Personal'}</Text>
-              </TouchableOpacity>
+            <View style={[styles.toggleRow, { marginTop: 6, marginBottom: 0 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Share with household</Text>
+                <Text style={styles.shareDescription}>Allow your partner to view and edit this budget</Text>
+              </View>
+              <Switch
+                value={shared}
+                onValueChange={setShared}
+                thumbColor="#fff"
+                trackColor={{ true: '#a855f7', false: '#475569' }}
+              />
             </View>
 
             <Text style={styles.label}>Start Date</Text>
@@ -233,6 +241,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   header: { color: '#f8fafc', fontWeight: '800', fontSize: 18 },
+  lastEditedText: { color: '#a78bfa', fontWeight: '600', fontSize: 11, marginTop: 4 },
+  shareDescription: { color: '#94a3b8', fontWeight: '500', fontSize: 12, marginTop: 4 },
   card: {
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: 16,

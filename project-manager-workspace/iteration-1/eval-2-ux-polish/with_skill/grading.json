@@ -1,0 +1,11 @@
+{
+  "eval_id": 2,
+  "run_type": "with_skill",
+  "expectations": [
+    {"text": "Agent correctly identifies UX Polish phase tasks from the tracker", "passed": true, "evidence": "Parsed tracker and listed all HIGH priority incomplete UX tasks: #50, #55, #56, #59."},
+    {"text": "Agent picks a high-priority task rather than starting with low priority", "passed": true, "evidence": "Selected #50 (Glassmorphic design system, HIGH) and explained it's foundational for other tasks."},
+    {"text": "Agent references coupleflow-prototype.jsx for design guidance", "passed": true, "evidence": "Directly referenced prototype patterns: 'bg-white/10 backdrop-blur-xl border border-white/10' and purple gradient theme."},
+    {"text": "Agent runs TypeScript compilation check after changes", "passed": true, "evidence": "Ran npx tsc --noEmit --skipLibCheck, confirmed all files compile without design-system errors."},
+    {"text": "Agent provides a visual description of the built UI", "passed": true, "evidence": "Described glass cards with 5-12% white opacity, subtle borders, gradient backgrounds from dark navy to purple tint."}
+  ]
+}

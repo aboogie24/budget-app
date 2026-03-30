@@ -7,6 +7,7 @@ type Budget struct {
 	UserID       string    `json:"user_id"`
 	Name         string    `json:"name"`
 	Amount       float64   `json:"amount"`
+	Currency     string    `json:"currency"` // currency code (e.g., "USD")
 	Type         string    `json:"type"` // "income" or "expense"
 	CategoryID   *string   `json:"category_id,omitempty"`
 	CategoryName string    `json:"category_name,omitempty"`

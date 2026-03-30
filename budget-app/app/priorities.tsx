@@ -15,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
 
 type Priority = {
   id: string;
@@ -32,6 +34,7 @@ export default function PrioritiesScreen() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Priority | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -45,8 +48,10 @@ export default function PrioritiesScreen() {
       const list = Array.isArray(data) ? data : [];
       list.sort((a, b) => (a.rank || 99) - (b.rank || 99));
       setPriorities(list);
+      setError(null);
     } catch (e) {
       console.error('Failed to load priorities:', e);
+      setError('Failed to load priorities');
     } finally {
       setLoading(false);
     }
@@ -172,16 +177,31 @@ export default function PrioritiesScreen() {
             Rank what matters most to keep your spending aligned with your goals.
           </Text>
 
-          {loading ? (
+          {error && (
+            <ErrorState
+              title="Something went wrong"
+              message={error}
+              onRetry={() => {
+                setError(null);
+                setLoading(true);
+                loadPriorities();
+              }}
+            />
+          )}
+
+          {!error && loading ? (
             <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : priorities.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="flag-outline" size={48} color="#475569" />
-              <Text style={styles.emptyText}>No priorities set</Text>
-              <Text style={styles.emptySubtext}>
-                Tap + to define what matters most financially
-              </Text>
-            </View>
+          ) : !error && priorities.length === 0 ? (
+            <EmptyState
+              icon="flag-outline"
+              title="No priorities set"
+              description="Define your financial priorities to stay focused on what matters"
+              actionLabel="Add Priority"
+              onAction={() => {
+                resetForm();
+                setShowForm(true);
+              }}
+            />
           ) : (
             priorities.map((p, index) => (
               <View key={p.id} style={styles.card}>

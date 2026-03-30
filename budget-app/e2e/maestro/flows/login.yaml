@@ -1,0 +1,19 @@
+appId: com.github.aboogie.budgetapp
+---
+- launchApp
+- waitForAnimationToEnd
+- assertVisible:
+    text: Sign In
+- tapOn:
+    id: email-input
+- inputText: test@example.com
+- tapOn:
+    id: password-input
+- inputText: password123
+- tapOn:
+    text: Sign In
+- waitForAnimationToEnd
+- assertVisible:
+    text: Dashboard
+- assertVisible:
+    text: Welcome

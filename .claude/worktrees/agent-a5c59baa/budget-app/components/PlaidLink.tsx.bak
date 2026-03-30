@@ -1,0 +1,22 @@
+import { usePlaidLink } from 'react-native-plaid-link-sdk';
+
+const PlaidLinkButton = () => {
+  const { open, ready } = usePlaidLink({
+    tokenConfig: {
+      token: '<link_token_from_backend>',
+      noLoadingState: false,
+    },
+    onSuccess: (public_token, metadata) => {
+      fetch('http://<your-backend>/exchange_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ public_token }),
+      });
+    },
+    onExit: (error, metadata) => {
+      console.log('Plaid Link exited', error, metadata);
+    },
+  });
+
+  return <Button title="Link Bank Account" onPress={() => open()} disabled={!ready} />;
+};

@@ -15,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
 
 type SavingsGoal = {
   id: string;
@@ -36,6 +38,7 @@ export default function SavingsScreen() {
   const [editing, setEditing] = useState<SavingsGoal | null>(null);
   const [progressId, setProgressId] = useState<string | null>(null);
   const [progressAmount, setProgressAmount] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   // Form state
   const [name, setName] = useState('');
@@ -50,8 +53,10 @@ export default function SavingsScreen() {
       if (!userId) return;
       const data = await api.get<SavingsGoal[]>('/auth/savings-goals', { user_id: userId });
       setGoals(Array.isArray(data) ? data : []);
+      setError(null);
     } catch (e) {
       console.error('Failed to load savings goals:', e);
+      setError('Failed to load savings goals');
     } finally {
       setLoading(false);
     }
@@ -180,14 +185,31 @@ export default function SavingsScreen() {
             <Text style={styles.percentText}>{overallPercent.toFixed(0)}% saved</Text>
           </View>
 
-          {loading ? (
+          {error && (
+            <ErrorState
+              title="Something went wrong"
+              message={error}
+              onRetry={() => {
+                setError(null);
+                setLoading(true);
+                loadGoals();
+              }}
+            />
+          )}
+
+          {!error && loading ? (
             <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : goals.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="wallet-outline" size={48} color="#475569" />
-              <Text style={styles.emptyText}>No savings goals yet</Text>
-              <Text style={styles.emptySubtext}>Tap + to set your first goal</Text>
-            </View>
+          ) : !error && goals.length === 0 ? (
+            <EmptyState
+              icon="sparkles-outline"
+              title="No savings goals"
+              description="Create your first savings goal to start building wealth"
+              actionLabel="Create Goal"
+              onAction={() => {
+                resetForm();
+                setShowForm(true);
+              }}
+            />
           ) : (
             goals.map((g) => {
               const pct = getPercent(g);

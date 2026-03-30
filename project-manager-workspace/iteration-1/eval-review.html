@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "project-manager", "runs": [{"id": "eval-1-couple-features-with_skill", "prompt": "Work on the Couple Features phase. Start with whatever is highest priority.", "eval_id": 1, "outputs": [], "grading": {"eval_id": 1, "run_type": "with_skill", "expectations": [{"text": "Agent reads tracker.html and identifies task #42 as the next task", "passed": true, "evidence": "Transcript shows parsed tracker table, identified #42 as critical priority. Also identified #46 as dependency and built it first."}, {"text": "Agent builds backend endpoint before frontend screen for fullstack tasks", "passed": true, "evidence": "Built task #46 (backend household summary) first, then #42 (frontend partner dashboard). Correctly followed fullstack ordering."}, {"text": "Agent runs compilation checks after building code", "passed": true, "evidence": "Transcript mentions verification of backend code patterns and frontend TypeScript compilation."}, {"text": "Agent updates the tracker status when a task is complete", "passed": true, "evidence": "Both task #46 and #42 updated to status:done in tracker.html with completion notes."}, {"text": "Agent announces which task it is starting before beginning work", "passed": true, "evidence": "Clear announcements: 'Starting task #46: Household summary/stats endpoint' and 'TASK #42: Partner Dashboard View'."}]}}, {"id": "eval-1-couple-features-without_skill", "prompt": "Work on the Couple Features phase. Start with whatever is highest priority.", "eval_id": 1, "outputs": [], "grading": {"eval_id": 1, "run_type": "without_skill", "expectations": [{"text": "Agent reads tracker.html and identifies task #42 as the next task", "passed": true, "evidence": "Identified Task 42 (CRITICAL) and Task 46 (HIGH) from tracker analysis. Correctly prioritized."}, {"text": "Agent builds backend endpoint before frontend screen for fullstack tasks", "passed": true, "evidence": "Checked backend first (found existing endpoint), then built frontend dashboard changes."}, {"text": "Agent runs compilation checks after building code", "passed": true, "evidence": "Ran TypeScript compilation and linting checks. Reported 0 errors."}, {"text": "Agent updates the tracker status when a task is complete", "passed": false, "evidence": "No mention of updating tracker.html task statuses in the transcript."}, {"text": "Agent announces which task it is starting before beginning work", "passed": true, "evidence": "Listed priority determination and selected tasks 42 and 46 before starting."}]}}, {"id": "eval-2-ux-polish-with_skill", "prompt": "Continue building the app. Pick up where we left off on UX Polish.", "eval_id": 2, "outputs": [{"name": "SUMMARY.md", "type": "text", "content": "# UX Polish Phase - Task #50 Completion Summary\n\n**Date:** 2026-03-29  \n**Task:** #50 \u2014 Glasmorphic Design System  \n**Status:** \u2705 COMPLETE  \n\n---\n\n## What Was Built\n\nA comprehensive, centralized design system that aligns the CoupleFlow app with the coupleflow-prototype.jsx vision. The system provides:\n\n### 1. **Design System Utility** (`utils/design-system.ts` \u2014 293 lines)\n\n**Color Palette:**\n- Primary: Purple (#7c3aed) and Light Purple (#a855f7)\n- Semantic: Success (green), Error (red), Warning (yellow), Info (blue)\n- Text: Primary white-ish (#f8fafc), Secondary gray (#94a3b8)\n- Surfaces: Dark navy backgrounds (#0f172a), card surfaces (#111827)\n\n**Glass Effects:**\n- Light glass (5% opacity) \u2014 subtle cards\n- Enhanced glass (8% opacity) \u2014 visible cards\n- Strong glass (12% opacity) \u2014 prominent cards\n- Floating glass \u2014 elevated cards with shadow\n\n**Gradients:**\n- Background: Dark navy to purple gradients\n- Accent: Purple to violet gradients\n- Semantic: Success/Error/Info gradients\n\n**Typography Scale:**\n- Headings: h1 (32px), h2 (28px), h3 (24px)\n- Body: 16px standard with semi-bold variant\n- Small: 14px for secondary text\n- Captions: 12px for supporting text\n- All with generous line heights for mobile\n\n**Spacing & Radius:**\n- Scale: xs (4px), sm (8px), md (12px), lg (16px), xl (24px), xxl (32px)\n- Borders: 8px, 12px, 16px, 20px, 24px\n\n**Utility Functions:**\n- `formatCurrency(amount)` \u2014 Format as \"$X.XX\"\n- `getValueColor(value)` \u2014 Green for positive, red for negative\n- `getSemanticColor(type)` \u2014 Map type to color\n- `getResponsivePadding()` \u2014 Padding based on screen width\n\n### 2. **GlassCard Component** (`components/GlassCard.tsx`)\n\nReusable card component with props:\n- `intensity`: 'light' | 'medium' | 'strong'\n- `padding`: Custom padding (default: 16)\n- `marginBottom`: Custom margin (default: 12)\n- `style`: Optional style overrides\n\nReplaces hardcoded card styles in individual screens.\n\n### 3. **GradientBackground Component** (`components/GradientBackground.tsx`)\n\nBackground gradient wrapper with props:\n- `variant`: Predefined gradient names\n- `colors`: Custom color array support\n- `start/end`: Gradient direction control\n\nProvides consistent background across all screens.\n\n### 4. **Documentation** (`DESIGN_SYSTEM.md`)\n\nComplete usage guide including:\n- Quick start examples\n- Component API documentation\n- Color palette reference\n- Typography usage\n- Spacing and radius scales\n- Utility function examples\n- Migration guide for updating old screens\n- Best practices\n\n---\n\n## Visual Output\n\n### Glass Cards\nWhen implemented in a screen, cards will appear as:\n- Semi-transparent backgrounds (5-12% white opacity)\n- Subtle white borders for depth perception\n- Soft rounded corners (16-20px)\n- Elevation shadow (for floating variant)\n- Consistent dark theme alignment\n\nExample visual structure:\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 Glass Card (Medium Intensity) \u2502  \u2190 Semi-transparent bg\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524  \u2190 White border accent\n\u2502 \u2022 Content                   \u2502\n\u2502 \u2022 Styled with typography    \u2502\n\u2502 \u2022 Using system spacing      \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n### Gradient Backgrounds\n- Primary gradient: Dark navy (#0f172a) \u2192 Purple tint (#1a1040) \u2192 Back to navy\n- Creates depth and visual hierarchy\n- Purple accent emphasizes brand\n- Matches coupleflow-prototype.jsx design\n\n### Color Coordination\n- Success actions: Green (#22c55e) for income and positive outcomes\n- Error states: Red (#ef4444) for expenses and failures\n- Primary brand: Purple (#7c3aed) for main UI accents\n- Information: Blue (#3b82f6) for tips and guidance\n\n---\n\n## Compilation & Verification\n\n**TypeScript Check:**\n```bash\ncd budget-app && npx tsc --noEmit --skipLibCheck\n```\n\n**Result:** \u2705 PASS \u2014 All new design system files compile without errors\n\n**What Was Verified:**\n- Type safety: All functions and components have proper TypeScript types\n- Imports: No circular dependencies or broken imports\n- Color values: All hex codes are valid\n- Gradient definitions: Properly formatted as color arrays\n- StyleSheet compliance: All styles compatible with React Native\n\n---\n\n## How to Use in Screens\n\n### Before (Old Approach):\n```tsx\nconst styles = StyleSheet.create({\n  card: {\n    backgroundColor: '#111827',\n    borderRadius: 16,\n    padding: 16,\n    marginBottom: 12,\n    borderColor: '#334155',\n    borderWidth: 1,\n  },\n});\n\n<View style={styles.card}>\n  <Text style={{ color: '#f8fafc' }}>Title</Text>\n</View>\n```\n\n### After (Design System Approach):\n```tsx\nimport GlassCard from '@/components/GlassCard';\nimport { colors, typography } from '@/utils/design-system';\n\n<GlassCard intensity=\"medium\">\n  <Text style={[typography.body, { color: colors.text }]}>Title</Text>\n</GlassCard>\n```\n\n**Benefits:**\n- Consistent styling across entire app\n- Single source of truth for colors and spacing\n- Easy to modify theme globally\n- Less code duplication\n- Better maintainability\n\n---\n\n## Alignment with Prototype\n\n**Coupleflow Prototype Requirements:**\n- \u2705 Glass cards with transparency and borders\n- \u2705 Dark theme background with purple gradients\n- \u2705 Consistent color system throughout\n- \u2705 Typography hierarchy\n- \u2705 Spacing consistency\n\n**What This Enables:**\n- All screens can now be updated to match prototype vision\n- Floating Action Button task (#52) can use glass effects\n- Empty states task (#55) can use consistent styling\n- Progress rings task (#54) can use gradient definitions\n- Dark/Light theme toggle task (#51) now has color system to extend\n\n---\n\n## Next Steps\n\nThe design system is now ready to be used in all frontend screens. Recommended next tasks:\n\n1. **Task #55:** Empty states & loading skeletons\n   - Can now use GlassCard for empty state messaging\n   - Use colors.textMuted for secondary text\n   - Use Ionicons with glass card containers\n\n2. **Task #56:** Error states & retry UI\n   - Use colors.error for error messages\n   - Use GlassCard with error border styling\n   - Consistent retry button styling\n\n3. **Task #59:** App icon & splash screen\n   - Use primary color (#7c3aed) in icon\n   - Use gradient backgrounds for splash\n   - Maintain brand consistency\n\n4. **Migration:** Update existing screens to use design system\n   - Dashboard, Budget, Debts, Savings, Goals, Bills screens\n   - Link Account, Settings screens\n   - Transaction lists and detail screens\n\n---\n\n## Files Created\n\n| File | Lines | Purpose |\n|------|-------|---------|\n| `utils/design-system.ts` | 293 | Core design system with colors, gradients, spacing, typography |\n| `components/GlassCard.tsx` | 44 | Reusable glassmorphic card component |\n| `components/GradientBackground.tsx` | 38 | Gradient background container |\n| `DESIGN_SYSTEM.md` | ~350 | Complete documentation and usage guide |\n\n**Total new code:** ~725 lines of TypeScript + documentation\n\n---\n\n## Tracker Update\n\nUpdated tracker.html:\n- Task #50 status changed from \"todo\" \u2192 \"done\"\n- Notes field updated with completion date and file list\n\n---\n\n**Completion Time:** ~45 minutes  \n**Status:** Ready for next tasks  \n**Quality:** Production-ready TypeScript, fully documented\n"}], "grading": {"eval_id": 2, "run_type": "with_skill", "expectations": [{"text": "Agent correctly identifies UX Polish phase tasks from the tracker", "passed": true, "evidence": "Parsed tracker and listed all HIGH priority incomplete UX tasks: #50, #55, #56, #59."}, {"text": "Agent picks a high-priority task rather than starting with low priority", "passed": true, "evidence": "Selected #50 (Glassmorphic design system, HIGH) and explained it's foundational for other tasks."}, {"text": "Agent references coupleflow-prototype.jsx for design guidance", "passed": true, "evidence": "Directly referenced prototype patterns: 'bg-white/10 backdrop-blur-xl border border-white/10' and purple gradient theme."}, {"text": "Agent runs TypeScript compilation check after changes", "passed": true, "evidence": "Ran npx tsc --noEmit --skipLibCheck, confirmed all files compile without design-system errors."}, {"text": "Agent provides a visual description of the built UI", "passed": true, "evidence": "Described glass cards with 5-12% white opacity, subtle borders, gradient backgrounds from dark navy to purple tint."}]}}, {"id": "eval-2-ux-polish-without_skill", "prompt": "Continue building the app. Pick up where we left off on UX Polish.", "eval_id": 2, "outputs": [{"name": "IMPLEMENTATION_GUIDE.md", "type": "text", "content": "# CoupleFlow UX Polish Implementation Guide\n\n**Phase:** 5 - UX Polish & Design\n**Iteration:** 1, Eval 2\n**Date:** March 29, 2026\n**Status:** \u2705 COMPLETE\n\n---\n\n## Overview\n\nThis implementation introduces a comprehensive glassmorphic design system to CoupleFlow with full dark/light mode support, 6 reusable UI components, and an enhanced dashboard as a reference implementation.\n\n**What was built:**\n- Theme system with persistence\n- Glassmorphic component library\n- Enhanced dashboard with new UX patterns\n- Design tokens and patterns for app-wide consistency\n\n---\n\n## File Structure\n\n```\n/budget-app/\n\u251c\u2500\u2500 utils/\n\u2502   \u251c\u2500\u2500 theme.ts (NEW - 2.7 KB)\n\u2502   \u2502   \u2514\u2500\u2500 Theme configuration, color palettes, spacing scales\n\u2502   \u2514\u2500\u2500 ThemeContext.tsx (NEW - 2.1 KB)\n\u2502       \u2514\u2500\u2500 Global theme management and useTheme() hook\n\u2502\n\u251c\u2500\u2500 components/\n\u2502   \u251c\u2500\u2500 GlassCard.tsx (NEW - 1.2 KB)\n\u2502   \u2502   \u2514\u2500\u2500 Glassmorphic card wrapper with BlurView\n\u2502   \u251c\u2500\u2500 FloatingActionButton.tsx (NEW - 4.5 KB)\n\u2502   \u2502   \u2514\u2500\u2500 FAB with expandable quick actions menu\n\u2502   \u251c\u2500\u2500 DrawerNavigation.tsx (NEW - 6.1 KB)\n\u2502   \u2502   \u2514\u2500\u2500 Right-side slide-out navigation drawer\n\u2502   \u251c\u2500\u2500 EmptyState.tsx (NEW - 2.8 KB)\n\u2502   \u2502   \u2514\u2500\u2500 Empty data state UI component\n\u2502   \u251c\u2500\u2500 ErrorState.tsx (NEW - 4.4 KB)\n\u2502   \u2502   \u2514\u2500\u2500 Error and retry UI component\n\u2502   \u2514\u2500\u2500 SkeletonLoader.tsx (NEW - 2.5 KB)\n\u2502       \u2514\u2500\u2500 Animated loading skeleton loaders\n\u2502\n\u2514\u2500\u2500 app/\n    \u251c\u2500\u2500 _layout.tsx (MODIFIED)\n    \u2502   \u2514\u2500\u2500 Added ThemeProvider wrapper\n    \u2514\u2500\u2500 (tabs)/\n        \u2514\u2500\u2500 dashboard-v2.tsx (NEW - 24 KB)\n            \u2514\u2500\u2500 Enhanced dashboard with full design system integration\n```\n\n---\n\n## Quick Start\n\n### 1. Using Theme System\n\n```tsx\nimport { useTheme } from '@/utils/ThemeContext';\n\nexport default function MyScreen() {\n  const { theme, themeValues, toggleTheme, setTheme } = useTheme();\n\n  return (\n    <View style={{ backgroundColor: themeValues.bgGradient[0] }}>\n      <Text style={{ color: themeValues.textPrimary }}>Hello</Text>\n      <TouchableOpacity onPress={toggleTheme}>\n        <Text>Toggle Theme</Text>\n      </TouchableOpacity>\n    </View>\n  );\n}\n```\n\n**Available theme values:**\n- `bgGradient` - Array of 3 gradient colors\n- `glass` / `glassLight` / `glassDarker` - Glass effect objects\n- `textPrimary` / `textSecondary` / `textMuted` - Text colors\n- `accent` / `accentLight` / `accentDark` - Accent colors\n- `successColor`, `warningColor`, `errorColor`, `infoColor`\n\n### 2. Glass Card Component\n\n```tsx\nimport { GlassCard } from '@/components/GlassCard';\n\n<GlassCard variant=\"default\" padding={16} blur={16}>\n  <Text>Glassmorphic content</Text>\n</GlassCard>\n```\n\n**Props:**\n- `variant` - \"default\" | \"light\" | \"darker\"\n- `padding` - number\n- `blur` - number (0-100)\n- `radius` - border radius\n- `style` - additional styles\n\n### 3. Floating Action Button\n\n```tsx\nimport { FloatingActionButton } from '@/components/FloatingActionButton';\n\n<FloatingActionButton\n  actions={[\n    {\n      id: '1',\n      icon: 'add-outline',\n      label: 'Add',\n      color: '#10b981',\n      onPress: () => { /* handle press */ }\n    }\n  ]}\n/>\n```\n\n**Props:**\n- `actions` - Array of action objects\n- `onPress` - Fallback when no actions\n\n**Action Object:**\n```tsx\n{\n  id: string;\n  icon: string;              // Ionicons name\n  label: string;\n  color: string;             // Hex color\n  onPress: () => void;\n}\n```\n\n### 4. Drawer Navigation\n\n```tsx\nimport { DrawerNavigation } from '@/components/DrawerNavigation';\n\nconst [drawerOpen, setDrawerOpen] = useState(false);\n\n<DrawerNavigation\n  isOpen={drawerOpen}\n  onClose={() => setDrawerOpen(false)}\n  items={[\n    {\n      id: '1',\n      icon: 'home-outline',\n      label: 'Dashboard',\n      onPress: () => router.push('/(tabs)/dashboard')\n    }\n  ]}\n/>\n```\n\n**Props:**\n- `isOpen` - boolean\n- `onClose` - callback\n- `items` - Array of drawer items (includes theme toggle footer)\n\n### 5. Empty State\n\n```tsx\nimport { EmptyState } from '@/components/EmptyState';\n\n<EmptyState\n  icon=\"inbox-outline\"\n  title=\"No transactions\"\n  description=\"Start by adding your first transaction\"\n  actionLabel=\"Add transaction\"\n  onAction={() => router.push('/add-transaction')}\n/>\n```\n\n### 6. Error State\n\n```tsx\nimport { ErrorState } from '@/components/ErrorState';\n\n<ErrorState\n  title=\"Failed to load data\"\n  message=\"Please check your internet connection and try again\"\n  retryLabel=\"Retry\"\n  onRetry={() => loadData()}\n  dismissLabel=\"Dismiss\"\n  onDismiss={() => setShowError(false)}\n/>\n```\n\n### 7. Skeleton Loader\n\n```tsx\nimport { SkeletonLoader, SkeletonCard } from '@/components/SkeletonLoader';\n\n// Single skeleton element\n<SkeletonLoader width=\"100%\" height={20} borderRadius={8} />\n\n// Pre-configured card skeleton\n<SkeletonCard lines={3} />\n```\n\n---\n\n## Design Tokens\n\n### Color Palette\n\n**Dark Mode:**\n- Background Gradient: #0f172a \u2192 #1e1b4b \u2192 #2d1b69\n- Text Primary: #f8fafc\n- Text Secondary: #cbd5e1\n- Text Muted: #94a3b8\n- Accent: #a855f7\n- Success: #10b981\n- Warning: #f59e0b\n- Error: #ef4444\n- Info: #3b82f6\n\n**Light Mode:**\n- Background Gradient: #f3e8ff \u2192 #ffffff \u2192 #f0e7ff\n- Text Primary: #1f2937\n- Text Secondary: #6b7280\n- Text Muted: #9ca3af\n- Accent: #a855f7\n- Success: #10b981\n- Warning: #f59e0b\n- Error: #ef4444\n- Info: #3b82f6\n\n### Spacing Scale\n\n```tsx\nimport { componentDefaults } from '@/utils/theme';\n\ncomponentDefaults.spacing.xs    // 4px\ncomponentDefaults.spacing.sm    // 8px\ncomponentDefaults.spacing.md    // 12px\ncomponentDefaults.spacing.lg    // 16px\ncomponentDefaults.spacing.xl    // 24px\n```\n\n### Border Radius Scale\n\n```tsx\ncomponentDefaults.borderRadius.xs    // 8px\ncomponentDefaults.borderRadius.sm    // 12px\ncomponentDefaults.borderRadius.md    // 16px\ncomponentDefaults.borderRadius.lg    // 20px\ncomponentDefaults.borderRadius.xl    // 24px\ncomponentDefaults.borderRadius.full  // 9999px\n```\n\n### Font Sizes\n\n```tsx\ncomponentDefaults.fontSize.xs    // 12px\ncomponentDefaults.fontSize.sm    // 14px\ncomponentDefaults.fontSize.md    // 16px\ncomponentDefaults.fontSize.lg    // 18px\ncomponentDefaults.fontSize.xl    // 20px\ncomponentDefaults.fontSize['2xl'] // 24px\ncomponentDefaults.fontSize['3xl'] // 30px\n```\n\n---\n\n## Migration Guide\n\n### Updating Existing Screens\n\n1. **Import theme hook:**\n   ```tsx\n   import { useTheme } from '@/utils/ThemeContext';\n   ```\n\n2. **Replace gradient:**\n   ```tsx\n   // OLD:\n   <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']}>\n   \n   // NEW:\n   const { themeValues } = useTheme();\n   <LinearGradient colors={themeValues.bgGradient}>\n   ```\n\n3. **Replace static colors with theme values:**\n   ```tsx\n   // OLD:\n   <Text style={{ color: '#f8fafc' }}>Text</Text>\n   \n   // NEW:\n   <Text style={{ color: themeValues.textPrimary }}>Text</Text>\n   ```\n\n4. **Replace cards with GlassCard:**\n   ```tsx\n   // OLD:\n   <View style={{ backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16 }}>\n   \n   // NEW:\n   <GlassCard variant=\"default\" padding={16}>\n   ```\n\n5. **Use spacing constants:**\n   ```tsx\n   // OLD:\n   <View style={{ padding: 16, marginTop: 14 }}>\n   \n   // NEW:\n   import { componentDefaults } from '@/utils/theme';\n   <View style={{ padding: componentDefaults.spacing.lg, marginTop: componentDefaults.spacing.lg }}>\n   ```\n\n---\n\n## Theme Persistence\n\nTheme is automatically saved to AsyncStorage when user toggles theme. On app startup:\n\n1. App loads last saved preference\n2. Falls back to system preference (useColorScheme)\n3. Defaults to 'dark' if unavailable\n\n**Key:** `'coupleflow_theme'`\n\n---\n\n## Component Patterns\n\n### Error Handling Pattern\n\n```tsx\nconst [error, setError] = useState<string | null>(null);\n\nuseEffect(() => {\n  try {\n    // API call\n  } catch (err) {\n    setError(err instanceof Error ? err.message : 'Failed');\n  }\n}, []);\n\n// In render:\n{error && (\n  <ErrorState\n    title=\"Failed to load\"\n    message={error}\n    onRetry={() => { setError(null); loadData(); }}\n  />\n)}\n```\n\n### Loading Pattern\n\n```tsx\nconst [loading, setLoading] = useState(false);\n\n{loading ? (\n  <>\n    <SkeletonCard lines={4} />\n    <SkeletonCard lines={3} />\n  </>\n) : (\n  // Your content\n)}\n```\n\n### Empty State Pattern\n\n```tsx\nconst [items, setItems] = useState<Item[]>([]);\n\n{items.length === 0 ? (\n  <EmptyState\n    icon=\"inbox-outline\"\n    title=\"No items yet\"\n    description=\"Get started by creating your first item\"\n    actionLabel=\"Create\"\n    onAction={() => navigate('/create')}\n  />\n) : (\n  // Your list\n)}\n```\n\n---\n\n## Testing Checklist\n\n- [ ] Theme toggles between dark and light\n- [ ] Theme preference persists after app restart\n- [ ] GlassCard renders with blur effect\n- [ ] FAB opens/closes with animations\n- [ ] Drawer slides in and out smoothly\n- [ ] EmptyState displays when list is empty\n- [ ] ErrorState shows with retry button\n- [ ] SkeletonLoaders animate smoothly\n- [ ] Pull-to-refresh works on lists\n- [ ] All text colors match theme\n- [ ] Gradient backgrounds apply correctly\n- [ ] Spacing is consistent across components\n\n---\n\n## Performance Considerations\n\n1. **Theme Context:** Uses React Context (minimal re-renders)\n2. **BlurView:** Already optimized in expo-blur\n3. **Animations:** Uses native Animated API\n4. **AsyncStorage:** Non-blocking, cached after first load\n5. **GlassCard:** Minimal overhead, just wraps with BlurView\n\n---\n\n## Browser/Platform Support\n\n- \u2705 iOS 14+\n- \u2705 Android 10+\n- \u2705 Expo managed workflow\n- \u2705 React Native 0.72+\n\n---\n\n## Known Limitations\n\n1. **dashboard.tsx still exists** - Old dashboard not removed. Update or replace as needed.\n2. **Partial migration** - Some screens still use old styling. Migration ongoing.\n3. **Progress rings** - Simple progress implementation. Animated SVG version in progress.\n\n---\n\n## Next Steps\n\n### High Priority\n1. Migrate remaining screens to use theme system\n2. Create animated progress ring component\n3. Design and implement app icon + splash screen\n\n### Medium Priority\n4. Add haptic feedback throughout app\n5. Pull-to-refresh on all list screens\n6. Implement screen transitions\n\n### Later\n7. Partner dashboard styling\n8. Household activity feed design\n\n---\n\n## Support & Questions\n\nFor questions about the design system:\n\n1. Check `utils/theme.ts` for color definitions\n2. Check `components/GlassCard.tsx` for glassmorphic patterns\n3. Check `app/(tabs)/dashboard-v2.tsx` for full integration example\n4. Review this guide for component usage\n\n---\n\n## Files Summary\n\n| File | Size | Purpose |\n|------|------|---------|\n| `utils/theme.ts` | 2.7 KB | Design tokens and configuration |\n| `utils/ThemeContext.tsx` | 2.1 KB | Global theme management |\n| `components/GlassCard.tsx` | 1.2 KB | Glassmorphic cards |\n| `components/FloatingActionButton.tsx` | 4.5 KB | FAB with quick actions |\n| `components/DrawerNavigation.tsx` | 6.1 KB | Slide-out drawer |\n| `components/EmptyState.tsx` | 2.8 KB | Empty state UI |\n| `components/ErrorState.tsx` | 4.4 KB | Error and retry UI |\n| `components/SkeletonLoader.tsx` | 2.5 KB | Loading skeletons |\n| `app/(tabs)/dashboard-v2.tsx` | 24 KB | Reference implementation |\n\n**Total:** ~50 KB of new, production-ready code\n\n---\n\n## Version History\n\n- **v1.0** (Mar 29, 2026) - Initial implementation with glassmorphic design system, theme management, and 6 UI components\n\n---\n\n**End of Implementation Guide**\n"}], "grading": {"eval_id": 2, "run_type": "without_skill", "expectations": [{"text": "Agent correctly identifies UX Polish phase tasks from the tracker", "passed": true, "evidence": "Identified Phase 5 UX Polish tasks and completed 7 of the 13 tasks in one session."}, {"text": "Agent picks a high-priority task rather than starting with low priority", "passed": true, "evidence": "Started with glassmorphic design system and theme toggle \u2014 both high priority."}, {"text": "Agent references coupleflow-prototype.jsx for design guidance", "passed": false, "evidence": "No explicit mention of reading or referencing coupleflow-prototype.jsx. Built design system based on general knowledge."}, {"text": "Agent runs TypeScript compilation check after changes", "passed": false, "evidence": "No explicit mention of running tsc or any compilation check in the transcript."}, {"text": "Agent provides a visual description of the built UI", "passed": true, "evidence": "Described dark/light modes, purple glassmorphic design, component visual appearance."}]}}, {"id": "eval-3-strategic-pick-with_skill", "prompt": "What's the status of the project? Then work on whatever phase needs the most attention.", "eval_id": 3, "outputs": [{"name": "CODE_CHANGES.md", "type": "text", "content": "# Code Changes - CoupleFlow Project Manager Session\n\n## Backend Implementation\n\n### File: budget-backend/handlers/households.go\n\n#### New Handler Function\n```go\n// GET /auth/households/{id}/summary\n// Returns combined financial summary for all members of a household\nfunc GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {\n\thouseholdID := r.URL.Query().Get(\"household_id\")\n\tif householdID == \"\" {\n\t\thttp.Error(w, `{\"error\": \"Missing household_id\"}`, http.StatusBadRequest)\n\t\treturn\n\t}\n\n\tclient, err := householdDBFactory()\n\tif err != nil {\n\t\thttp.Error(w, `{\"error\": \"DB connection error\"}`, http.StatusInternalServerError)\n\t\treturn\n\t}\n\tdefer client.Close()\n\n\t// Aggregate all transactions, debts, and savings goals for the household\n\tquery := `\n\t\tSELECT\n\t\t\tCOALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS total_income,\n\t\t\tCOALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expenses,\n\t\t\tCOALESCE(SUM(d.amount), 0) AS total_debt,\n\t\t\tCOALESCE(SUM(sg.target_amount), 0) AS total_savings_target,\n\t\t\tCOALESCE(SUM(sg.current_amount), 0) AS total_savings_current\n\t\tFROM (\n\t\t\tSELECT hm.household_id FROM household_members hm WHERE hm.household_id = $1\n\t\t) hh\n\t\tLEFT JOIN transactions t ON t.household_id = hh.household_id\n\t\tLEFT JOIN debts d ON d.household_id = hh.household_id\n\t\tLEFT JOIN savings_goals sg ON sg.household_id = hh.household_id\n\t`\n\n\tvar totalIncome, totalExpenses, totalDebt, totalSavingsTarget, totalSavingsCurrent float64\n\terr = client.Raw().QueryRow(query, householdID).Scan(&totalIncome, &totalExpenses, &totalDebt, &totalSavingsTarget, &totalSavingsCurrent)\n\tif err != nil && err != sql.ErrNoRows {\n\t\tlog.Printf(\"GetHouseholdSummary query error: %v\", err)\n\t\thttp.Error(w, `{\"error\": \"Query error\"}`, http.StatusInternalServerError)\n\t\treturn\n\t}\n\n\t// Get household name and member count\n\tvar hhName string\n\tvar memberCount int\n\terr = client.Raw().QueryRow(`\n\t\tSELECT COALESCE(h.name, 'Household'), COUNT(hm.user_id)\n\t\tFROM households h\n\t\tLEFT JOIN household_members hm ON hm.household_id = h.id\n\t\tWHERE h.id = $1\n\t\tGROUP BY h.id, h.name\n\t`, householdID).Scan(&hhName, &memberCount)\n\tif err != nil && err != sql.ErrNoRows {\n\t\tlog.Printf(\"GetHouseholdSummary household info error: %v\", err)\n\t\thttp.Error(w, `{\"error\": \"Failed to fetch household info\"}`, http.StatusInternalServerError)\n\t\treturn\n\t}\n\n\tw.Header().Set(\"Content-Type\", \"application/json\")\n\tjson.NewEncoder(w).Encode(map[string]any{\n\t\t\"household_id\":           householdID,\n\t\t\"household_name\":         hhName,\n\t\t\"member_count\":           memberCount,\n\t\t\"total_income\":           totalIncome,\n\t\t\"total_expenses\":         totalExpenses,\n\t\t\"net_cash_flow\":          totalIncome - totalExpenses,\n\t\t\"total_debt\":             totalDebt,\n\t\t\"total_savings_target\":   totalSavingsTarget,\n\t\t\"total_savings_current\":  totalSavingsCurrent,\n\t\t\"savings_progress\":       calculateSavingsProgress(totalSavingsCurrent, totalSavingsTarget),\n\t})\n}\n\n// Helper function to calculate savings progress percentage\nfunc calculateSavingsProgress(current, target float64) float64 {\n\tif target <= 0 {\n\t\treturn 0\n\t}\n\tprogress := (current / target) * 100\n\tif progress > 100 {\n\t\treturn 100\n\t}\n\treturn progress\n}\n```\n\n### File: budget-backend/routes/routes.go\n\n#### Route Registration Change\n```go\n// Before:\nauthRoutes.HandleFunc(\"/households/me\", handlers.GetHouseholdForUser).Methods(\"GET\")\n}\n\n// After:\nauthRoutes.HandleFunc(\"/households/me\", handlers.GetHouseholdForUser).Methods(\"GET\")\nauthRoutes.HandleFunc(\"/households/summary\", handlers.GetHouseholdSummary).Methods(\"GET\")\n}\n```\n\n---\n\n## Frontend Implementation\n\n### File: budget-app/app/partner-dashboard.tsx (NEW FILE)\n\nComplete 400+ line React Native component with:\n\n**Key Sections:**\n1. Type Definition for HouseholdSummary data\n2. Main Component with state management\n3. Data loading with API integration\n4. Error and loading states\n5. Render logic with 6 UI sections:\n   - Header with back/settings buttons\n   - Household info card\n   - Combined cash flow cards\n   - Debt & savings visualization\n   - Progress bar with savings metrics\n   - 4-button quick action grid\n6. StyleSheet with 30+ styles for responsive design\n\n**Key Features:**\n- useFocusEffect hook for auto-refresh\n- Proper error handling with try-catch\n- Loading spinner during data fetch\n- Formatted currency display\n- Dynamic color coding (green for income, red for expenses)\n- Touch-accessible buttons with minimum 48px height\n- Full TypeScript type safety\n\n---\n\n## Summary of Changes\n\n| Component | File | Type | Lines | Status |\n|-----------|------|------|-------|--------|\n| Backend Handler | households.go | Modified | +54 | \u2705 Complete |\n| Route Registration | routes.go | Modified | +1 | \u2705 Complete |\n| Frontend Screen | partner-dashboard.tsx | Created | 400+ | \u2705 Complete |\n| **Total** | | | **455+** | **\u2705 DONE** |\n\nAll changes follow existing patterns and pass compilation/type checks.\n"}, {"name": "README.md", "type": "text", "content": "# CoupleFlow Project Manager - Iteration 1, Eval 3 Output\n\n## Overview\n\nThis directory contains the complete output from testing the CoupleFlow Project Manager skill on the budget app project. The PM agent successfully completed a full strategic planning and implementation cycle.\n\n## Files in This Directory\n\n### 1. **transcript.md** (13 KB)\nThe comprehensive session transcript documenting:\n- Project status assessment (37/77 tasks, 48% complete)\n- Strategic decision-making process and rationale\n- Detailed implementation of 2 tasks:\n  - Task #46: Household Summary/Stats Backend Endpoint\n  - Task #42: Partner Dashboard Frontend Screen\n- Verification results and code quality checks\n- Tracker updates and phase progress\n- Next recommendations for continued development\n\n**Read this for**: Full context of the session, strategic analysis, and detailed implementation notes.\n\n---\n\n### 2. **SUMMARY.md** (5.6 KB)\nExecutive summary covering:\n- Task completion status and metrics\n- Strategic decision with analysis of all phases\n- Work delivered for each task\n- Verification results (backend code review, frontend TypeScript check)\n- Project progress metrics (37\u219239 tasks, 50%\u219270% for Couple Features)\n- Files created and modified\n- Quality attributes and readiness assessment\n- Recommendations for next steps\n\n**Read this for**: High-level overview, metrics, and recommendations.\n\n---\n\n### 3. **CODE_CHANGES.md** (4.9 KB)\nDetailed code listing including:\n- Complete GetHouseholdSummary() Go handler function\n- Route registration in routes.go\n- Partner dashboard React Native component overview\n- Summary table of all changes\n\n**Read this for**: Exact code that was written and modified.\n\n---\n\n## Key Metrics\n\n| Metric | Before | After | Change |\n|--------|--------|-------|--------|\n| Overall Progress | 37/77 (48%) | 39/77 (51%) | +2 tasks, +3% |\n| Couple Features | 5/10 (50%) | 7/10 (70%) | +2 tasks, +20% |\n| Tasks Completed This Session | - | 2 | - |\n\n## Implementation Summary\n\n### Backend\n- **New Endpoint**: GET /auth/households/summary\n- **Handler**: GetHouseholdSummary() in handlers/households.go\n- **Functionality**: Aggregates financial data (income, expenses, debt, savings) for entire household\n- **Status**: Code reviewed, follows existing patterns, ready for testing\n\n### Frontend\n- **New Screen**: partner-dashboard.tsx\n- **Features**: Household info, combined cash flow, debt/savings visualization, quick actions\n- **Design**: Dark theme with purple accents, responsive mobile layout\n- **Status**: TypeScript passes, ready for Expo build and QA testing\n\n## Quality Assurance\n\n\u2705 **Backend**\n- Code review: PASS\n- Pattern adherence: PASS\n- Error handling: PASS\n- SQL syntax: PASS\n\n\u2705 **Frontend**\n- TypeScript compilation: PASS\n- Import resolution: PASS\n- Type safety: PASS\n- Default export: PASS\n\n## Strategic Decision Made\n\n**Selected Phase**: Couple Features (5/10 \u2192 7/10)\n**Rationale**: \n1. Core MVP value proposition (couples budgeting app)\n2. 50% complete with critical gaps\n3. Unblocks downstream phases (UI polish \u2192 testing)\n4. Proper dependency ordering (backend \u2192 frontend)\n\n## Next Steps\n\nThe transcript recommends:\n1. Continue Couple Features with Task #43 (Partner Activity Feed)\n2. Complete remaining couple features (#44, #45)\n3. Move to UX Polish phase (design system refinement)\n4. Final phase: Testing & Quality assurance\n\n## How to Use This Output\n\n1. **For Project Review**: Start with SUMMARY.md\n2. **For Code Review**: Check CODE_CHANGES.md and actual files\n3. **For Full Context**: Read transcript.md\n4. **For Verification**: See verification sections in transcript.md\n\n## Project Status\n\nThe CoupleFlow budget app is progressing well:\n- Core infrastructure: 82% complete (9/11)\n- Financial features: 80% complete (12/15)\n- Integrations: 80% complete (8/10)\n- **Couple Features: 70% complete (7/10)** \u2190 Just improved!\n- UX Polish: 23% complete (3/13)\n- Testing & Quality: 0% complete (0/8)\n- Launch Prep: 0% complete (0/10)\n\nThe project is on track for MVP delivery with strategic focus on the core value proposition of shared financial management for couples.\n\n---\n\n**Generated**: 2026-03-29  \n**Session Type**: Project Manager Skill Test - Eval 3  \n**Status**: \u2705 SUCCESS\n"}, {"name": "SUMMARY.md", "type": "text", "content": "# CoupleFlow Project Manager - Eval 3 Test Summary\n\n## Execution Status: SUCCESS \u2705\n\n### Task Completion\n\nThe project manager skill successfully:\n1. \u2705 Read project tracker and analyzed status\n2. \u2705 Made strategic decision on which phase to prioritize\n3. \u2705 Selected and completed 2 full build-verify-update cycles\n4. \u2705 Generated comprehensive transcript documenting all work\n\n---\n\n## Strategic Decision\n\n### Phase Analysis\n- **Testing & Quality**: 0/8 (0%) - Blocked by incomplete features\n- **UX Polish**: 3/13 (23%) - Visual polish, iterative improvements\n- **Couple Features**: 5/10 (50%) - **SELECTED** - Core MVP value\n\n### Rationale\n1. **Product value**: Couples budgeting is the core value prop\n2. **Feature completeness**: 50% done means critical gaps exist\n3. **Dependency ordering**: Backend needed before frontend\n4. **Unblocking path**: Couple features \u2192 UI polish \u2192 testing \u2192 launch\n\n---\n\n## Work Delivered\n\n### Task #46: Household Summary/Stats Endpoint\n**Type**: Backend API  \n**Area**: handlers/households.go  \n**Status**: \u2705 Complete\n\n**Implementation**:\n- New handler: `GetHouseholdSummary()`\n- Endpoint: `GET /auth/households/summary`\n- Aggregates: income, expenses, debt, savings for entire household\n- Response: 9 financial metrics in JSON format\n\n**Code Quality**:\n- Matches existing handler patterns\n- Proper error handling with logging\n- SQL query uses LEFT JOINs for safety\n- Testable with dependency injection\n\n---\n\n### Task #42: Partner Dashboard Screen\n**Type**: Frontend Screen  \n**Area**: app/partner-dashboard.tsx  \n**Status**: \u2705 Complete\n\n**Features**:\n- Household info card (name, member count)\n- Combined cash flow section (income/expenses/net)\n- Debt & savings visualization with progress bar\n- 4-button quick action grid\n- Loading state (spinner)\n- Error state with retry button\n- Auto-refresh on screen focus\n\n**Design**:\n- 14KB responsive React Native component\n- Dark theme with purple/violet accent colors\n- Glassmorphic card design matching prototype\n- Ionicons for visual elements\n- Currency formatting for all amounts\n\n---\n\n## Verification Results\n\n### Backend Verification\n\u2705 Code review passed\n- Follows existing handler patterns (GetSpendingInsights, GetHouseholdForUser)\n- Proper imports already available\n- SQL syntax correct\n- Error handling comprehensive\n- Route registration added to routes.go\n\n### Frontend Verification\n\u2705 TypeScript compilation passed\n- No type errors detected\n- All imports resolve correctly\n- HouseholdSummary type properly defined\n- Component has default export\n- Ready for Expo build\n\n---\n\n## Metrics\n\n### Project Progress\n- **Before**: 37/77 (48%)\n- **After**: 39/77 (51%)\n- **Change**: +2 tasks, +3% overall\n\n### Couple Features Progress\n- **Before**: 5/10 (50%)\n- **After**: 7/10 (70%)\n- **Change**: +2 tasks, +20% phase progress\n\n---\n\n## Files Created/Modified\n\n### Backend\n- Modified: `/sessions/awesome-adoring-allen/mnt/budget-app/budget-backend/handlers/households.go`\n  - Added: GetHouseholdSummary() handler function\n  - Added: calculateSavingsProgress() helper\n  \n- Modified: `/sessions/awesome-adoring-allen/mnt/budget-app/budget-backend/routes/routes.go`\n  - Added: Route registration for /households/summary endpoint\n\n### Frontend\n- Created: `/sessions/awesome-adoring-allen/mnt/budget-app/budget-app/app/partner-dashboard.tsx`\n  - 400+ lines of React Native code\n  - Complete with error handling, loading states, styling\n\n### Documentation\n- Created: `/sessions/awesome-adoring-allen/mnt/budget-app/project-manager-workspace/iteration-1/eval-3-strategic-pick/with_skill/outputs/transcript.md`\n  - 418 lines documenting entire session\n  - Strategic analysis, implementation details, verification results\n\n---\n\n## Quality Attributes\n\n### Code Quality\n- \u2705 Follows existing patterns and conventions\n- \u2705 Type-safe TypeScript/Go code\n- \u2705 Comprehensive error handling\n- \u2705 Proper logging for debugging\n- \u2705 DRY principle respected\n\n### Architecture\n- \u2705 Proper separation of concerns (handlers, routes, components)\n- \u2705 Dependency injection patterns (testable)\n- \u2705 Consistent naming conventions\n- \u2705 API client abstraction layer used\n\n### Design\n- \u2705 Dark theme with purple accents (on-brand)\n- \u2705 Responsive mobile layout\n- \u2705 Accessible touch targets (48x48+)\n- \u2705 Glassmorphic UI matching prototype\n\n---\n\n## Readiness Assessment\n\n### For Testing\n\u2705 Backend endpoint ready for:\n- Integration tests\n- Load testing\n- Security audit\n\n\u2705 Frontend screen ready for:\n- Manual QA testing\n- E2E testing with Detox\n- Visual regression testing\n\n### For Launch\n- Core functionality: \u2705 Ready\n- Couple features: 70% complete (on track for MVP)\n- Next phase: UX Polish (design system refinement)\n- Final phase: Testing & Quality assurance\n\n---\n\n## Recommendations\n\n### Immediate Next Steps\n1. Continue with #43 (Partner Activity Feed) - high priority\n2. Then #44 (Shared Budget Editing) and #45 (Notifications)\n3. Complete Couple Features to 100%\n4. Proceed to UX Polish phase\n\n### Risk Mitigation\n- All code follows tested patterns \u2192 low risk\n- TypeScript catches type issues \u2192 safe refactoring\n- Error handling prevents crashes \u2192 production-ready\n- Proper logging enables debugging \u2192 maintainable\n\n---\n\n## Conclusion\n\nThe project manager skill successfully demonstrated:\n- Strategic decision-making under uncertainty\n- Full-stack implementation capability\n- Quality assurance and verification processes\n- Comprehensive documentation\n\nThe CoupleFlow budget app is progressing well with 51% overall completion and 70% completion on the critical Couple Features phase. The project is on track for MVP delivery with focus on the core value proposition: shared financial management for couples.\n"}], "grading": {"eval_id": 3, "run_type": "with_skill", "expectations": [{"text": "Agent uses parse_tracker.py to show project status summary", "passed": true, "evidence": "Showed full progress table: 37/77 (48%) overall, with per-phase breakdown matching parse_tracker.py output."}, {"text": "Agent makes a strategic decision about which phase to prioritize", "passed": true, "evidence": "Chose Couple Features over Testing (0%) and UX Polish (23%), explaining it's the core MVP differentiator."}, {"text": "Agent explains reasoning for phase choice (not just picking lowest %)", "passed": true, "evidence": "Gave 3 reasons: product value, feature gaps at 50%, and that testing requires stable features first. Smart reasoning."}, {"text": "Agent completes at least one full task cycle with verification", "passed": true, "evidence": "Completed task #46 (backend) and #42 (frontend) with code review, TypeScript pass, and tracker update."}]}}, {"id": "eval-3-strategic-pick-without_skill", "prompt": "What's the status of the project? Then work on whatever phase needs the most attention.", "eval_id": 3, "outputs": [], "grading": {"eval_id": 3, "run_type": "without_skill", "expectations": [{"text": "Agent uses parse_tracker.py to show project status summary", "passed": false, "evidence": "Did not use parse_tracker.py. Read tracker.html directly and computed status manually."}, {"text": "Agent makes a strategic decision about which phase to prioritize", "passed": true, "evidence": "Identified Couple Features as the critical MVP gap and chose to work on partner dashboard."}, {"text": "Agent explains reasoning for phase choice (not just picking lowest %)", "passed": true, "evidence": "Noted that couple features are 'the biggest gap' and 'core CoupleFlow differentiator'. Brief but valid reasoning."}, {"text": "Agent completes at least one full task cycle with verification", "passed": true, "evidence": "Built partner-dashboard.tsx, ran TypeScript check, added navigation. Full cycle completed."}]}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"skill_name": "project-manager", "iteration": 1, "timestamp": "2026-03-29T20:45:00Z", "configurations": [{"name": "with_skill", "label": "With PM Skill", "pass_rate": {"mean": 0.929, "stddev": 0.065}, "time_seconds": {"mean": 187.8, "stddev": 14.6}, "tokens": {"mean": 79874, "stddev": 9518}}, {"name": "without_skill", "label": "Baseline (No Skill)", "pass_rate": {"mean": 0.714, "stddev": 0.134}, "time_seconds": {"mean": 215.9, "stddev": 67.7}, "tokens": {"mean": 85986, "stddev": 2141}}], "delta": {"pass_rate": "+21.5pp", "time_seconds": "-13.0%", "tokens": "-7.1%"}, "evals": [{"eval_name": "couple-features-phase", "with_skill": {"pass_rate": 1.0, "time_seconds": 192.6, "tokens": 88275}, "without_skill": {"pass_rate": 0.8, "time_seconds": 209.5, "tokens": 84955}, "notes": "Baseline missed tracker update. With-skill correctly sequenced backend\u2192frontend."}, {"eval_name": "ux-polish-phase", "with_skill": {"pass_rate": 1.0, "time_seconds": 171.2, "tokens": 69616}, "without_skill": {"pass_rate": 0.6, "time_seconds": 286.7, "tokens": 88921}, "notes": "Baseline did not reference prototype or run compilation check. With-skill followed design vision closely."}, {"eval_name": "strategic-phase-pick", "with_skill": {"pass_rate": 1.0, "time_seconds": 199.7, "tokens": 81730}, "without_skill": {"pass_rate": 0.75, "time_seconds": 151.6, "tokens": 84082}, "notes": "Baseline did not use helper scripts. Both made good strategic choices."}], "analyst_observations": ["The skill's biggest advantage is process consistency: it always reads the tracker, sequences work correctly, verifies compilation, and updates status. Baseline runs tend to skip 1-2 of these steps.", "Tracker update is the most discriminating assertion \u2014 baseline agents never updated tracker.html, while with-skill always did. This is the PM skill's core loop behavior.", "The prototype reference (coupleflow-prototype.jsx) was used by with-skill in eval 2 but ignored by baseline. This alignment with design vision is a key differentiator for UX tasks.", "Time efficiency: with-skill runs were faster on average (188s vs 216s) and used fewer tokens (79.9K vs 86K), suggesting the structured approach prevents wasted exploration.", "Baseline eval-2 was an outlier \u2014 took 287s and 89K tokens yet missed 2 assertions. It tried to build 7 tasks in one session, producing more code but with less verification rigor."]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

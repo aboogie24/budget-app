@@ -13,8 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 type Member = { user_id: string; email: string; role?: string };
 type Invite = {
@@ -42,11 +43,6 @@ export default function HouseholdManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [acceptingCode, setAcceptingCode] = useState<string | null>(null);
 
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
-
   const loadData = useCallback(async () => {
     try {
       const user = await getCurrentUser();
@@ -54,47 +50,35 @@ export default function HouseholdManagement() {
       setUserId(user.id);
       setUserEmail(user.email || '');
 
-      const headers: any = { 'Content-Type': 'application/json' };
-      if (user.token) headers.Authorization = `Bearer ${user.token}`;
-
       // Fetch household
-      const hhRes = await fetch(`${API_URL}/auth/households/me?user_id=${user.id}`, {
-        credentials: 'include',
-        headers,
-      });
-
-      if (hhRes.ok) {
-        const data = await hhRes.json();
+      try {
+        const data = await api.get(`/auth/households/me`, { user_id: user.id });
         setHouseholdId(data.household_id || data.id || null);
         setHouseholdName(data.name || 'My Household');
         setMembers(Array.isArray(data.members) ? data.members : []);
 
         // Fetch sent invites for this household
         try {
-          const invRes = await fetch(
-            `${API_URL}/auth/households/invites/sent?user_id=${user.id}&household_id=${data.household_id || data.id}`,
-            { credentials: 'include', headers }
-          );
-          if (invRes.ok) {
-            const invData = await invRes.json();
-            setPendingInvites(Array.isArray(invData) ? invData : []);
-          }
-        } catch (_) {}
-      } else {
+          const invData = await api.get(`/auth/households/invites/sent`, {
+            user_id: user.id,
+            household_id: data.household_id || data.id,
+          });
+          setPendingInvites(Array.isArray(invData) ? invData : []);
+        } catch (e) {
+          console.error('Failed to load sent invites:', e);
+        }
+      } catch (e) {
+        console.error('Failed to load household:', e);
         setHouseholdId(null);
         setMembers([]);
 
         // No household — check for pending invites so we can show them prominently
         try {
-          const invRes = await fetch(
-            `${API_URL}/auth/households/invites?user_id=${user.id}`,
-            { credentials: 'include', headers }
-          );
-          if (invRes.ok) {
-            const invData = await invRes.json();
-            setPendingInvites(Array.isArray(invData) ? invData : []);
-          }
-        } catch (_) {}
+          const invData = await api.get(`/auth/households/invites`, { user_id: user.id });
+          setPendingInvites(Array.isArray(invData) ? invData : []);
+        } catch (e2) {
+          console.error('Failed to load pending invites:', e2);
+        }
       }
     } catch (e) {
       // ignore
@@ -138,10 +122,12 @@ export default function HouseholdManagement() {
         const text = await res.text();
         throw new Error(text);
       }
+      successHaptic();
       Alert.alert('Created', 'Your household has been created.');
       setCreateName('');
       await loadData();
     } catch (e: any) {
+      errorHaptic();
       Alert.alert('Error', e.message || 'Could not create household.');
     } finally {
       setSubmitting(false);

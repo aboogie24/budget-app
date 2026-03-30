@@ -1,0 +1,37 @@
+appId: com.github.aboogie.budgetapp
+---
+- launchApp
+- waitForAnimationToEnd
+- runFlow: login.yaml
+- tapOn:
+    text: Settings
+- waitForAnimationToEnd
+- tapOn:
+    text: Household
+- waitForAnimationToEnd
+- tapOn:
+    text: Create New Household
+- waitForAnimationToEnd
+- tapOn:
+    id: household-name-input
+- inputText: Our Home Budget
+- tapOn:
+    id: household-currency-picker
+- tapOn:
+    text: USD
+- tapOn:
+    text: Create
+- waitForAnimationToEnd
+- assertVisible:
+    text: Our Home Budget
+- tapOn:
+    text: Invite Partner
+- waitForAnimationToEnd
+- tapOn:
+    id: partner-email-input
+- inputText: partner@example.com
+- tapOn:
+    text: Send Invitation
+- waitForAnimationToEnd
+- assertVisible:
+    text: Invitation sent to partner@example.com

@@ -4,9 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { fetchUserTransactions, fetchInvestmentHoldings, fetchAccountBalances } from '@/utils/api';
-import Constants from 'expo-constants';
+import { fetchUserTransactions, fetchInvestmentHoldings, fetchAccountBalances, fetchProperties, checkBudgetThresholds } from '@/utils/api';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { FloatingActionButton } from '@/components/FloatingActionButton';
+import { DrawerNavigation } from '@/components/DrawerNavigation';
 
 type Tx = {
   id: string;
@@ -20,6 +22,19 @@ type Tx = {
   category_name?: string;
 };
 
+type HouseholdSummary = {
+  household_id: string | null;
+  household_name?: string;
+  member_count?: number;
+  total_income: number;
+  total_expenses: number;
+  net_cash_flow: number;
+  total_debt: number;
+  total_savings_target: number;
+  total_savings_current: number;
+  savings_progress: number;
+};
+
 export default function DashboardScreen() {
   const router = useRouter();
   const [transactions, setTransactions] = useState<Tx[]>([]);
@@ -29,11 +44,13 @@ export default function DashboardScreen() {
   const [billsSummary, setBillsSummary] = useState({ paid: 0, total: 0 });
   const [investmentTotal, setInvestmentTotal] = useState(0);
   const [cashTotal, setCashTotal] = useState(0);
+  const [propertyTotal, setPropertyTotal] = useState(0);
   const [userName, setUserName] = useState<string | null>(null);
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
+  const [householdSummary, setHouseholdSummary] = useState<HouseholdSummary | null>(null);
+  const [isSharedMode, setIsSharedMode] = useState(false);
+  const [spendingAlertCount, setSpendingAlertCount] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
@@ -48,37 +65,65 @@ export default function DashboardScreen() {
     if (user) setUserName(user.full_name || user.email || null);
 
     if (!user?.id) return;
-    const authHeaders = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
 
-    const debtsRes = await fetch(`${API_URL}/auth/debts?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
-    const debts = debtsRes.ok ? await debtsRes.json() : [];
-    const totalDebt = (Array.isArray(debts) ? debts : []).reduce((sum, d) => sum + (d.balance || 0), 0);
-    const minPayments = (Array.isArray(debts) ? debts : []).reduce((sum, d) => sum + (d.min_payment || 0), 0);
-    setDebtSummary({ total: totalDebt, minPayment: minPayments, count: Array.isArray(debts) ? debts.length : 0 });
+    // Try to fetch household summary first
+    try {
+      const householdData = await api.get(`/auth/households/me`, { user_id: user.id });
+      const householdID = householdData?.household_id;
 
-    const savingsRes = await fetch(`${API_URL}/auth/savings-goals?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
-    const goals = savingsRes.ok ? await savingsRes.json() : [];
-    const totalTarget = (Array.isArray(goals) ? goals : []).reduce((sum, g) => sum + (g.target_amount || 0), 0);
-    const totalCurrent = (Array.isArray(goals) ? goals : []).reduce((sum, g) => sum + (g.current_amount || 0), 0);
-    setSavingsSummary({ totalTarget, totalCurrent, count: Array.isArray(goals) ? goals.length : 0 });
+      if (householdID) {
+        // Fetch the summary for this household
+        const summary = await api.get(`/auth/households/summary`, { household_id: householdID });
+        setHouseholdSummary(summary);
+        setIsSharedMode(true);
+      }
+    } catch (e) {
+      console.log('Household fetch error:', e);
+    }
 
-    const budgetRes = await fetch(`${API_URL}/auth/budgets/user/${user.id}?month=${currentMonth}&year=${currentYear}`, {
-      credentials: 'include',
-      headers: authHeaders,
-    });
-    const budgets = budgetRes.ok ? await budgetRes.json() : [];
-    setBudgetsData(Array.isArray(budgets) ? budgets : []);
-
-    const billsRes = await fetch(`${API_URL}/auth/bills?user_id=${user.id}`, { credentials: 'include', headers: authHeaders });
-    const bills = billsRes.ok ? await billsRes.json() : [];
-    const billsArr = Array.isArray(bills) ? bills : [];
-    const paidCount = billsArr.filter((b: any) => b.status === 'paid').length;
-    setBillsSummary({ paid: paidCount, total: billsArr.length });
+    // Load personal data as well (for comparison or fallback)
+    try {
+      const debts = await api.get(`/auth/debts`, { user_id: user.id });
+      const debtsArray = Array.isArray(debts) ? debts : [];
+      const totalDebt = debtsArray.reduce((sum, d) => sum + (d.balance || 0), 0);
+      const minPayments = debtsArray.reduce((sum, d) => sum + (d.min_payment || 0), 0);
+      setDebtSummary({ total: totalDebt, minPayment: minPayments, count: debtsArray.length });
+    } catch (e) {
+      console.error('Debts fetch error:', e);
+    }
 
     try {
-      const [holdingsData, balancesData] = await Promise.all([
+      const goals = await api.get(`/auth/savings-goals`, { user_id: user.id });
+      const goalsArray = Array.isArray(goals) ? goals : [];
+      const totalTarget = goalsArray.reduce((sum, g) => sum + (g.target_amount || 0), 0);
+      const totalCurrent = goalsArray.reduce((sum, g) => sum + (g.current_amount || 0), 0);
+      setSavingsSummary({ totalTarget, totalCurrent, count: goalsArray.length });
+    } catch (e) {
+      console.error('Savings goals fetch error:', e);
+    }
+
+    try {
+      const budgets = await api.get(`/auth/budgets/user/${user.id}`, { month: currentMonth, year: currentYear });
+      setBudgetsData(Array.isArray(budgets) ? budgets : []);
+    } catch (e) {
+      console.error('Budgets fetch error:', e);
+    }
+
+    try {
+      const bills = await api.get(`/auth/bills`, { user_id: user.id });
+      const billsArr = Array.isArray(bills) ? bills : [];
+      const paidCount = billsArr.filter((b: any) => b.status === 'paid').length;
+      setBillsSummary({ paid: paidCount, total: billsArr.length });
+    } catch (e) {
+      console.error('Bills fetch error:', e);
+    }
+
+    try {
+      const [holdingsData, balancesData, propsData, alertsData] = await Promise.all([
         fetchInvestmentHoldings(),
         fetchAccountBalances('depository'),
+        fetchProperties(),
+        checkBudgetThresholds().catch(() => []),
       ]);
       const invTotal = (Array.isArray(holdingsData) ? holdingsData : []).reduce(
         (sum: number, h: any) => sum + (h.institution_value || 0), 0
@@ -88,8 +133,13 @@ export default function DashboardScreen() {
         (sum: number, a: any) => sum + (a.current_balance || 0), 0
       );
       setCashTotal(cash);
+      const propTotal = (Array.isArray(propsData) ? propsData : []).reduce(
+        (sum: number, p: any) => sum + (p.manual_value || p.zestimate || 0), 0
+      );
+      setPropertyTotal(propTotal);
+      setSpendingAlertCount(Array.isArray(alertsData) ? alertsData.length : 0);
     } catch {}
-  }, [API_URL, currentMonth, currentYear]);
+  }, [currentMonth, currentYear]);
 
   useEffect(() => {
     loadDashboard();
@@ -100,6 +150,13 @@ export default function DashboardScreen() {
       loadDashboard();
     }, [loadDashboard])
   );
+
+  // Use household data if available, otherwise use personal data
+  const displayDebtTotal = isSharedMode && householdSummary ? householdSummary.total_debt : debtSummary.total;
+  const displaySavingsTarget = isSharedMode && householdSummary ? householdSummary.total_savings_target : savingsSummary.totalTarget;
+  const displaySavingsCurrent = isSharedMode && householdSummary ? householdSummary.total_savings_current : savingsSummary.totalCurrent;
+  const displayTotalIncome = isSharedMode && householdSummary ? householdSummary.total_income : 0;
+  const displayTotalExpenses = isSharedMode && householdSummary ? householdSummary.total_expenses : 0;
 
   const expenseData = transactions.filter((t) => t.type === 'expense');
   const incomeData = transactions.filter((t) => t.type === 'income');
@@ -138,11 +195,11 @@ export default function DashboardScreen() {
     budgetsData.length && budgetIncomeTotal
       ? Math.max(0, Math.min(100, Math.round(100 - (budgetExpenseTotal / budgetIncomeTotal) * 100)))
       : 0;
-  const savingsPercent = savingsSummary.totalTarget
-    ? Math.round((savingsSummary.totalCurrent / savingsSummary.totalTarget) * 100)
+  const savingsPercent = displaySavingsTarget
+    ? Math.round((displaySavingsCurrent / displaySavingsTarget) * 100)
     : 0;
   const billsPercent = billsSummary.total > 0 ? Math.round((billsSummary.paid / billsSummary.total) * 100) : 0;
-  const netWorth = cashTotal + investmentTotal - debtSummary.total;
+  const netWorth = cashTotal + investmentTotal + propertyTotal - displayDebtTotal;
 
   const formatCurrency = (v: number) =>
     v.toLocaleString('en-US', {
@@ -151,24 +208,52 @@ export default function DashboardScreen() {
       minimumFractionDigits: 2,
     });
 
+  const drawerItems = [
+    { id: 'dashboard', icon: 'grid-outline', label: 'Dashboard', onPress: () => router.push('/(tabs)/dashboard') },
+    { id: 'budgets', icon: 'pie-chart-outline', label: 'Budgets', onPress: () => router.push('/(tabs)/budget') },
+    { id: 'transactions', icon: 'swap-horizontal-outline', label: 'Transactions', onPress: () => router.push('/transaction/list') },
+    { id: 'bills', icon: 'receipt-outline', label: 'Bills', onPress: () => router.push('/bills') },
+    { id: 'debts', icon: 'card-outline', label: 'Debts', onPress: () => router.push('/debts') },
+    { id: 'savings', icon: 'trending-up-outline', label: 'Savings', onPress: () => router.push('/savings') },
+    { id: 'priorities', icon: 'star-outline', label: 'Priorities', onPress: () => router.push('/priorities') },
+    { id: 'investments', icon: 'briefcase-outline', label: 'Investments', onPress: () => router.push('/investments') },
+    { id: 'properties', icon: 'home-outline', label: 'Properties', onPress: () => router.push('/properties') },
+    { id: 'activity', icon: 'time-outline', label: 'Activity Feed', onPress: () => router.push('/activity-feed') },
+    { id: 'accounts', icon: 'link-outline', label: 'Linked Accounts', onPress: () => router.push('/linked-accounts') },
+  ];
+
   return (
     <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 120 }}>
           <View style={styles.headerRow}>
             <View style={styles.logoRow}>
+              <TouchableOpacity onPress={() => setDrawerOpen(true)} style={styles.hamburgerBtn}>
+                <Ionicons name="menu" size={24} color="#cbd5e1" />
+              </TouchableOpacity>
               <View style={styles.logoBadge}>
                 <Ionicons name="heart-outline" size={16} color="#c084fc" />
               </View>
-            <Text style={styles.logoText}>CoupleFlow</Text>
+              <Text style={styles.logoText}>CoupleFlow</Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity onPress={() => router.push('/insights' as any)}>
+                <Ionicons name="bar-chart-outline" size={20} color="#cbd5e1" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/spending-alerts' as any)}
+                style={{ position: 'relative' }}
+              >
+                <Ionicons name="notifications-outline" size={20} color="#cbd5e1" />
+                {spendingAlertCount > 0 && (
+                  <View style={styles.alertBadge}>
+                    <Text style={styles.alertBadgeText}>{Math.min(spendingAlertCount, 9)}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              <Ionicons name="sunny-outline" size={18} color="#cbd5e1" />
+            </View>
           </View>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <TouchableOpacity onPress={() => router.push('/insights' as any)}>
-              <Ionicons name="bar-chart-outline" size={20} color="#cbd5e1" />
-            </TouchableOpacity>
-            <Ionicons name="sunny-outline" size={18} color="#cbd5e1" />
-          </View>
-        </View>
 
           <View style={{ marginTop: 12 }}>
             <Text style={styles.greetingSub}>Afternoon,</Text>
@@ -177,52 +262,65 @@ export default function DashboardScreen() {
             </Text>
           </View>
 
-        <View style={styles.card}>
-          <View style={styles.alertRow}>
-            <Ionicons name="sparkles-outline" size={18} color="#c084fc" />
-            <Text style={styles.alertText}>You stayed under groceries this week — nicely done! 🎉</Text>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionLabel}>This Month's Progress</Text>
-          <View style={styles.progressRow}>
-            {[
-              {
-                label: 'Budget',
-                percent: isNaN(budgetPercent) ? 0 : budgetPercent,
-                sub: `${formatCurrency(Math.max(budgetIncomeTotal - budgetExpenseTotal, 0))} `,
-              },
-              { label: 'Savings', percent: isNaN(savingsPercent) ? 0 : savingsPercent, sub: `${formatCurrency(savingsSummary.totalCurrent)} / ${formatCurrency(savingsSummary.totalTarget)}` },
-              { label: 'Bills', percent: isNaN(billsPercent) ? 0 : billsPercent, sub: `${billsSummary.paid} of ${billsSummary.total} paid` },
-            ].map((item) => (
-              <View key={item.label} style={styles.progressItem}>
-                <View style={styles.ringOuter}>
-                  <View style={[styles.ringInner, { width: `${item.percent}%` }]} />
-                  <Text style={styles.ringText}>{item.percent}%</Text>
-                </View>
-                <Text style={styles.progressLabel}>{item.label}</Text>
-                <Text style={styles.progressSub}>{item.sub}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {(cashTotal > 0 || investmentTotal > 0 || debtSummary.total > 0) && (
           <View style={styles.card}>
-            <Text style={styles.sectionLabel}>Net Worth</Text>
-            <View style={{ marginTop: 4, gap: 6 }}>
+            <View style={styles.alertRow}>
+              <Ionicons name="sparkles-outline" size={18} color="#c084fc" />
+              <Text style={styles.alertText}>You stayed under groceries this week — nicely done! 🎉</Text>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionLabel}>This Month's Progress</Text>
+            <View style={styles.progressRow}>
+              {[
+                {
+                  label: 'Budget',
+                  percent: isNaN(budgetPercent) ? 0 : budgetPercent,
+                  sub: `${formatCurrency(Math.max(budgetIncomeTotal - budgetExpenseTotal, 0))} remaining`,
+                },
+                {
+                  label: 'Savings',
+                  percent: isNaN(savingsPercent) ? 0 : savingsPercent,
+                  sub: `${formatCurrency(displaySavingsCurrent)} of ${formatCurrency(displaySavingsTarget)}`,
+                },
+                {
+                  label: 'Bills',
+                  percent: isNaN(billsPercent) ? 0 : billsPercent,
+                  sub: `${billsSummary.paid} of ${billsSummary.total} paid`,
+                },
+              ].map((item) => (
+                <View key={item.label} style={styles.progressItem}>
+                  <View style={styles.ringOuter}>
+                    <View style={[styles.ringInner, { width: (item.percent / 100) * 96 }]} />
+                    <Text style={styles.ringText}>{Math.round(item.percent)}%</Text>
+                  </View>
+                  <Text style={styles.progressLabel}>{item.label}</Text>
+                  <Text style={styles.progressSub}>{item.sub}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {(displayDebtTotal > 0 || displaySavingsTarget > 0 || cashTotal > 0 || investmentTotal > 0 || propertyTotal > 0) && (
+            <View style={styles.card}>
+              <Text style={styles.sectionLabel}>Financial Snapshot</Text>
               {cashTotal > 0 && (
-                <View style={styles.nwRow}>
+                <TouchableOpacity
+                  onPress={() => router.push('/accounts' as any)}
+                  style={styles.nwRow}
+                >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Ionicons name="wallet-outline" size={16} color="#60a5fa" />
                     <Text style={styles.nwLabel}>Cash</Text>
                   </View>
                   <Text style={[styles.nwValue, { color: '#60a5fa' }]}>{formatCurrency(cashTotal)}</Text>
-                </View>
+                </TouchableOpacity>
               )}
               {investmentTotal > 0 && (
-                <TouchableOpacity style={styles.nwRow} onPress={() => router.push('/investments' as any)}>
+                <TouchableOpacity
+                  onPress={() => router.push('/investments' as any)}
+                  style={styles.nwRow}
+                >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Ionicons name="trending-up-outline" size={16} color="#34d399" />
                     <Text style={styles.nwLabel}>Investments</Text>
@@ -230,13 +328,28 @@ export default function DashboardScreen() {
                   <Text style={[styles.nwValue, { color: '#34d399' }]}>{formatCurrency(investmentTotal)}</Text>
                 </TouchableOpacity>
               )}
-              {debtSummary.total > 0 && (
-                <TouchableOpacity style={styles.nwRow} onPress={() => router.push('/debts' as any)}>
+              {propertyTotal > 0 && (
+                <TouchableOpacity
+                  onPress={() => router.push('/properties' as any)}
+                  style={styles.nwRow}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="home-outline" size={16} color="#fbbf24" />
+                    <Text style={styles.nwLabel}>Properties</Text>
+                  </View>
+                  <Text style={[styles.nwValue, { color: '#fbbf24' }]}>{formatCurrency(propertyTotal)}</Text>
+                </TouchableOpacity>
+              )}
+              {displayDebtTotal > 0 && (
+                <TouchableOpacity
+                  onPress={() => router.push('/debts' as any)}
+                  style={styles.nwRow}
+                >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Ionicons name="card-outline" size={16} color="#f87171" />
                     <Text style={styles.nwLabel}>Debts</Text>
                   </View>
-                  <Text style={[styles.nwValue, { color: '#f87171' }]}>-{formatCurrency(debtSummary.total)}</Text>
+                  <Text style={[styles.nwValue, { color: '#f87171' }]}>-{formatCurrency(displayDebtTotal)}</Text>
                 </TouchableOpacity>
               )}
               <View style={styles.nwDivider} />
@@ -247,26 +360,42 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             </View>
-          </View>
-        )}
+          )}
 
-          <View style={styles.cardMuted}>
-            <Text style={styles.cardMutedText}>Viewing shared household activity</Text>
-          </View>
+          {isSharedMode && householdSummary && householdSummary.household_id && (
+            <View style={styles.cardMuted}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Ionicons name="people-outline" size={16} color="#c084fc" />
+                <Text style={styles.cardMutedText}>Combined household view for {householdSummary.household_name || 'your household'}</Text>
+              </View>
+              <Text style={[styles.cardMutedText, { fontSize: 12, opacity: 0.8, marginTop: 4 }]}>
+                {householdSummary.member_count} members • Combined income: {formatCurrency(householdSummary.total_income)} • Combined debt: {formatCurrency(householdSummary.total_debt)}
+              </Text>
+            </View>
+          )}
 
           <View style={{ marginTop: 10 }}>
             <Text style={styles.sectionLabel}>Recent Activity</Text>
-            <TouchableOpacity
-              style={styles.viewAllButton}
-              onPress={() =>
-                router.push({
-                  pathname: '/transaction/list',
-                })
-              }
-            >
-              <Text style={styles.viewAllText}>View all</Text>
-              <Ionicons name="chevron-forward" size={16} color="#f8fafc" />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+              <TouchableOpacity
+                style={styles.viewAllButton}
+                onPress={() =>
+                  router.push({
+                    pathname: '/transaction/list',
+                  })
+                }
+              >
+                <Text style={styles.viewAllText}>Transactions</Text>
+                <Ionicons name="chevron-forward" size={16} color="#f8fafc" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.viewAllButton, { backgroundColor: '#6b21a8' }]}
+                onPress={() => router.push('/activity-feed' as any)}
+              >
+                <Text style={styles.viewAllText}>Partner Activity</Text>
+                <Ionicons name="chevron-forward" size={16} color="#f8fafc" />
+              </TouchableOpacity>
+            </View>
             {transactions
               .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
               .slice(0, 3)
@@ -315,9 +444,37 @@ export default function DashboardScreen() {
         </ScrollView>
       </SafeAreaView>
 
-      <TouchableOpacity style={styles.fab} onPress={() => router.push('/add-transaction')}>
-        <Text style={{ color: 'white', fontSize: 28, fontWeight: '700' }}>+</Text>
-      </TouchableOpacity>
+      <DrawerNavigation
+        isOpen={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        items={drawerItems}
+      />
+
+      <FloatingActionButton
+        actions={[
+          {
+            id: 'add-transaction',
+            icon: 'card-outline',
+            label: 'Add Transaction',
+            color: '#a855f7',
+            onPress: () => router.push('/add-transaction'),
+          },
+          {
+            id: 'create-budget',
+            icon: 'pie-chart-outline',
+            label: 'Create Budget',
+            color: '#60a5fa',
+            onPress: () => router.push('/budget/add-budget'),
+          },
+          {
+            id: 'link-account',
+            icon: 'link-outline',
+            label: 'Link Account',
+            color: '#34d399',
+            onPress: () => router.push('/link-account'),
+          },
+        ]}
+      />
     </LinearGradient>
   );
 }
@@ -325,6 +482,7 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  hamburgerBtn: { padding: 8, marginRight: 4 },
   logoBadge: { backgroundColor: 'rgba(255,255,255,0.1)', padding: 8, borderRadius: 12 },
   logoText: { color: '#e5e7eb', fontWeight: '700', fontSize: 15 },
   greetingSub: { color: '#cbd5e1', fontSize: 14 },
@@ -420,5 +578,23 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 6 },
     elevation: 6,
+  },
+  alertBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#ef4444',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#0b1021',
+  },
+  alertBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
   },
 });

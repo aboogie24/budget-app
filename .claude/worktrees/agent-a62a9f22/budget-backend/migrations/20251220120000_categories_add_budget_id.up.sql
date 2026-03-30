@@ -1,0 +1,2 @@
+ALTER TABLE categories
+  ADD COLUMN IF NOT EXISTS budget_id UUID REFERENCES budgets(id) ON DELETE SET NULL;

@@ -1,0 +1,30 @@
+# Secrets & credentials
+key/
+*.pem
+*.key
+*.p12
+*.p8
+*.jks
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Go
+budget-backend/tmp/
+budget-backend/cookies.txt
+
+# Node
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/

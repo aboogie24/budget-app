@@ -1,0 +1,43 @@
+{
+  "skill_name": "project-manager",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Work on the Couple Features phase. Start with whatever is highest priority.",
+      "expected_output": "The agent should: 1) Parse the tracker and identify task #42 (Partner dashboard view) as the highest-priority todo in Couple Features, 2) Recognize it's a fullstack task requiring backend first then frontend, 3) Create the household summary endpoint in Go, 4) Build the partner dashboard screen in React Native, 5) Run verification (go build, tsc), 6) Update the tracker status to done",
+      "files": [],
+      "expectations": [
+        "Agent reads tracker.html and identifies task #42 as next",
+        "Agent builds backend endpoint before frontend screen",
+        "Agent runs compilation checks after building code",
+        "Agent updates tracker status when task is complete",
+        "Agent announces which task it's starting before beginning work"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Continue building the app. Pick up where we left off on UX Polish.",
+      "expected_output": "The agent should: 1) Parse the tracker and find UX Polish phase, 2) Identify task #50 (Glassmorphic design system) or #55 (Empty states) as highest-priority todos, 3) Build the frontend changes following the prototype design language, 4) Verify TypeScript compiles, 5) Describe what the visual output looks like, 6) Update tracker and move to next task",
+      "files": [],
+      "expectations": [
+        "Agent correctly identifies UX Polish phase tasks from tracker",
+        "Agent picks a high-priority task (not low priority first)",
+        "Agent references coupleflow-prototype.jsx for design guidance",
+        "Agent runs TypeScript compilation check",
+        "Agent provides a visual description of what was built"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "What's the status of the project? Then work on whatever phase needs the most attention.",
+      "expected_output": "The agent should: 1) Run the parse_tracker.py --summary script to show overall progress, 2) Identify Testing & Quality (0%) or Launch Prep (0%) as least complete, but recognize that earlier phases should be finished first, 3) Pick the most impactful incomplete phase and start working on its highest-priority task, 4) Complete at least one task with full build+test+verify cycle",
+      "files": [],
+      "expectations": [
+        "Agent uses parse_tracker.py to get project summary",
+        "Agent makes a strategic decision about which phase to work on",
+        "Agent explains its reasoning for choosing the phase",
+        "Agent completes at least one full task cycle (build, verify, update tracker)"
+      ]
+    }
+  ]
+}

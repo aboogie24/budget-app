@@ -16,6 +16,7 @@ func SetupRoutes(r *mux.Router) {
 
 	plaid := plaidclient.NewClient()
 
+	r.Use(middleware.RecoveryMiddleware)
 	r.Use(middleware.Logging)
 
 	authRoutes := r.PathPrefix("/auth").Subrouter()
@@ -24,6 +25,7 @@ func SetupRoutes(r *mux.Router) {
 	// Transactions
 	authRoutes.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
+	authRoutes.HandleFunc("/transactions/{id}", handlers.UpdateTransaction).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
 	authRoutes.HandleFunc("/savings-goals", handlers.ListSavingsGoals).Methods("GET")
 	authRoutes.HandleFunc("/savings-goals", handlers.CreateSavingsGoal).Methods("POST")
@@ -90,9 +92,28 @@ func SetupRoutes(r *mux.Router) {
 	// Plaid (behind auth)
 	authRoutes.HandleFunc("/link_token", handlers.CreateLinkToken(plaid)).Methods("GET")
 	authRoutes.HandleFunc("/exchange_token", handlers.ExchangeToken(plaid)).Methods("POST")
+	authRoutes.HandleFunc("/linked-accounts/status", handlers.GetLinkedAccountStatus).Methods("GET")
+	authRoutes.HandleFunc("/plaid/update-link-token", handlers.CreateUpdateLinkToken(plaid)).Methods("POST")
+	authRoutes.HandleFunc("/linked-accounts/{id}/reset", handlers.ResetItemError).Methods("PUT")
 
 	// Plaid link page (public — serves HTML for WebView)
 	r.HandleFunc("/plaid/link-page", handlers.PlaidLinkPage).Methods("GET")
+
+	// Plaid webhooks (public — receives real-time updates from Plaid)
+	r.HandleFunc("/webhooks/plaid", handlers.HandlePlaidWebhook(plaid)).Methods("POST")
+
+	// Push Notifications (behind auth)
+	authRoutes.HandleFunc("/push-token", handlers.RegisterPushToken).Methods("POST")
+	authRoutes.HandleFunc("/push-token", handlers.UnregisterPushToken).Methods("DELETE")
+	authRoutes.HandleFunc("/push-preference", handlers.UpdatePushPreference).Methods("PUT")
+	authRoutes.HandleFunc("/push-preference", handlers.GetPushPreference).Methods("GET")
+
+	// Properties (behind auth)
+	authRoutes.HandleFunc("/properties", handlers.ListProperties).Methods("GET")
+	authRoutes.HandleFunc("/properties", handlers.CreateProperty).Methods("POST")
+	authRoutes.HandleFunc("/properties/{id}", handlers.UpdateProperty).Methods("PUT")
+	authRoutes.HandleFunc("/properties/{id}", handlers.DeleteProperty).Methods("DELETE")
+	authRoutes.HandleFunc("/properties/{id}/refresh", handlers.RefreshPropertyValue).Methods("POST")
 
 	// Households (behind auth)
 	authRoutes.HandleFunc("/households", handlers.CreateHousehold).Methods("POST")
@@ -100,5 +121,20 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/households/accept", handlers.AcceptHouseholdInvite).Methods("POST")
 	authRoutes.HandleFunc("/households/invites", handlers.ListHouseholdInvites).Methods("GET")
 	authRoutes.HandleFunc("/households/me", handlers.GetHouseholdForUser).Methods("GET")
+	authRoutes.HandleFunc("/households/summary", handlers.GetHouseholdSummary).Methods("GET")
+
+	// Activity Feed (behind auth)
+	authRoutes.HandleFunc("/activity-feed", handlers.GetActivityFeed).Methods("GET")
+	authRoutes.HandleFunc("/activity-feed", handlers.RecordActivityEvent).Methods("POST")
+
+	// Spending Alerts (behind auth)
+	authRoutes.HandleFunc("/spending-alerts", handlers.GetSpendingAlerts).Methods("GET")
+	authRoutes.HandleFunc("/spending-alerts", handlers.UpsertSpendingAlert).Methods("POST")
+	authRoutes.HandleFunc("/spending-alerts/check", handlers.CheckBudgetThresholds).Methods("POST")
+
+	// Currencies (behind auth)
+	authRoutes.HandleFunc("/currencies", handlers.GetSupportedCurrencies).Methods("GET")
+	authRoutes.HandleFunc("/currencies/default", handlers.GetUserCurrency).Methods("GET")
+	authRoutes.HandleFunc("/currencies/default", handlers.SetUserCurrency).Methods("PUT")
 
 }

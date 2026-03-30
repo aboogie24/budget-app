@@ -48,13 +48,13 @@ func ListSavingsGoals(w http.ResponseWriter, r *http.Request) {
 	var rows *sql.Rows
 	if hh == "" {
 		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id, ''), name, target_amount, current_amount, COALESCE(target_date, ''), priority, is_shared
+			SELECT id, user_id, COALESCE(household_id::text, ''), name, target_amount, current_amount, COALESCE(target_date, ''), priority, is_shared
 			FROM savings_goals
 			WHERE household_id IS NULL AND user_id = $1
 		`, userID)
 	} else {
 		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id, ''), name, target_amount, current_amount, COALESCE(target_date, ''), priority, is_shared
+			SELECT id, user_id, COALESCE(household_id::text, ''), name, target_amount, current_amount, COALESCE(target_date, ''), priority, is_shared
 			FROM savings_goals
 			WHERE household_id = $1
 			   OR (household_id IS NULL AND user_id = $2)
@@ -454,13 +454,13 @@ func ListFinancialPriorities(w http.ResponseWriter, r *http.Request) {
 	var rows *sql.Rows
 	if hh == "" {
 		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id, ''), title, rank, COALESCE(notes, ''), is_shared
+			SELECT id, user_id, COALESCE(household_id::text, ''), title, rank, COALESCE(notes, ''), is_shared
 			FROM financial_priorities
 			WHERE household_id IS NULL AND user_id = $1
 		`, userID)
 	} else {
 		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id, ''), title, rank, COALESCE(notes, ''), is_shared
+			SELECT id, user_id, COALESCE(household_id::text, ''), title, rank, COALESCE(notes, ''), is_shared
 			FROM financial_priorities
 			WHERE household_id = $1
 			   OR (household_id IS NULL AND user_id = $2)
@@ -659,13 +659,13 @@ func ListTrips(w http.ResponseWriter, r *http.Request) {
 	var rows *sql.Rows
 	if hh == "" {
 		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id, ''), name, destination, start_date, end_date, budget, is_shared
+			SELECT id, user_id, COALESCE(household_id::text, ''), name, destination, start_date, end_date, budget, is_shared
 			FROM trips
 			WHERE household_id IS NULL AND user_id = $1
 		`, userID)
 	} else {
 		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id, ''), name, destination, start_date, end_date, budget, is_shared
+			SELECT id, user_id, COALESCE(household_id::text, ''), name, destination, start_date, end_date, budget, is_shared
 			FROM trips
 			WHERE household_id = $1 OR is_shared = TRUE
 		`, hh)

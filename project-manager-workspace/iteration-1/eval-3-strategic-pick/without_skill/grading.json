@@ -1,0 +1,10 @@
+{
+  "eval_id": 3,
+  "run_type": "without_skill",
+  "expectations": [
+    {"text": "Agent uses parse_tracker.py to show project status summary", "passed": false, "evidence": "Did not use parse_tracker.py. Read tracker.html directly and computed status manually."},
+    {"text": "Agent makes a strategic decision about which phase to prioritize", "passed": true, "evidence": "Identified Couple Features as the critical MVP gap and chose to work on partner dashboard."},
+    {"text": "Agent explains reasoning for phase choice (not just picking lowest %)", "passed": true, "evidence": "Noted that couple features are 'the biggest gap' and 'core CoupleFlow differentiator'. Brief but valid reasoning."},
+    {"text": "Agent completes at least one full task cycle with verification", "passed": true, "evidence": "Built partner-dashboard.tsx, ran TypeScript check, added navigation. Full cycle completed."}
+  ]
+}

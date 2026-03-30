@@ -11,10 +11,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { getCurrentUser } from '@/utils/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from '@/utils/apiClient';
+import { getLinkedAccountStatus } from '@/utils/api';
+import CurrencyPicker from '@/components/CurrencyPicker';
+import { Currency, getCurrencySymbol } from '@/utils/currency';
 
 type Household = {
   name?: string;
@@ -68,11 +71,22 @@ export default function SettingsScreen() {
   const [appLockEnabled, setAppLockEnabled] = useState(false);
   const [sharingSummary, setSharingSummary] = useState('Configure');
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
+  const [currencyCode, setCurrencyCode] = useState('USD');
+  const [currencyPickerVisible, setCurrencyPickerVisible] = useState(false);
+  const [linkedAccountErrors, setLinkedAccountErrors] = useState(0);
 
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
+  const loadLinkedAccountStatus = useCallback(async () => {
+    try {
+      const accounts = await getLinkedAccountStatus();
+      const errorCount = Array.isArray(accounts)
+        ? accounts.filter((a: any) => a.item_status === 'error' || a.item_status === 'pending_expiration').length
+        : 0;
+      setLinkedAccountErrors(errorCount);
+    } catch (e) {
+      console.error('Failed to load linked account status:', e);
+      setLinkedAccountErrors(0);
+    }
+  }, []);
 
   const loadHousehold = useCallback(async () => {
     const user = await getCurrentUser();
@@ -81,39 +95,65 @@ export default function SettingsScreen() {
       setUserEmail(user.email || '');
     }
     if (user?.id) {
-      const headers: any = {
-        'Content-Type': 'application/json',
-        ...(user.token ? { Authorization: `Bearer ${user.token}` } : {}),
-      };
-      const res = await fetch(`${API_URL}/auth/households/me?user_id=${user.id}`, {
-        credentials: 'include',
-        headers,
-      });
-      if (res.ok) {
-        const data = await res.json();
+      try {
+        const data = await api.get(`/auth/households/me`, { user_id: user.id });
         setHousehold({
           name: data?.name,
           members: data?.members,
           household_id: data?.household_id || data?.id,
           partner_name: data?.members?.find((m: any) => m.email !== user.email)?.email,
         });
-      } else {
+      } catch (e) {
+        console.error('Failed to load household:', e);
         setHousehold(null);
       }
 
       // Check pending invites
       try {
-        const invRes = await fetch(`${API_URL}/auth/households/invites?user_id=${user.id}`, {
-          credentials: 'include',
-          headers,
-        });
-        if (invRes.ok) {
-          const invData = await invRes.json();
-          setPendingInviteCount(Array.isArray(invData) ? invData.length : 0);
-        }
-      } catch (_) {}
+        const invData = await api.get(`/auth/households/invites`, { user_id: user.id });
+        setPendingInviteCount(Array.isArray(invData) ? invData.length : 0);
+      } catch (e) {
+        console.error('Failed to load invites:', e);
+      }
+
+      // Load linked account status
+      await loadLinkedAccountStatus();
     }
-  }, [API_URL]);
+  }, [loadLinkedAccountStatus]);
+
+  const loadUserCurrency = useCallback(async () => {
+    try {
+      const userId = await api.getUserId();
+      if (userId) {
+        const data = await api.get('/auth/currencies/default', { user_id: userId });
+        if (data && data.currency) {
+          setCurrencyCode(data.currency);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load user currency:', e);
+      // Default to USD on error
+      setCurrencyCode('USD');
+    }
+  }, []);
+
+  const handleCurrencySelect = useCallback(async (currency: Currency) => {
+    setCurrencyCode(currency.code);
+    try {
+      const userId = await api.getUserId();
+      if (userId) {
+        await api.put('/auth/currencies/default', {
+          user_id: userId,
+          currency: currency.code,
+        });
+      }
+    } catch (e) {
+      console.error('Failed to save currency preference:', e);
+      // Revert on error
+      setCurrencyCode('USD');
+      Alert.alert('Error', 'Failed to save currency preference');
+    }
+  }, []);
 
   const loadSharingPrefs = useCallback(async () => {
     try {
@@ -138,16 +178,43 @@ export default function SettingsScreen() {
     }
   }, []);
 
+  const loadPushPreference = useCallback(async () => {
+    try {
+      const userId = await api.getUserId();
+      if (userId) {
+        const data = await api.get<{ enabled: boolean }>('/auth/push-preference', { user_id: userId });
+        setPushEnabled(data?.enabled ?? true);
+      }
+    } catch {
+      // default to true
+    }
+  }, []);
+
+  const handlePushToggle = useCallback(async (value: boolean) => {
+    setPushEnabled(value);
+    try {
+      const userId = await api.getUserId();
+      if (userId) {
+        await api.put('/auth/push-preference', { user_id: userId, enabled: value });
+      }
+    } catch {
+      setPushEnabled(!value); // revert on failure
+    }
+  }, []);
+
   useEffect(() => {
     loadHousehold();
     loadSharingPrefs();
-  }, [loadHousehold, loadSharingPrefs]);
+    loadPushPreference();
+    loadUserCurrency();
+  }, [loadHousehold, loadSharingPrefs, loadPushPreference, loadUserCurrency]);
 
   useFocusEffect(
     useCallback(() => {
       loadSharingPrefs();
       loadHousehold();
-    }, [loadSharingPrefs, loadHousehold])
+      loadLinkedAccountStatus();
+    }, [loadSharingPrefs, loadHousehold, loadLinkedAccountStatus])
   );
 
   const handleLogout = async () => {
@@ -225,13 +292,34 @@ export default function SettingsScreen() {
           {/* Financial */}
           <View style={styles.card}>
             <SectionLabel>FINANCIAL</SectionLabel>
-            <Row
-              icon="link-outline"
-              title="Linked Accounts"
-              subtitle="Bank connections & sync"
-              value="Manage"
-              onPress={() => router.push('/link-account')}
-            />
+            <TouchableOpacity
+              disabled={false}
+              onPress={() => router.push('/linked-accounts')}
+              style={styles.row}
+              activeOpacity={0.7}
+            >
+              <View style={styles.rowLeft}>
+                <View style={[styles.rowIcon, linkedAccountErrors > 0 ? { backgroundColor: '#ef444418' } : null]}>
+                  <Ionicons name="link-outline" size={18} color={linkedAccountErrors > 0 ? '#ef4444' : '#c084fc'} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle}>Linked Accounts</Text>
+                  <Text style={styles.rowSub}>
+                    {linkedAccountErrors > 0
+                      ? `${linkedAccountErrors} account${linkedAccountErrors !== 1 ? 's need' : ' needs'} attention`
+                      : 'Bank connections & sync'}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.rowRight}>
+                {linkedAccountErrors > 0 && (
+                  <View style={styles.warningBadge}>
+                    <Text style={styles.warningBadgeText}>{linkedAccountErrors}</Text>
+                  </View>
+                )}
+                <Ionicons name="chevron-forward" size={14} color="#64748b" />
+              </View>
+            </TouchableOpacity>
             <Row
               icon="pie-chart-outline"
               title="Budget Settings"
@@ -244,11 +332,24 @@ export default function SettingsScreen() {
               subtitle="Manage recurring payments"
               onPress={() => router.push('/bills')}
             />
+            <Row
+              icon="home-outline"
+              title="Properties"
+              subtitle="Track home values & equity"
+              onPress={() => router.push('/properties')}
+            />
           </View>
 
           {/* Preferences */}
           <View style={styles.card}>
             <SectionLabel>PREFERENCES</SectionLabel>
+            <Row
+              icon="globe-outline"
+              title="Default Currency"
+              subtitle="Used for new transactions"
+              value={`${getCurrencySymbol(currencyCode)} ${currencyCode}`}
+              onPress={() => setCurrencyPickerVisible(true)}
+            />
             <View style={styles.row}>
               <View style={styles.rowLeft}>
                 <View style={styles.rowIcon}>
@@ -261,7 +362,7 @@ export default function SettingsScreen() {
               </View>
               <Switch
                 value={pushEnabled}
-                onValueChange={setPushEnabled}
+                onValueChange={handlePushToggle}
                 thumbColor="#fff"
                 trackColor={{ true: '#a855f7', false: 'rgba(255,255,255,0.15)' }}
               />
@@ -308,6 +409,12 @@ export default function SettingsScreen() {
 
           <Text style={styles.version}>CoupleFlow v1.0.0</Text>
         </ScrollView>
+        <CurrencyPicker
+          visible={currencyPickerVisible}
+          onClose={() => setCurrencyPickerVisible(false)}
+          onSelect={handleCurrencySelect}
+          selectedCode={currencyCode}
+        />
       </SafeAreaView>
     </LinearGradient>
   );
@@ -413,6 +520,21 @@ const styles = StyleSheet.create({
   rowSub: { color: '#64748b', fontSize: 12, marginTop: 1 },
   rowRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rowValue: { color: '#94a3b8', fontWeight: '600', fontSize: 13 },
+
+  /* Warning badge */
+  warningBadge: {
+    backgroundColor: '#ef4444',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warningBadgeText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 10,
+  },
 
   /* Logout */
   logoutBtn: {

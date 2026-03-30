@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal } from 'rea
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { fetchInvestmentHoldings, fetchAccountBalances } from '@/utils/api';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
 
 type Holding = { id: string; security_name?: string; ticker_symbol?: string; institution_value: number };
 type Debt = { id: string; name: string; balance: number };
@@ -33,28 +35,29 @@ export default function GoalsScreen() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [showActions, setShowActions] = useState(false);
   const [activeTab, setActiveTab] = useState('debts');
+  const [error, setError] = useState<string | null>(null);
   const tabScrollRef = useRef<ScrollView>(null);
-
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
 
   useEffect(() => {
     const load = async () => {
       const user = await getCurrentUser();
       if (!user?.id) return;
-      const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-      const [debtsRes, savingsRes, prioritiesRes, billsRes] = await Promise.all([
-        fetch(`${API_URL}/auth/debts?user_id=${user.id}`, { credentials: 'include', headers }),
-        fetch(`${API_URL}/auth/savings-goals?user_id=${user.id}`, { credentials: 'include', headers }),
-        fetch(`${API_URL}/auth/priorities?user_id=${user.id}`, { credentials: 'include', headers }),
-        fetch(`${API_URL}/auth/bills?user_id=${user.id}`, { credentials: 'include', headers }),
-      ]);
-      if (debtsRes.ok) setDebts((await debtsRes.json()) || []);
-      if (savingsRes.ok) setSavings((await savingsRes.json()) || []);
-      if (prioritiesRes.ok) setPriorities((await prioritiesRes.json()) || []);
-      if (billsRes.ok) setBills((await billsRes.json()) || []);
+      try {
+        const [debtsData, savingsData, prioritiesData, billsData] = await Promise.all([
+          api.get(`/auth/debts`, { user_id: user.id }),
+          api.get(`/auth/savings-goals`, { user_id: user.id }),
+          api.get(`/auth/priorities`, { user_id: user.id }),
+          api.get(`/auth/bills`, { user_id: user.id }),
+        ]);
+        setDebts(debtsData || []);
+        setSavings(savingsData || []);
+        setPriorities(prioritiesData || []);
+        setBills(billsData || []);
+        setError(null);
+      } catch (e) {
+        console.error('Failed to load goals data:', e);
+        setError('Failed to load financial goals');
+      }
 
       try {
         const [h, accts] = await Promise.all([
@@ -84,13 +87,30 @@ export default function GoalsScreen() {
     v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
 
   const renderTabContent = () => {
+    if (error) {
+      return (
+        <ErrorState
+          title="Something went wrong"
+          message={error}
+          onRetry={() => {
+            setError(null);
+            window.location.reload();
+          }}
+        />
+      );
+    }
+
     switch (activeTab) {
       case 'debts':
         return (
           <View style={styles.tabContent}>
             <Text style={styles.tabSummary}>{debts.length} accounts  {formatCurrency(debtTotal)}</Text>
             {debts.length === 0 ? (
-              <Text style={styles.emptyText}>No debts tracked yet</Text>
+              <EmptyState
+                icon="trending-down-outline"
+                title="No debts tracked"
+                description="Add your first debt to start tracking and managing them"
+              />
             ) : (
               debts.map((d) => (
                 <View key={d.id} style={styles.listRow}>
@@ -111,7 +131,11 @@ export default function GoalsScreen() {
           <View style={styles.tabContent}>
             <Text style={styles.tabSummary}>{holdings.length} holdings  {formatCurrency(investmentTotal)}</Text>
             {holdings.length === 0 ? (
-              <Text style={styles.emptyText}>No investments synced yet</Text>
+              <EmptyState
+                icon="trending-up-outline"
+                title="No investments synced"
+                description="Link your investment accounts to see your portfolio"
+              />
             ) : (
               holdings.map((h) => (
                 <View key={h.id} style={styles.listRow}>
@@ -132,7 +156,11 @@ export default function GoalsScreen() {
           <View style={styles.tabContent}>
             <Text style={styles.tabSummary}>{bills.length} bills  {billsPaid} paid  {formatCurrency(billsTotalDue)}/mo</Text>
             {bills.length === 0 ? (
-              <Text style={styles.emptyText}>No bills added yet</Text>
+              <EmptyState
+                icon="document-text-outline"
+                title="No bills tracked"
+                description="Add your first bill to start tracking recurring payments"
+              />
             ) : (
               bills.map((b) => (
                 <View key={b.id} style={styles.listRow}>
@@ -185,7 +213,11 @@ export default function GoalsScreen() {
           <View style={styles.tabContent}>
             <Text style={styles.tabSummary}>{savings.length} goals  {formatCurrency(savingsCurrent)} / {formatCurrency(savingsTarget)}</Text>
             {savings.length === 0 ? (
-              <Text style={styles.emptyText}>No savings goals yet</Text>
+              <EmptyState
+                icon="sparkles-outline"
+                title="No savings goals"
+                description="Create your first savings goal to start building wealth"
+              />
             ) : (
               savings.map((s) => (
                 <View key={s.id} style={styles.listRow}>
@@ -206,7 +238,11 @@ export default function GoalsScreen() {
           <View style={styles.tabContent}>
             <Text style={styles.tabSummary}>{priorities.length} items</Text>
             {priorities.length === 0 ? (
-              <Text style={styles.emptyText}>No priorities set yet</Text>
+              <EmptyState
+                icon="flag-outline"
+                title="No priorities set"
+                description="Define your financial priorities to stay focused on what matters"
+              />
             ) : (
               priorities
                 .sort((a, b) => (a.rank || 99) - (b.rank || 99))

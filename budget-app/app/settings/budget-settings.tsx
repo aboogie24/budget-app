@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Switch
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { router } from 'expo-router';
 import { v4 as uuidv4 } from 'uuid';
@@ -41,31 +41,24 @@ export default function BudgetSettingsScreen() {
   const [auth, setAuth] = useState<{ id: string; token?: string } | null>(null);
   const [budgets, setBudgets] = useState<BudgetGroup[]>([]);
 
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
-
   const load = async () => {
     const user = await getCurrentUser();
     if (!user?.id) return;
     setAuth({ id: user.id, token: user.token });
-    const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-    const res = await fetch(`${API_URL}/auth/categories/user/${user.id}`, { headers, credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      setCategories(Array.isArray(data) ? data : []);
+    try {
+      const catData = await api.get(`/auth/categories/user/${user.id}`);
+      setCategories(Array.isArray(catData) ? catData : []);
+    } catch (e) {
+      console.error('Failed to load categories:', e);
     }
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-    const budgetRes = await fetch(`${API_URL}/auth/budgets/user/${user.id}?month=${month}&year=${year}`, {
-      headers,
-      credentials: 'include',
-    });
-    if (budgetRes.ok) {
-      const data = await budgetRes.json();
-      setBudgets(Array.isArray(data) ? data : []);
+    try {
+      const budgetData = await api.get(`/auth/budgets/user/${user.id}`, { month, year });
+      setBudgets(Array.isArray(budgetData) ? budgetData : []);
+    } catch (e) {
+      console.error('Failed to load budgets:', e);
     }
   };
 
@@ -78,25 +71,16 @@ export default function BudgetSettingsScreen() {
   const updateCategory = async (cat: Category, updates: Partial<Category>) => {
     if (!auth?.id) { Alert.alert('Session', 'Please log in again.'); return; }
     try {
-      const res = await fetch(`${API_URL}/auth/categories/${cat.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}),
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          name: updates.name ?? cat.name,
-          color: updates.color ?? cat.color,
-          limit_amount: updates.limit_amount ?? cat.limit_amount ?? 0,
-          rollover_enabled: updates.rollover_enabled ?? cat.rollover_enabled ?? false,
-          budget_id: updates.budget_id ?? cat.budget_id ?? null,
-        }),
+      const updated = await api.put(`/auth/categories/${cat.id}`, {
+        name: updates.name ?? cat.name,
+        color: updates.color ?? cat.color,
+        limit_amount: updates.limit_amount ?? cat.limit_amount ?? 0,
+        rollover_enabled: updates.rollover_enabled ?? cat.rollover_enabled ?? false,
+        budget_id: updates.budget_id ?? cat.budget_id ?? null,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const updated = await res.json();
       setCategories((prev) => prev.map((c) => (c.id === cat.id ? { ...c, ...updated } : c)));
-    } catch {
+    } catch (e) {
+      console.error('Failed to update category:', e);
       Alert.alert('Error', 'Could not update category');
     }
   };
@@ -115,23 +99,14 @@ export default function BudgetSettingsScreen() {
         rollover_enabled: newRollover,
         budget_id: newBudgetId || null,
       };
-      const res = await fetch(`${API_URL}/auth/categories`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}),
-        },
-        credentials: 'include',
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const created = await res.json();
+      const created = await api.post(`/auth/categories`, payload);
       setCategories((prev) => [...prev, created]);
       setNewName('');
       setNewLimit('');
       setNewRollover(false);
       setNewBudgetId('');
-    } catch {
+    } catch (e) {
+      console.error('Failed to add category:', e);
       Alert.alert('Error', 'Could not add category');
     }
   };
@@ -144,14 +119,10 @@ export default function BudgetSettingsScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const res = await fetch(`${API_URL}/auth/categories/${cat.id}`, {
-              method: 'DELETE',
-              headers: auth?.token ? { Authorization: `Bearer ${auth.token}` } : undefined,
-              credentials: 'include',
-            });
-            if (!res.ok) throw new Error(await res.text());
+            await api.delete(`/auth/categories/${cat.id}`);
             setCategories((prev) => prev.filter((c) => c.id !== cat.id));
-          } catch {
+          } catch (e) {
+            console.error('Failed to delete category:', e);
             Alert.alert('Error', 'Could not delete category');
           }
         },

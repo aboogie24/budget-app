@@ -16,6 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
 
 type Debt = {
   id: string;
@@ -50,6 +52,7 @@ export default function DebtsScreen() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [billDebt, setBillDebt] = useState<Debt | null>(null);
   const [billFreq, setBillFreq] = useState('monthly');
+  const [error, setError] = useState<string | null>(null);
 
   // Form state
   const [name, setName] = useState('');
@@ -72,8 +75,10 @@ export default function DebtsScreen() {
       ]);
       setDebts(Array.isArray(debtsData) ? debtsData : []);
       setBills(Array.isArray(billsData) ? billsData : []);
+      setError(null);
     } catch (e) {
       console.error('Failed to load debts:', e);
+      setError('Failed to load debts');
     } finally {
       setLoading(false);
     }
@@ -268,14 +273,31 @@ export default function DebtsScreen() {
             )}
           </View>
 
-          {loading ? (
+          {error && (
+            <ErrorState
+              title="Something went wrong"
+              message={error}
+              onRetry={() => {
+                setError(null);
+                setLoading(true);
+                loadDebts();
+              }}
+            />
+          )}
+
+          {!error && loading ? (
             <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : debts.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="card-outline" size={48} color="#475569" />
-              <Text style={styles.emptyText}>No debts tracked yet</Text>
-              <Text style={styles.emptySubtext}>Tap + to add your first debt</Text>
-            </View>
+          ) : !error && debts.length === 0 ? (
+            <EmptyState
+              icon="trending-down-outline"
+              title="No debts tracked"
+              description="Add your first debt to start tracking and managing them"
+              actionLabel="Add Debt"
+              onAction={() => {
+                resetForm();
+                setShowForm(true);
+              }}
+            />
           ) : (
             debts.map((d) => (
               <TouchableOpacity key={d.id} style={styles.card} onPress={() => openEdit(d)}>

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/models"
@@ -50,13 +51,57 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Normalize empty strings to nil for UUID/nullable columns
+	if tx.CategoryID != nil && *tx.CategoryID == "" {
+		tx.CategoryID = nil
+	}
+	if tx.HouseholdID != nil && *tx.HouseholdID == "" {
+		tx.HouseholdID = nil
+	}
+	if tx.BudgetID != nil && *tx.BudgetID == "" {
+		tx.BudgetID = nil
+	}
+	if tx.Source != nil && *tx.Source == "" {
+		tx.Source = nil
+	}
+
+	// Set default currency if not provided
+	if tx.Currency == "" {
+		tx.Currency = "USD"
+	}
+
 	_, err = dbClient.Exec(`
-		INSERT INTO transactions (id, user_id, household_id, category_id, type, amount, category_name, note, date, frequency, due_day, source)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		tx.ID, tx.UserID, tx.HouseholdID, tx.CategoryID, tx.Type, tx.Amount, tx.Category, tx.Note, tx.Date, tx.Frequency, tx.DueDay, tx.Source)
+		INSERT INTO transactions (id, user_id, household_id, budget_id, category_id, type, amount, currency, category_name, note, date, frequency, due_day, source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		tx.ID, tx.UserID, tx.HouseholdID, tx.BudgetID, tx.CategoryID, tx.Type, tx.Amount, tx.Currency, tx.Category, tx.Note, tx.Date, tx.Frequency, tx.DueDay, tx.Source)
 	if err != nil {
+		log.Printf("CreateTransaction insert error: %v", err)
 		http.Error(w, "Failed to insert transaction", http.StatusInternalServerError)
 		return
+	}
+
+	// Notify household partner for significant transactions
+	if tx.HouseholdID != nil && *tx.HouseholdID != "" && tx.Amount >= 50 {
+		var userName string
+		_ = dbClient.QueryRow(`SELECT COALESCE(full_name, email) FROM users WHERE id = $1`, tx.UserID).Scan(&userName)
+		if userName == "" {
+			userName = "Your partner"
+		}
+		note := tx.Note
+		if note == "" && tx.Category != nil {
+			note = *tx.Category
+		}
+		SendHouseholdNotification(
+			*tx.HouseholdID, tx.UserID,
+			"New Transaction",
+			fmt.Sprintf("%s added a $%.2f %s: %s", userName, tx.Amount, tx.Type, note),
+			map[string]string{"screen": "/(tabs)/budget"},
+		)
+	}
+
+	// Check if this transaction caused the budget to exceed its threshold
+	if tx.BudgetID != nil && *tx.BudgetID != "" && tx.Type == "expense" && tx.HouseholdID != nil && *tx.HouseholdID != "" {
+		checkBudgetThresholdAfterTransaction(dbClient, *tx.BudgetID, *tx.HouseholdID, tx.Date)
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -89,7 +134,7 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 	var rows *sql.Rows
 	if hh == "" {
 		rows, err = dbClient.Query(`
-			SELECT 
+			SELECT
 				t.id,          -- 1
 				t.user_id,     -- 2
 				t.household_id,
@@ -97,13 +142,14 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 				t.category_id, -- 5
 				t.type,        -- 6
 				t.amount,      -- 7
-				t.note,        -- 8
-				t.date,        -- 9
-				t.frequency,   -- 10
-				t.due_day,     -- 11
-				COALESCE(c.name, t.category_name), -- 12
-				c.color,       -- 13
-				t.source       -- 14
+				t.currency,    -- 8
+				t.note,        -- 9
+				t.date,        -- 10
+				t.frequency,   -- 11
+				t.due_day,     -- 12
+				COALESCE(c.name, t.category_name), -- 13
+				c.color,       -- 14
+				t.source       -- 15
 			FROM transactions t
 			LEFT JOIN categories c ON t.category_id = c.id
 			WHERE t.household_id IS NULL AND t.user_id = $1
@@ -118,13 +164,14 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 				t.category_id, -- 5
 				t.type,        -- 6
 				t.amount,      -- 7
-				t.note,        -- 8
-				t.date,        -- 9
-				t.frequency,   -- 10
-				t.due_day,     -- 11
-				COALESCE(c.name, t.category_name), -- 12
-				c.color,       -- 13
-				t.source       -- 14
+				t.currency,    -- 8
+				t.note,        -- 9
+				t.date,        -- 10
+				t.frequency,   -- 11
+				t.due_day,     -- 12
+				COALESCE(c.name, t.category_name), -- 13
+				c.color,       -- 14
+				t.source       -- 15
 			FROM transactions t
 			LEFT JOIN categories c ON t.category_id = c.id
 			WHERE t.user_id = $2
@@ -165,13 +212,14 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 			&t.CategoryID, // 5
 			&t.Type,       // 6
 			&t.Amount,     // 7
-			&note,         // 8 note
-			&t.Date,       // 9
-			&freq,         // 10 frequency
-			&t.DueDay,     // 11
-			&t.Category,   // 12
-			&t.Color,      // 13
-			&t.Source,     // 14
+			&t.Currency,   // 8 currency
+			&note,         // 9 note
+			&t.Date,       // 10
+			&freq,         // 11 frequency
+			&t.DueDay,     // 12
+			&t.Category,   // 13
+			&t.Color,      // 14
+			&t.Source,     // 15
 		)
 		if hh.Valid {
 			val := hh.String
@@ -191,6 +239,135 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Total rows processed: %d", rowCount)
 
 	json.NewEncoder(w).Encode(transactions)
+}
+
+func UpdateTransaction(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "Missing transaction ID", http.StatusBadRequest)
+		return
+	}
+
+	var tx models.Transaction
+	if err := json.NewDecoder(r.Body).Decode(&tx); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validation
+	if tx.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+	if tx.Amount <= 0 {
+		validationError(w, "Amount must be greater than zero")
+		return
+	}
+	if !isValidBudgetType(tx.Type) {
+		validationError(w, "Type must be 'income' or 'expense'")
+		return
+	}
+	if tx.Date.IsZero() {
+		validationError(w, "Date is required")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "transactions", id, tx.UserID) {
+		return
+	}
+
+	// Normalize empty strings to nil for UUID/nullable columns
+	if tx.CategoryID != nil && *tx.CategoryID == "" {
+		tx.CategoryID = nil
+	}
+	if tx.BudgetID != nil && *tx.BudgetID == "" {
+		tx.BudgetID = nil
+	}
+
+	// Set default currency if not provided
+	if tx.Currency == "" {
+		tx.Currency = "USD"
+	}
+
+	// Execute UPDATE query
+	_, err = dbClient.Exec(fmt.Sprintf(`
+		UPDATE transactions
+		SET amount = $1, note = $2, category_id = $3, category_name = $4, type = $5, date = $6, frequency = $7, due_day = $8, budget_id = $9, currency = $10
+		WHERE id = $11
+	`), tx.Amount, tx.Note, tx.CategoryID, tx.Category, tx.Type, tx.Date, tx.Frequency, tx.DueDay, tx.BudgetID, tx.Currency, id)
+	if err != nil {
+		log.Printf("UpdateTransaction update error: %v", err)
+		http.Error(w, "Failed to update transaction", http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch the updated transaction with category join
+	var hh, freq, note sql.NullString
+	var catID sql.NullString
+
+	err = dbClient.QueryRow(`
+		SELECT
+			t.id,
+			t.user_id,
+			t.household_id,
+			t.budget_id,
+			t.category_id,
+			t.type,
+			t.amount,
+			t.currency,
+			t.note,
+			t.date,
+			t.frequency,
+			t.due_day,
+			COALESCE(c.name, t.category_name),
+			c.color,
+			t.source
+		FROM transactions t
+		LEFT JOIN categories c ON t.category_id = c.id
+		WHERE t.id = $1
+	`, id).Scan(
+		&tx.ID,
+		&tx.UserID,
+		&hh,
+		&tx.BudgetID,
+		&catID,
+		&tx.Type,
+		&tx.Amount,
+		&tx.Currency,
+		&note,
+		&tx.Date,
+		&freq,
+		&tx.DueDay,
+		&tx.Category,
+		&tx.Color,
+		&tx.Source,
+	)
+	if err != nil {
+		log.Printf("UpdateTransaction fetch error: %v", err)
+		http.Error(w, "Failed to fetch updated transaction", http.StatusInternalServerError)
+		return
+	}
+
+	if hh.Valid {
+		val := hh.String
+		tx.HouseholdID = &val
+	}
+	if catID.Valid {
+		val := catID.String
+		tx.CategoryID = &val
+	}
+	tx.Frequency = freq.String
+	tx.Note = note.String
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tx)
 }
 
 func DeleteTransaction(w http.ResponseWriter, r *http.Request) {
@@ -223,4 +400,71 @@ func DeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// checkBudgetThresholdAfterTransaction checks if a budget has exceeded its alert threshold
+// after a transaction is created. If so, sends a push notification to all household members.
+func checkBudgetThresholdAfterTransaction(dbClient db.DBTX, budgetID, householdID string, txDate time.Time) {
+	// Get budget info
+	var budgetName string
+	var budgetAmount float64
+	err := dbClient.QueryRow(
+		`SELECT name, amount FROM budgets WHERE id = $1`,
+		budgetID,
+	).Scan(&budgetName, &budgetAmount)
+	if err != nil {
+		log.Printf("checkBudgetThreshold budget lookup error: %v", err)
+		return
+	}
+
+	// Get the configured threshold for this budget (default to 80%)
+	var threshold int = 80
+	err = dbClient.QueryRow(
+		`SELECT COALESCE(threshold_percent, 80) FROM spending_alerts WHERE budget_id = $1 AND is_enabled = true`,
+		budgetID,
+	).Scan(&threshold)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("checkBudgetThreshold alert lookup error: %v", err)
+		// Fall through with default 80%
+	}
+
+	// Calculate spending for this budget for the current month
+	monthStart := time.Date(txDate.Year(), txDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+
+	var spent float64
+	err = dbClient.QueryRow(
+		`SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE budget_id = $1 AND type = 'expense' AND date >= $2 AND date < $3`,
+		budgetID, monthStart.Format("2006-01-02"), monthEnd.Format("2006-01-02"),
+	).Scan(&spent)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("checkBudgetThreshold spending query error: %v", err)
+		return
+	}
+
+	// Calculate percent used
+	percentUsed := 0
+	if budgetAmount > 0 {
+		percentUsed = int((spent / budgetAmount) * 100)
+	}
+
+	// Only send notification if we've exceeded the threshold
+	if percentUsed < threshold {
+		return
+	}
+
+	// Send notification to all household members
+	var title, body string
+	if percentUsed >= 100 {
+		title = "Over Budget"
+		body = fmt.Sprintf("%s is at %d%% ($%.0f of $%.0f)", budgetName, percentUsed, spent, budgetAmount)
+	} else {
+		title = "Budget Alert"
+		body = fmt.Sprintf("%s is at %d%% ($%.0f of $%.0f)", budgetName, percentUsed, spent, budgetAmount)
+	}
+
+	SendHouseholdNotification(householdID, "", title, body, map[string]string{
+		"screen":    "/(tabs)/budget",
+		"budget_id": budgetID,
+	})
 }

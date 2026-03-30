@@ -1,11 +1,13 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
-import Constants from 'expo-constants';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
 
 type Tx = {
   id: string;
@@ -21,18 +23,14 @@ type Tx = {
 export default function TransactionList() {
   const router = useRouter();
   const [transactions, setTransactions] = useState<Tx[]>([]);
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     const user = await getCurrentUser();
     if (!user?.id) return;
-    const headers = user.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-    const res = await fetch(`${API_URL}/auth/transactions?user_id=${user.id}`, { headers, credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const data = await api.get(`/auth/transactions`, { user_id: user.id });
       const normalized = Array.isArray(data)
         ? data.map((t: any) => ({
             ...t,
@@ -40,8 +38,18 @@ export default function TransactionList() {
           }))
         : [];
       setTransactions(normalized);
+      setError(null);
+    } catch (e) {
+      console.error('Failed to load transactions:', e);
+      setError('Failed to load transactions');
     }
   }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
 
   useFocusEffect(
     useCallback(() => {
@@ -51,6 +59,32 @@ export default function TransactionList() {
 
   const format = (d: string) => new Date(d).toLocaleDateString();
   const formatCurrency = (v: number) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+  if (error) {
+    return (
+      <LinearGradient colors={['#0b1021', '#1b0d30', '#2d0c53']} style={{ flex: 1 }}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+              <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
+            </TouchableOpacity>
+            <Text style={styles.header}>All Transactions</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <View style={{ flex: 1, padding: 16 }}>
+            <ErrorState
+              title="Something went wrong"
+              message={error}
+              onRetry={() => {
+                setError(null);
+                load();
+              }}
+            />
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient colors={['#0b1021', '#1b0d30', '#2d0c53']} style={{ flex: 1 }}>
@@ -67,6 +101,14 @@ export default function TransactionList() {
           data={transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 10 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#a855f7"
+              colors={['#a855f7']}
+            />
+          }
           renderItem={({ item }) => (
             <TouchableOpacity
               style={styles.card}
@@ -113,7 +155,17 @@ export default function TransactionList() {
               </View>
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={{ color: '#cbd5e1', textAlign: 'center', marginTop: 40 }}>No transactions yet.</Text>}
+          ListEmptyComponent={
+            <View style={{ flex: 1, padding: 16, justifyContent: 'center' }}>
+              <EmptyState
+                icon="receipt-outline"
+                title="No transactions yet"
+                description="Your transactions will appear here once you add them"
+                actionLabel="Add Transaction"
+                onAction={() => router.push('/transaction/add')}
+              />
+            </View>
+          }
         />
       </SafeAreaView>
     </LinearGradient>

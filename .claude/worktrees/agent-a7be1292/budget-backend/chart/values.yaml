@@ -1,0 +1,27 @@
+replicaCount: 1
+
+image:
+  repository: your-registry/budget-app-backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+env:
+  PORT: "8080"
+  DB_HOST: budget-app-backend-postgresql
+  DB_PORT: "5432"
+  DB_NAME: budget
+  DB_USER: budget_user
+  DB_PASSWORD: budget_pass
+
+resources: {}
+
+postgresql:
+  enabled: true
+  auth:
+    username: budget_user
+    password: budget_pass
+    database: budget

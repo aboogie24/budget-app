@@ -1,0 +1,30 @@
+appId: com.github.aboogie.budgetapp
+---
+- launchApp
+- waitForAnimationToEnd
+- runFlow: login.yaml
+- tapOn:
+    id: fab-button
+- waitForAnimationToEnd
+- tapOn:
+    text: Add Transaction
+- waitForAnimationToEnd
+- tapOn:
+    id: amount-input
+- inputText: "42.50"
+- tapOn:
+    id: category-picker
+- tapOn:
+    text: Dining
+- tapOn:
+    id: note-input
+- inputText: Coffee and snacks
+- tapOn:
+    text: Add
+- waitForAnimationToEnd
+- assertVisible:
+    text: "$42.50"
+- assertVisible:
+    text: Coffee and snacks
+- assertVisible:
+    text: Dining

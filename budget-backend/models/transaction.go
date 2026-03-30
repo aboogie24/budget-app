@@ -10,6 +10,7 @@ type Transaction struct {
 	CategoryID *string  `json:"category_id,omitempty"`
 	Type      string    `json:"type"` // "income" or "expense"
 	Amount    float64   `json:"amount"`
+	Currency  string    `json:"currency"` // currency code (e.g., "USD")
 	Note      string    `json:"note"`
 	Date      time.Time `json:"date"`
 	Frequency string    `json:"frequency"`     // e.g., "monthly", "biweekly"

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,19 +7,15 @@ import {
   FlatList,
   StyleSheet,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../../utils/storage';
-import Constants from 'expo-constants';
+import { api } from '../../utils/apiClient';
 import { v4 as uuidv4 } from 'uuid';
 import { router } from 'expo-router';
-
-const API_URL =
-  Constants.expoConfig?.extra?.API_URL ??
-  Constants.manifest?.extra?.API_URL ??
-  'http://localhost:8080';
 
 const PRESET_COLORS = [
   '#7c3aed', '#22c55e', '#ef4444', '#3b82f6', '#06b6d4',
@@ -34,13 +30,12 @@ export default function CategorySettings() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
 
   const fetchCategories = async () => {
     try {
       const user = await getCurrentUser();
-      const headers = user?.token ? { Authorization: `Bearer ${user.token}` } : undefined;
-      const res = await fetch(`${API_URL}/auth/categories/user/${user.id}`, { headers, credentials: 'include' });
-      const data = await res.json();
+      const data = await api.get(`/auth/categories/user/${user.id}`);
       setCategories((Array.isArray(data) ? data : []).filter((cat: any) => cat.type === type));
     } catch (err) {
       console.error('Error fetching categories:', err);
@@ -49,21 +44,22 @@ export default function CategorySettings() {
 
   useEffect(() => { fetchCategories(); }, [type]);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchCategories();
+    setRefreshing(false);
+  }, [type]);
+
   const handleAddCategory = async () => {
     const currentUser = await getCurrentUser();
     if (!newName.trim()) { Alert.alert('Missing name', 'Please enter a category name.'); return; }
     try {
       const payload = { id: uuidv4(), name: newName.trim(), type, user_id: currentUser.id, color: newColor };
-      const headers: any = { 'Content-Type': 'application/json' };
-      if (currentUser.token) headers.Authorization = `Bearer ${currentUser.token}`;
-      const res = await fetch(`${API_URL}/auth/categories`, {
-        method: 'POST', headers, credentials: 'include', body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const created = await res.json();
+      const created = await api.post(`/auth/categories`, payload);
       setCategories((prev) => [...prev, created]);
       setNewName('');
-    } catch {
+    } catch (e) {
+      console.error('Failed to add category:', e);
       Alert.alert('Error', 'Could not add category.');
     }
   };
@@ -76,13 +72,10 @@ export default function CategorySettings() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const user = await getCurrentUser();
-            const headers: any = {};
-            if (user?.token) headers.Authorization = `Bearer ${user.token}`;
-            const res = await fetch(`${API_URL}/auth/categories/${id}`, { method: 'DELETE', headers, credentials: 'include' });
-            if (!res.ok) throw new Error(await res.text());
+            await api.delete(`/auth/categories/${id}`);
             setCategories((prev) => prev.filter((c) => c.id !== id));
-          } catch {
+          } catch (e) {
+            console.error('Failed to delete category:', e);
             Alert.alert('Error', 'Failed to delete category.');
           }
         },
@@ -98,18 +91,11 @@ export default function CategorySettings() {
 
   const handleUpdate = async () => {
     try {
-      const user = await getCurrentUser();
-      const headers: any = { 'Content-Type': 'application/json' };
-      if (user?.token) headers.Authorization = `Bearer ${user.token}`;
-      const res = await fetch(`${API_URL}/auth/categories/${editingId}`, {
-        method: 'PUT', headers, credentials: 'include',
-        body: JSON.stringify({ name: editName, color: editColor }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const updated = await res.json();
+      const updated = await api.put(`/auth/categories/${editingId}`, { name: editName, color: editColor });
       setCategories((prev) => prev.map((c) => (c.id === editingId ? updated : c)));
       setEditingId(null);
-    } catch {
+    } catch (e) {
+      console.error('Failed to update category:', e);
       Alert.alert('Error', 'Failed to update category.');
     }
   };
@@ -122,6 +108,14 @@ export default function CategorySettings() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.container}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#a855f7"
+              colors={['#a855f7']}
+            />
+          }
           ListHeaderComponent={
             <>
               {/* Header */}

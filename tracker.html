@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CoupleFlow — MVP Tracker</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#f8fafc;--muted:#94a3b8;--accent:#a855f7;--accent2:#7c3aed;--green:#22c55e;--yellow:#eab308;--red:#ef4444;--blue:#3b82f6;--orange:#f97316}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.app{max-width:1400px;margin:0 auto;padding:24px}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:16px}
+.header h1{font-size:28px;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header-sub{color:var(--muted);font-size:14px;margin-top:4px}
+.header-right{display:flex;gap:12px;align-items:center}
+.last-updated{color:var(--muted);font-size:12px}
+
+/* Tabs */
+.tabs{display:flex;gap:4px;background:var(--surface);border-radius:12px;padding:4px;margin-bottom:24px;overflow-x:auto}
+.tab{padding:10px 20px;border-radius:8px;border:none;background:transparent;color:var(--muted);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;transition:.2s}
+.tab:hover{color:var(--text);background:var(--surface2)}
+.tab.active{background:var(--accent2);color:#fff}
+
+/* Stats Row */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--surface);border-radius:12px;padding:20px;border:1px solid transparent}
+.stat-card.green{border-color:rgba(34,197,94,.3)}
+.stat-card.yellow{border-color:rgba(234,179,8,.3)}
+.stat-card.blue{border-color:rgba(59,130,246,.3)}
+.stat-card.purple{border-color:rgba(168,85,247,.3)}
+.stat-card.red{border-color:rgba(239,68,68,.3)}
+.stat-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.stat-value{font-size:28px;font-weight:700}
+.stat-value.green{color:var(--green)}
+.stat-value.yellow{color:var(--yellow)}
+.stat-value.blue{color:var(--blue)}
+.stat-value.purple{color:var(--accent)}
+.stat-value.red{color:var(--red)}
+.stat-detail{font-size:12px;color:var(--muted);margin-top:4px}
+
+/* Progress bars */
+.progress-section{margin-bottom:24px}
+.phase-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:12px 16px;background:var(--surface);border-radius:10px}
+.phase-label{min-width:200px;font-size:14px;font-weight:500}
+.phase-bar-bg{flex:1;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.phase-bar{height:100%;border-radius:4px;transition:width .5s ease}
+.phase-pct{min-width:45px;text-align:right;font-size:13px;color:var(--muted);font-weight:600}
+
+/* Task Table */
+.task-table{width:100%;border-collapse:separate;border-spacing:0}
+.task-table thead th{text-align:left;padding:12px 16px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--surface2);position:sticky;top:0;background:var(--bg);z-index:1}
+.task-table tbody tr{transition:.15s}
+.task-table tbody tr:hover{background:var(--surface)}
+.task-table td{padding:10px 16px;border-bottom:1px solid rgba(71,85,105,.3);font-size:14px;vertical-align:top}
+
+/* Badges */
+.badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.badge.done{background:rgba(34,197,94,.15);color:var(--green)}
+.badge.in-progress{background:rgba(59,130,246,.15);color:var(--blue)}
+.badge.todo{background:rgba(148,163,184,.15);color:var(--muted)}
+.badge.blocked{background:rgba(239,68,68,.15);color:var(--red)}
+.badge.critical{background:rgba(239,68,68,.15);color:var(--red)}
+.badge.high{background:rgba(249,115,22,.15);color:var(--orange)}
+.badge.medium{background:rgba(234,179,8,.15);color:var(--yellow)}
+.badge.low{background:rgba(148,163,184,.15);color:var(--muted)}
+
+/* Filters */
+.filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.filter-btn{padding:6px 14px;border-radius:8px;border:1px solid var(--surface2);background:transparent;color:var(--muted);font-size:13px;cursor:pointer;transition:.15s}
+.filter-btn:hover,.filter-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(168,85,247,.08)}
+
+/* Kanban */
+.kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;min-height:500px}
+.kanban-col{background:var(--surface);border-radius:12px;padding:16px;display:flex;flex-direction:column}
+.kanban-col-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid var(--surface2)}
+.kanban-col-title{font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.kanban-col-count{background:var(--surface2);padding:2px 8px;border-radius:99px;font-size:12px;color:var(--muted)}
+.kanban-card{background:var(--bg);border:1px solid var(--surface2);border-radius:10px;padding:14px;margin-bottom:10px;cursor:default;transition:.15s}
+.kanban-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+.kanban-card-title{font-size:13px;font-weight:500;margin-bottom:8px;line-height:1.4}
+.kanban-card-meta{display:flex;gap:6px;flex-wrap:wrap}
+.kanban-tag{font-size:10px;padding:2px 7px;border-radius:4px;background:var(--surface2);color:var(--muted)}
+
+/* Timeline */
+.timeline-container{overflow-x:auto;padding-bottom:16px}
+.timeline-grid{min-width:900px}
+.timeline-header{display:grid;grid-template-columns:220px repeat(6,1fr);gap:0;margin-bottom:8px}
+.timeline-month{text-align:center;font-size:12px;color:var(--muted);padding:8px;border-left:1px solid var(--surface2)}
+.timeline-row{display:grid;grid-template-columns:220px repeat(6,1fr);gap:0;margin-bottom:4px;align-items:center;min-height:36px}
+.timeline-task-label{font-size:13px;padding:8px 12px;background:var(--surface);border-radius:6px 0 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.timeline-cell{position:relative;height:36px;border-left:1px solid rgba(71,85,105,.2)}
+.timeline-bar{position:absolute;top:8px;height:20px;border-radius:4px;opacity:.85;min-width:8px}
+
+/* Responsive */
+@media(max-width:900px){
+.kanban{grid-template-columns:1fr 1fr}
+.stats{grid-template-columns:1fr 1fr}
+}
+@media(max-width:600px){
+.kanban{grid-template-columns:1fr}
+.header h1{font-size:22px}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+<script>
+// === TASK DATA: Reflects actual CoupleFlow codebase state as of March 29, 2026 ===
+const tasks = [
+  // ─── PHASE 1: Core Infrastructure (MOSTLY DONE) ───
+  {id:1, title:"User registration & login (JWT auth)", phase:"Core Infrastructure", status:"done", priority:"critical", area:"backend", notes:"Fully implemented: register, login, logout, JWT tokens"},
+  {id:2, title:"PostgreSQL schema & migrations", phase:"Core Infrastructure", status:"done", priority:"critical", area:"backend", notes:"52 migrations covering all models"},
+  {id:3, title:"Docker Compose setup (Postgres + API)", phase:"Core Infrastructure", status:"done", priority:"high", area:"backend", notes:"docker-compose.yml with postgres, backend, migrate services"},
+  {id:4, title:"CORS, session, logging middleware", phase:"Core Infrastructure", status:"done", priority:"high", area:"backend", notes:"cors.go, sessions.go, logging.go all working"},
+  {id:5, title:"Rate limiting middleware", phase:"Core Infrastructure", status:"done", priority:"medium", area:"backend", notes:"120 req/min per IP with 20 burst"},
+  {id:6, title:"API client & auth header utility", phase:"Core Infrastructure", status:"done", priority:"high", area:"frontend", notes:"apiClient.ts + api.ts with token handling"},
+  {id:7, title:"AsyncStorage user session persistence", phase:"Core Infrastructure", status:"done", priority:"high", area:"frontend", notes:"storage.ts for user session management"},
+  {id:8, title:"Expo Router file-based navigation", phase:"Core Infrastructure", status:"done", priority:"critical", area:"frontend", notes:"Full tab + stack navigation structure"},
+  {id:9, title:"Makefile dev workflow (db, backend, frontend)", phase:"Core Infrastructure", status:"done", priority:"medium", area:"devops", notes:"setup, dev, stop, clean, migrate commands"},
+  {id:10, title:"Token refresh flow", phase:"Core Infrastructure", status:"done", priority:"high", area:"backend", notes:"/auth/refresh endpoint exists but needs frontend integration for silent refresh | Updated: Implemented concurrent refresh queue (shared Promise), onAuthFailure listener pattern, proactive ensureFreshToken on app resume + startup. Updated apiClient.ts and _layout.tsx."},
+  {id:11, title:"Environment config management", phase:"Core Infrastructure", status:"done", priority:"medium", area:"frontend", notes:"API_URL hardcoded in app.json; needs .env-based config for dev/staging/prod | Updated: Created app.config.ts (reads EXPO_PUBLIC_API_URL from env), .env.example for frontend+backend, migrated 18 screens from hardcoded API_URL to centralized apiClient. Zero remaining hardcoded IPs."},
+
+  // ─── PHASE 2: Financial Features (MOSTLY DONE) ───
+  {id:12, title:"Transaction CRUD (manual entry)", phase:"Financial Features", status:"done", priority:"critical", area:"fullstack", notes:"Add, list, delete transactions with categories"},
+  {id:13, title:"Budget creation & monthly tracking", phase:"Financial Features", status:"done", priority:"critical", area:"fullstack", notes:"Create budgets, view summary by category, spending vs budgeted"},
+  {id:14, title:"Bill management & payment tracking", phase:"Financial Features", status:"done", priority:"critical", area:"fullstack", notes:"Bills, autopay, mark as paid, payment history"},
+  {id:15, title:"Bill auto-detection from transactions", phase:"Financial Features", status:"done", priority:"medium", area:"backend", notes:"POST /auth/bills/auto-detect endpoint"},
+  {id:16, title:"Debt tracking with payoff strategies", phase:"Financial Features", status:"done", priority:"high", area:"fullstack", notes:"Debt accounts, APR, min payments, strategy field"},
+  {id:17, title:"Savings goals with progress", phase:"Financial Features", status:"done", priority:"high", area:"fullstack", notes:"Target amount, current amount, priority, target date"},
+  {id:18, title:"Financial priorities (ranked)", phase:"Financial Features", status:"done", priority:"medium", area:"fullstack", notes:"Drag-to-reorder priorities"},
+  {id:19, title:"Category management (CRUD)", phase:"Financial Features", status:"done", priority:"high", area:"fullstack", notes:"Custom categories with colors and types"},
+  {id:20, title:"Recurring transaction processing", phase:"Financial Features", status:"done", priority:"high", area:"backend", notes:"Daily background ticker for recurring transactions"},
+  {id:21, title:"Spending insights & top categories", phase:"Financial Features", status:"done", priority:"medium", area:"fullstack", notes:"/auth/insights + /auth/top-categories endpoints + Insights screen"},
+  {id:22, title:"Payoff calculator", phase:"Financial Features", status:"done", priority:"low", area:"frontend", notes:"Debt payoff calculator screen"},
+  {id:23, title:"Calendar view for transactions/bills", phase:"Financial Features", status:"done", priority:"medium", area:"frontend", notes:"Monthly calendar with transaction overlay"},
+  {id:24, title:"Transaction edit/update flow", phase:"Financial Features", status:"done", priority:"high", area:"fullstack", notes:"Can add/delete but no PUT endpoint for editing existing transactions | Updated: Added UpdateTransaction handler (PUT /auth/transactions/{id}), registered route, created updated_at migration, built edit screen at transaction/edit/[id].tsx with pre-filled form, added Edit button to detail screen (manual transactions only)."},
+  {id:25, title:"Budget vs actual alerts/notifications", phase:"Financial Features", status:"done", priority:"medium", area:"fullstack", notes:"No alerting when budget is exceeded — need threshold notifications | Updated: Added inline alert badges (yellow/red) on budget list screen, fixed RunBudgetAlerts to respect custom thresholds and notify all household members, added real-time threshold check on transaction creation with immediate push notification."},
+  {id:26, title:"Multi-currency support", phase:"Financial Features", status:"done", priority:"low", area:"fullstack", notes:"All amounts assume USD; not needed for MVP but track for later | Updated: Added currency columns to transactions/budgets/users/households, created currency endpoints (GET list, GET/PUT default), currency utility + CurrencyPicker component, settings currency selector. 13 currencies supported, defaults to USD."},
+
+  // ─── PHASE 3: Plaid & External Integrations (MOSTLY DONE) ───
+  {id:27, title:"Plaid Link token exchange", phase:"Integrations", status:"done", priority:"critical", area:"fullstack", notes:"link_token + exchange_token endpoints + frontend flow"},
+  {id:28, title:"Plaid transaction sync", phase:"Integrations", status:"done", priority:"critical", area:"backend", notes:"POST /auth/plaid/sync pulls latest transactions"},
+  {id:29, title:"Plaid investment holdings", phase:"Integrations", status:"done", priority:"medium", area:"fullstack", notes:"Sync + display investment portfolio"},
+  {id:30, title:"Plaid liabilities (loans/credit)", phase:"Integrations", status:"done", priority:"medium", area:"fullstack", notes:"Sync + display liabilities"},
+  {id:31, title:"Plaid account balances", phase:"Integrations", status:"done", priority:"high", area:"fullstack", notes:"Sync + display checking/savings balances"},
+  {id:32, title:"Linked accounts management", phase:"Integrations", status:"done", priority:"high", area:"fullstack", notes:"View/delete linked bank accounts"},
+  {id:33, title:"Properties with Zillow valuation", phase:"Integrations", status:"done", priority:"medium", area:"fullstack", notes:"Add properties, auto-fetch Zillow zestimate"},
+  {id:34, title:"Push notifications (Expo)", phase:"Integrations", status:"done", priority:"medium", area:"fullstack", notes:"Token registration + notification sending"},
+  {id:35, title:"Plaid webhook handler for real-time sync", phase:"Integrations", status:"done", priority:"high", area:"backend", notes:"Currently requires manual sync — need webhook to auto-refresh transactions | Updated: Created webhook handler (POST /webhooks/plaid) with async processing, cursor-based incremental sync, item status tracking, webhook event audit table. Handles TRANSACTIONS, ITEM, HOLDINGS, LIABILITIES webhook types."},
+  {id:36, title:"Plaid error handling & re-auth flow", phase:"Integrations", status:"done", priority:"high", area:"fullstack", notes:"Handle ITEM_LOGIN_REQUIRED and prompt user to re-link | Updated: Added GetLinkedAccountStatus, CreateUpdateLinkToken (update mode), ResetItemError endpoints. Built linked-accounts.tsx screen with color-coded status badges and re-auth flow. Added warning badge to settings."},
+
+  // ─── PHASE 4: Couple / Household Features (PARTIALLY DONE) ───
+  {id:37, title:"Household create & invite system", phase:"Couple Features", status:"done", priority:"critical", area:"fullstack", notes:"Create household, send email invite, accept invite"},
+  {id:38, title:"Sharing preferences (granular control)", phase:"Couple Features", status:"done", priority:"high", area:"fullstack", notes:"Toggle sharing for transactions, budgets, bills, goals, debts, etc."},
+  {id:39, title:"Shared vs personal flags on all resources", phase:"Couple Features", status:"done", priority:"high", area:"backend", notes:"is_shared + household_id on budgets, bills, goals, debts, properties, priorities"},
+  {id:40, title:"Partner onboarding flow", phase:"Couple Features", status:"done", priority:"high", area:"frontend", notes:"partner-mode.tsx + household-setup.tsx screens"},
+  {id:41, title:"Pending invites screen", phase:"Couple Features", status:"done", priority:"medium", area:"frontend", notes:"View and accept/reject household invites"},
+  {id:42, title:"Partner dashboard view (combined finances)", phase:"Couple Features", status:"done", priority:"critical", area:"fullstack", notes:"✓ Implemented GET /auth/households/summary endpoint + partner-dashboard.tsx screen. Shows combined household financials (income, expenses, net cash flow, debts, savings). Fully functional with household mode toggle from main dashboard."},
+  {id:43, title:"Partner activity feed", phase:"Couple Features", status:"done", priority:"high", area:"fullstack", notes:"Real-time feed: 'Alex added a $45 grocery expense' — builds trust & transparency | Updated: Built: activity_events table, Go GET/POST endpoints, RecordActivity helper, RN activity-feed.tsx with grouping + icons + pagination"},
+  {id:44, title:"Shared budget collaborative editing", phase:"Couple Features", status:"done", priority:"medium", area:"fullstack", notes:"Both partners can edit shared budgets; need conflict resolution | Updated: Built: householdAccessCheck for shared edits, updated_by column + migration, activity logging on edits, shared badge on budget list, partner-edited indicator on edit screen, share toggle"},
+  {id:45, title:"Partner spending notifications", phase:"Couple Features", status:"done", priority:"medium", area:"fullstack", notes:"Notify when partner spends over threshold on shared budgets | Updated: Built: spending_alerts table + migration, Go handlers (GET/POST alerts + POST check thresholds), SpendingAlert model, RN spending-alerts.tsx with progress bars + threshold config + toggle, dashboard notification badge"},
+  {id:46, title:"Household summary/stats endpoint", phase:"Couple Features", status:"done", priority:"high", area:"backend", notes:"✓ GET /auth/households/summary endpoint. Aggregates transactions, debts, savings, investments, cash, properties, bills for all household members. Supports both user_id (resolves household) and household_id params."},
+
+  // ─── PHASE 5: UX Polish & Design (IN PROGRESS) ───
+  {id:47, title:"Login & registration screens", phase:"UX Polish", status:"done", priority:"high", area:"frontend", notes:"Working auth flow with purple gradient theme"},
+  {id:48, title:"Onboarding wizard (4 steps)", phase:"UX Polish", status:"done", priority:"high", area:"frontend", notes:"Welcome → Mode → Numbers → Finish"},
+  {id:49, title:"Dashboard summary cards", phase:"UX Polish", status:"done", priority:"high", area:"frontend", notes:"Net worth, debts, savings, budgets, bills, investments, properties"},
+  {id:50, title:"Glassmorphic design system (per prototype)", phase:"UX Polish", status:"done", priority:"high", area:"frontend", notes:"DONE 2026-03-29. Created utils/design-system.ts with color palette, glass effects, gradients, typography. Created GlassCard & GradientBackground components. Full docs in DESIGN_SYSTEM.md. TypeScript verified."},
+  {id:51, title:"Dark/Light theme toggle", phase:"UX Polish", status:"done", priority:"medium", area:"frontend", notes:"Prototype has full theme system; app currently dark-only | Updated: Verified: ThemeContext with light/dark definitions, theme-select screen, and Settings navigation all working. Full dark/light toggle flow complete."},
+  {id:52, title:"Floating Action Button (Quick Add)", phase:"UX Polish", status:"done", priority:"medium", area:"frontend", notes:"Prototype shows FAB with 6 quick actions — not in current app | Updated: Added FloatingActionButton to main dashboard with 3 quick actions: Add Transaction, Create Budget, Link Account."},
+  {id:53, title:"Drawer navigation with all sections", phase:"UX Polish", status:"done", priority:"medium", area:"frontend", notes:"Prototype has slide-out drawer; current app uses tab-only navigation | Updated: Added DrawerNavigation to main dashboard with 11 menu items (Dashboard, Budgets, Transactions, Bills, Debts, Savings, Priorities, Investments, Properties, Activity Feed, Linked Accounts) + hamburger menu icon."},
+  {id:54, title:"Progress rings for budget tracking", phase:"UX Polish", status:"done", priority:"low", area:"frontend", notes:"Animated circular progress from prototype — nice to have | Updated: Created ProgressRing component (react-native-svg, animated fill). Integrated into budget cards with color-coded spending: green <60%, yellow 60-80%, red >80%."},
+  {id:55, title:"Empty states & loading skeletons", phase:"UX Polish", status:"done", priority:"high", area:"frontend", notes:"No empty states for new users; screens show blank when no data | Updated: Integrated EmptyState across 10 screens with contextual icons, titles, descriptions and action buttons. All data-fetching screens now show polished empty states."},
+  {id:56, title:"Error states & retry UI", phase:"UX Polish", status:"done", priority:"high", area:"frontend", notes:"API failures silently fail; need user-facing error messages + retry | Updated: Integrated ErrorState across 10 screens with retry callbacks. Consistent try/catch error handling pattern with user-friendly error display."},
+  {id:57, title:"Pull-to-refresh on key screens", phase:"UX Polish", status:"done", priority:"medium", area:"frontend", notes:"Dashboard and lists should support pull-to-refresh | Updated: Added RefreshControl to transaction/list, budget, linked-accounts, settings/categories. Purple tint #a855f7. Now 7 screens have pull-to-refresh."},
+  {id:58, title:"Haptic feedback on actions", phase:"UX Polish", status:"done", priority:"low", area:"frontend", notes:"HapticTab component exists but not widely used | Updated: Created haptics utility (light/medium/success/error). Added success/error haptics to login, register, add-transaction, add-budget, edit-transaction, household-setup."},
+  {id:59, title:"App icon & splash screen", phase:"UX Polish", status:"done", priority:"high", area:"frontend", notes:"Need branded icon and splash for CoupleFlow identity | Updated: Custom icon assets verified. Updated splash screen backgroundColor from white #ffffff to dark theme #0f172a."},
+
+  // ─── PHASE 6: Testing & Quality (NOT STARTED) ───
+  {id:60, title:"Backend unit tests (handlers)", phase:"Testing & Quality", status:"done", priority:"critical", area:"backend", notes:"planners_test.go exists but most handlers untested | Updated: Created 7 test files (2183 lines): budgets, categories, activity_feed, spending_alerts, currencies, users, login. 60+ test cases covering success/error/validation paths. Uses sqlmock + httptest pattern."},
+  {id:61, title:"Backend integration tests (DB)", phase:"Testing & Quality", status:"done", priority:"critical", area:"backend", notes:"Need tests hitting real Postgres with test data | Updated: Created integration test suite with build tags: user lifecycle, budget lifecycle, household sharing, spending alerts. Test helpers for DB setup/teardown and auth requests."},
+  {id:62, title:"API endpoint validation & error responses", phase:"Testing & Quality", status:"done", priority:"high", area:"backend", notes:"Need consistent error response format + input validation | Updated: Created validation.go with reusable validators (required, email, UUID, enum, positiveFloat), structured ValidationError JSON responses, RecoveryMiddleware for panic handling. 37+ validation tests."},
+  {id:63, title:"Frontend component tests", phase:"Testing & Quality", status:"done", priority:"medium", area:"frontend", notes:"No tests found for React Native components | Updated: Set up Jest with jest-expo, created jest.config.js + jest.setup.js with mocks. 114 test cases: currency (58), haptics (11), EmptyState (12), ErrorState (16), ProgressRing (17)."},
+  {id:64, title:"E2E testing (Detox or Maestro)", phase:"Testing & Quality", status:"done", priority:"medium", area:"frontend", notes:"Critical flows: register → onboard → link account → add transaction | Updated: Created Maestro E2E flow configs: login, create-budget, add-transaction, household-setup. Config.yaml + README with CI/CD integration guide."},
+  {id:65, title:"Security audit (auth, tokens, injection)", phase:"Testing & Quality", status:"done", priority:"critical", area:"backend", notes:"SQL injection protection, token expiry, password policy review | Updated: Security audit: SQL injection safe (parameterized), JWT verified, bcrypt confirmed. Added auth rate limiting (5/min), input sanitization, security headers middleware (CSP, HSTS, X-Frame-Options)."},
+  {id:66, title:"Performance profiling (dashboard load)", phase:"Testing & Quality", status:"done", priority:"medium", area:"fullstack", notes:"Dashboard makes 7+ API calls on mount — consider batching | Updated: Created performance.ts (frontend timers with aggregation) and timing.go middleware (logs slow endpoints >500ms). Integrated dashboard load timing."},
+  {id:67, title:"Plaid sandbox → development environment", phase:"Testing & Quality", status:"done", priority:"high", area:"backend", notes:"Verify Plaid integration works outside sandbox mode | Updated: Created Plaid config.go with env validation (sandbox/development/production), webhook URL support, environments.md documentation. Updated .env.example."},
+
+  // ─── PHASE 7: Launch Prep (NOT STARTED) ───
+  {id:68, title:"EAS build configuration (iOS + Android)", phase:"Launch Prep", status:"in-progress", priority:"critical", area:"devops", notes:"eas.json exists with basic config; needs production profile tuning"},
+  {id:69, title:"App Store assets (screenshots, description)", phase:"Launch Prep", status:"todo", priority:"high", area:"design", notes:"Need App Store and Play Store listing materials"},
+  {id:70, title:"Privacy policy & terms of service", phase:"Launch Prep", status:"todo", priority:"critical", area:"legal", notes:"Required for both stores; finance app has extra requirements"},
+  {id:71, title:"Production deployment (backend + DB)", phase:"Launch Prep", status:"todo", priority:"critical", area:"devops", notes:"Need cloud hosting — Railway, Fly.io, or AWS. Currently local Docker only"},
+  {id:72, title:"SSL/TLS for API", phase:"Launch Prep", status:"todo", priority:"critical", area:"devops", notes:"Production API must be HTTPS"},
+  {id:73, title:"Database backup strategy", phase:"Launch Prep", status:"todo", priority:"high", area:"devops", notes:"Automated Postgres backups for production"},
+  {id:74, title:"Plaid production credentials", phase:"Launch Prep", status:"todo", priority:"critical", area:"backend", notes:"Apply for Plaid production access — requires compliance review"},
+  {id:75, title:"Beta testing (TestFlight / Internal)", phase:"Launch Prep", status:"todo", priority:"high", area:"devops", notes:"Get 5-10 couples testing the app before public launch"},
+  {id:76, title:"Crash reporting & analytics (Sentry/Amplitude)", phase:"Launch Prep", status:"todo", priority:"medium", area:"fullstack", notes:"Need observability before launch"},
+  {id:77, title:"User feedback mechanism in-app", phase:"Launch Prep", status:"todo", priority:"medium", area:"frontend", notes:"Simple feedback form or shake-to-report"},
+];
+
+// === DERIVED DATA ===
+const phases = [...new Set(tasks.map(t=>t.phase))];
+const phaseColors = {
+  "Core Infrastructure":"#22c55e",
+  "Financial Features":"#3b82f6",
+  "Integrations":"#a855f7",
+  "Couple Features":"#f472b6",
+  "UX Polish":"#eab308",
+  "Testing & Quality":"#ef4444",
+  "Launch Prep":"#f97316"
+};
+const phaseTimeline = {
+  "Core Infrastructure":{start:0,end:1},
+  "Financial Features":{start:0,end:2},
+  "Integrations":{start:1,end:3},
+  "Couple Features":{start:2,end:4},
+  "UX Polish":{start:2,end:4},
+  "Testing & Quality":{start:3,end:5},
+  "Launch Prep":{start:4,end:6}
+};
+const months = ["Mar '26","Apr '26","May '26","Jun '26","Jul '26","Aug '26"];
+
+function getPhaseStats(phase){
+  const pts = tasks.filter(t=>t.phase===phase);
+  const done = pts.filter(t=>t.status==='done').length;
+  return {total:pts.length, done, pct:Math.round(done/pts.length*100)};
+}
+function getAllStats(){
+  const done=tasks.filter(t=>t.status==='done').length;
+  const ip=tasks.filter(t=>t.status==='in-progress').length;
+  const todo=tasks.filter(t=>t.status==='todo').length;
+  const blocked=tasks.filter(t=>t.status==='blocked').length;
+  return {total:tasks.length,done,ip,todo,blocked,pct:Math.round(done/tasks.length*100)};
+}
+
+// === RENDER ===
+let currentTab = 'dashboard';
+let statusFilter = 'all';
+let phaseFilter = 'all';
+
+function render(){
+  const s = getAllStats();
+  document.getElementById('app').innerHTML = `
+    <div class="header">
+      <div>
+        <h1>CoupleFlow — MVP Tracker</h1>
+        <div class="header-sub">React Native + Go • ${s.total} tasks across ${phases.length} phases</div>
+      </div>
+      <div class="header-right">
+        <span class="last-updated">Updated: March 29, 2026</span>
+      </div>
+    </div>
+
+    <div class="tabs">
+      ${['dashboard','kanban','timeline','phases'].map(t=>
+        `<button class="tab ${currentTab===t?'active':''}" onclick="currentTab='${t}';render()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
+      ).join('')}
+    </div>
+
+    ${currentTab==='dashboard' ? renderDashboard(s) :
+      currentTab==='kanban' ? renderKanban() :
+      currentTab==='timeline' ? renderTimeline() :
+      renderPhases()}
+  `;
+}
+
+function renderDashboard(s){
+  return `
+    <div class="stats">
+      <div class="stat-card purple">
+        <div class="stat-label">Overall Progress</div>
+        <div class="stat-value purple">${s.pct}%</div>
+        <div class="stat-detail">${s.done} of ${s.total} tasks done</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Completed</div>
+        <div class="stat-value green">${s.done}</div>
+        <div class="stat-detail">Across ${phases.filter(p=>getPhaseStats(p).done>0).length} phases</div>
+      </div>
+      <div class="stat-card blue">
+        <div class="stat-label">In Progress</div>
+        <div class="stat-value blue">${s.ip}</div>
+        <div class="stat-detail">Actively working</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-label">To Do</div>
+        <div class="stat-value yellow">${s.todo}</div>
+        <div class="stat-detail">Remaining for MVP</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Critical Priority</div>
+        <div class="stat-value red">${tasks.filter(t=>t.priority==='critical'&&t.status!=='done').length}</div>
+        <div class="stat-detail">Unfinished critical tasks</div>
+      </div>
+    </div>
+
+    <div class="progress-section">
+      ${phases.map(p=>{
+        const ps=getPhaseStats(p);
+        return `<div class="phase-row">
+          <div class="phase-label" style="color:${phaseColors[p]}">${p}</div>
+          <div class="phase-bar-bg"><div class="phase-bar" style="width:${ps.pct}%;background:${phaseColors[p]}"></div></div>
+          <div class="phase-pct">${ps.done}/${ps.total}</div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    <div class="filters">
+      ${['all','done','in-progress','todo','blocked'].map(f=>
+        `<button class="filter-btn ${statusFilter===f?'active':''}" onclick="statusFilter='${f}';render()">${f==='all'?'All':f==='in-progress'?'In Progress':f.charAt(0).toUpperCase()+f.slice(1)}</button>`
+      ).join('')}
+      <span style="color:var(--surface2)">|</span>
+      ${['all',...phases].map(f=>
+        `<button class="filter-btn ${phaseFilter===f?'active':''}" onclick="phaseFilter='${f}';render()">${f==='all'?'All Phases':f}</button>`
+      ).join('')}
+    </div>
+
+    <table class="task-table">
+      <thead><tr><th>#</th><th>Task</th><th>Phase</th><th>Status</th><th>Priority</th><th>Area</th><th>Notes</th></tr></thead>
+      <tbody>
+        ${tasks.filter(t=>(statusFilter==='all'||t.status===statusFilter)&&(phaseFilter==='all'||t.phase===phaseFilter))
+          .map(t=>`<tr>
+            <td style="color:var(--muted)">${t.id}</td>
+            <td style="font-weight:500">${t.title}</td>
+            <td><span style="color:${phaseColors[t.phase]};font-size:12px">${t.phase}</span></td>
+            <td><span class="badge ${t.status}">${t.status==='in-progress'?'In Progress':t.status}</span></td>
+            <td><span class="badge ${t.priority}">${t.priority}</span></td>
+            <td style="color:var(--muted);font-size:12px">${t.area}</td>
+            <td style="color:var(--muted);font-size:12px;max-width:280px">${t.notes}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderKanban(){
+  const cols = [
+    {key:'todo',label:'To Do',color:'var(--muted)'},
+    {key:'in-progress',label:'In Progress',color:'var(--blue)'},
+    {key:'done',label:'Done',color:'var(--green)'},
+    {key:'blocked',label:'Blocked',color:'var(--red)'}
+  ];
+  return `<div class="kanban">${cols.map(c=>{
+    const ct = tasks.filter(t=>t.status===c.key);
+    return `<div class="kanban-col">
+      <div class="kanban-col-header">
+        <span class="kanban-col-title" style="color:${c.color}">${c.label}</span>
+        <span class="kanban-col-count">${ct.length}</span>
+      </div>
+      <div style="overflow-y:auto;flex:1">
+        ${ct.map(t=>`<div class="kanban-card">
+          <div class="kanban-card-title">${t.title}</div>
+          <div class="kanban-card-meta">
+            <span class="kanban-tag" style="color:${phaseColors[t.phase]}">${t.phase}</span>
+            <span class="kanban-tag">${t.area}</span>
+            <span class="kanban-tag badge ${t.priority}" style="background:transparent;padding:2px 7px;font-size:10px">${t.priority}</span>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function renderTimeline(){
+  return `<div class="timeline-container"><div class="timeline-grid">
+    <div class="timeline-header">
+      <div style="font-size:12px;color:var(--muted);padding:8px">Phase</div>
+      ${months.map(m=>`<div class="timeline-month">${m}</div>`).join('')}
+    </div>
+    ${phases.map(p=>{
+      const tl = phaseTimeline[p];
+      const ps = getPhaseStats(p);
+      return `<div class="timeline-row">
+        <div class="timeline-task-label" style="color:${phaseColors[p]}">${p} <span style="color:var(--muted);font-size:11px">(${ps.pct}%)</span></div>
+        ${months.map((_,i)=>{
+          const isStart = i===tl.start;
+          const inRange = i>=tl.start && i<tl.end;
+          return `<div class="timeline-cell">
+            ${inRange ? `<div class="timeline-bar" style="background:${phaseColors[p]};left:${isStart?'8px':'0'};right:${i===tl.end-1?'8px':'0'};${isStart?'border-radius:4px 0 0 4px':''}${i===tl.end-1?'border-radius:0 4px 4px 0':''}"></div>`:''}
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('')}
+  </div></div>
+
+  <div style="margin-top:24px">
+    <h3 style="font-size:16px;margin-bottom:16px;color:var(--muted)">Milestone Targets</h3>
+    <div class="stats" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+      <div class="stat-card green">
+        <div class="stat-label">Apr 15 — Core Complete</div>
+        <div class="stat-detail">All infrastructure + financial features working end-to-end</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-label">May 1 — Couple Mode V1</div>
+        <div class="stat-detail">Partner dashboard, activity feed, shared budgets live</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-label">Jun 1 — UX Aligned to Prototype</div>
+        <div class="stat-detail">Glassmorphic design, theme toggle, FAB, drawer nav</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Jul 1 — Testing Complete</div>
+        <div class="stat-detail">Unit, integration, E2E tests passing; security audit done</div>
+      </div>
+      <div class="stat-card blue">
+        <div class="stat-label">Aug 1 — Beta Launch</div>
+        <div class="stat-detail">TestFlight + internal testing with 5-10 couples</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderPhases(){
+  return phases.map(p=>{
+    const pts = tasks.filter(t=>t.phase===p);
+    const ps = getPhaseStats(p);
+    return `<div style="margin-bottom:32px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="width:4px;height:28px;border-radius:2px;background:${phaseColors[p]}"></div>
+        <h2 style="font-size:18px;font-weight:600">${p}</h2>
+        <span style="color:var(--muted);font-size:14px">${ps.done}/${ps.total} done (${ps.pct}%)</span>
+      </div>
+      <div style="display:grid;gap:8px">
+        ${pts.map(t=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--surface);border-radius:10px;border-left:3px solid ${t.status==='done'?'var(--green)':t.status==='in-progress'?'var(--blue)':'var(--surface2)'}">
+          <span style="font-size:18px">${t.status==='done'?'✓':t.status==='in-progress'?'◐':'○'}</span>
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:500;${t.status==='done'?'opacity:.6;text-decoration:line-through':''}">${t.title}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">${t.notes}</div>
+          </div>
+          <span class="badge ${t.priority}">${t.priority}</span>
+          <span class="badge ${t.status}">${t.status==='in-progress'?'In Progress':t.status}</span>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+render();
+</script>
+</body>
+</html>

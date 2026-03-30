@@ -12,8 +12,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { fetchLinkedAccounts, deleteLinkedAccount, syncPlaidTransactions, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
 
@@ -44,11 +44,6 @@ export default function LinkAccountScreen() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    (Constants as any).manifest?.extra?.API_URL ??
-    'http://localhost:8080';
 
   /* ── Check native SDK availability ────────────────────────── */
   const plaidModule: any = PlaidLink;
@@ -81,17 +76,7 @@ export default function LinkAccountScreen() {
     setUserId(user.id);
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/auth/link_token?user_id=${user.id}`, {
-        credentials: 'include',
-        headers: user.token
-          ? { Authorization: `Bearer ${user.token}` }
-          : undefined,
-      } as any);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Link token failed: ${res.status} ${text}`);
-      }
-      const data = await res.json();
+      const data = await api.get(`/auth/link_token`, { user_id: user.id });
       setLinkToken(data.link_token);
       setError(null);
     } catch (e: any) {

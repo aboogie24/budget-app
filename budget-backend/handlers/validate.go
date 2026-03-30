@@ -66,3 +66,42 @@ func ownershipCheck(w http.ResponseWriter, conn *sql.DB, table, resourceID, user
 	http.Error(w, "Forbidden", http.StatusForbidden)
 	return false
 }
+
+// householdAccessCheck verifies the requesting user can edit a resource.
+// For non-shared resources, only the owner can edit.
+// For shared resources, any household member can edit.
+// table must be a trusted constant — never pass user input.
+// Returns true if the user is authorized, false otherwise (and writes an HTTP error).
+func householdAccessCheck(w http.ResponseWriter, conn *sql.DB, table, resourceID, userID string) bool {
+	var ownerID string
+	var hhID sql.NullString
+	var isShared bool
+	err := conn.QueryRow(
+		`SELECT user_id, household_id, COALESCE(is_shared, false) FROM `+table+` WHERE id = $1`, resourceID,
+	).Scan(&ownerID, &hhID, &isShared)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "DB error", http.StatusInternalServerError)
+		}
+		return false
+	}
+	// Direct owner always allowed
+	if ownerID == userID {
+		return true
+	}
+	// For shared resources, check household membership
+	if isShared && hhID.Valid && hhID.String != "" {
+		var memberCount int
+		_ = conn.QueryRow(
+			`SELECT COUNT(*) FROM household_members WHERE household_id = $1 AND user_id = $2`,
+			hhID.String, userID,
+		).Scan(&memberCount)
+		if memberCount > 0 {
+			return true
+		}
+	}
+	http.Error(w, "Forbidden", http.StatusForbidden)
+	return false
+}

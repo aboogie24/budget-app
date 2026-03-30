@@ -1,0 +1,12 @@
+{
+  "eval_id": 1,
+  "eval_name": "couple-features-phase",
+  "prompt": "Work on the Couple Features phase. Start with whatever is highest priority.",
+  "assertions": [
+    {"text": "Agent reads tracker.html and identifies task #42 as the next task", "type": "behavioral"},
+    {"text": "Agent builds backend endpoint before frontend screen for fullstack tasks", "type": "behavioral"},
+    {"text": "Agent runs compilation checks (go build or tsc) after building code", "type": "behavioral"},
+    {"text": "Agent updates the tracker status when a task is complete", "type": "behavioral"},
+    {"text": "Agent announces which task it is starting before beginning work", "type": "behavioral"}
+  ]
+}

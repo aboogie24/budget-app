@@ -8,6 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 export default function TransactionDetail() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const transactionId = (params.id as string) || '';
   const amount = Number(params.amount || 0);
   const type = (params.type as string) || 'expense';
   const category = (params.category_name as string) || (params.category as string) || 'Uncategorized';
@@ -17,12 +18,36 @@ export default function TransactionDetail() {
 
   const formatCurrency = (v: number) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
+  const handleEdit = () => {
+    // Only allow editing for manual transactions
+    if (source === 'manual' || source !== 'bank') {
+      router.push({
+        pathname: '/transaction/edit/[id]',
+        params: {
+          id: transactionId,
+          amount: String(amount),
+          type,
+          category,
+          note,
+          date: params.date,
+        },
+      });
+    }
+  };
+
   return (
     <LinearGradient colors={['#0b1021', '#1b0d30', '#2d0c53']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1, padding: 20 }}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-          <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
-        </TouchableOpacity>
+        <View style={styles.headerRow}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+            <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
+          </TouchableOpacity>
+          {(source === 'manual' || source !== 'bank') && (
+            <TouchableOpacity onPress={handleEdit} style={styles.iconBtn}>
+              <Ionicons name="pencil" size={20} color="#a855f7" />
+            </TouchableOpacity>
+          )}
+        </View>
 
         <View style={styles.card}>
           <Text style={styles.label}>{type === 'income' ? 'Income' : 'Expense'}</Text>
@@ -47,6 +72,12 @@ export default function TransactionDetail() {
 }
 
 const styles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   iconBtn: {
     width: 40,
     height: 40,
@@ -55,7 +86,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
   },
   card: {
     backgroundColor: 'rgba(255,255,255,0.06)',

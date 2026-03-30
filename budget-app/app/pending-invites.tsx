@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 
 type Invite = {
@@ -31,36 +31,20 @@ export default function PendingInvitesScreen() {
   const [invites, setInvites] = useState<Invite[]>([]);
   const [accepting, setAccepting] = useState<string | null>(null);
 
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
-
   const loadInvites = useCallback(async () => {
     try {
       const user = await getCurrentUser();
       if (!user?.id) return;
 
-      const headers: any = { 'Content-Type': 'application/json' };
-      if (user.token) headers.Authorization = `Bearer ${user.token}`;
-
-      const res = await fetch(`${API_URL}/auth/households/invites?user_id=${user.id}`, {
-        credentials: 'include',
-        headers,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setInvites(Array.isArray(data) ? data : []);
-      } else {
-        setInvites([]);
-      }
-    } catch (_) {
+      const data = await api.get(`/auth/households/invites`, { user_id: user.id });
+      setInvites(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('Failed to load invites:', e);
       setInvites([]);
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, []);
 
   useEffect(() => {
     loadInvites();
@@ -86,21 +70,7 @@ export default function PendingInvitesScreen() {
               const user = await getCurrentUser();
               if (!user?.id) return;
 
-              const headers: any = { 'Content-Type': 'application/json' };
-              if (user.token) headers.Authorization = `Bearer ${user.token}`;
-
-              const res = await fetch(`${API_URL}/auth/households/accept`, {
-                method: 'POST',
-                headers,
-                credentials: 'include',
-                body: JSON.stringify({ code, user_id: user.id }),
-              });
-
-              if (!res.ok) {
-                const text = await res.text();
-                throw new Error(text);
-              }
-
+              await api.post(`/auth/households/accept`, { code, user_id: user.id });
               Alert.alert('Joined!', `You are now a member of "${householdName}".`);
               await loadInvites();
             } catch (e: any) {

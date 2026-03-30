@@ -4,7 +4,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 export default function BudgetAppLogin() {
   const colors = {
@@ -20,10 +21,7 @@ export default function BudgetAppLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const router = useRouter();
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080'; // fallback
+  const API_URL = api.getBaseUrl();
 
   const handleLogin = async () => {
 		try {
@@ -34,22 +32,26 @@ export default function BudgetAppLogin() {
 				credentials: 'include',
 				body: JSON.stringify({ email, password }),
 			});
-			
+
 			if (!response.ok) {
+			errorHaptic();
 				alert('Login failed');
 				return;
 			}
-	
+
 			const data = await response.json();
 			const user = data.user;
 			console.log('User logging in:', user)
 
 			const session = { ...user, token: data.token };
 			await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
-	
+
+		successHaptic();
+
 			router.replace(user.onboarding_complete ? '/(tabs)/dashboard' : '/setup');
 		} catch (err) {
 			console.error('Login error:', err);
+			errorHaptic();
 			alert('Unable to login. Check your connection.');
 		}
 	};

@@ -17,7 +17,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { v4 as uuidv4 } from 'uuid';
 import 'react-native-get-random-values';
 import { LinearGradient } from 'expo-linear-gradient';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 function getPasswordStrength(pw: string) {
   let score = 0;
@@ -42,10 +43,7 @@ export default function RegisterScreen() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
+  const API_URL = api.getBaseUrl();
 
   const strength = useMemo(() => getPasswordStrength(password), [password]);
 
@@ -76,6 +74,7 @@ export default function RegisterScreen() {
 
       const errorText = !response.ok ? await response.text() : null;
       if (!response.ok) {
+        errorHaptic();
         Alert.alert('Registration failed', errorText || 'Please try again.');
         setSubmitting(false);
         return;
@@ -101,10 +100,12 @@ export default function RegisterScreen() {
       const session = { ...(loginData.user || user), token: loginData.token };
       await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
 
+      successHaptic();
       // Go to setup wizard
       router.replace('/setup');
     } catch (err) {
       console.error('Register error:', err);
+      errorHaptic();
       Alert.alert('Error', 'Could not register user.');
     } finally {
       setSubmitting(false);

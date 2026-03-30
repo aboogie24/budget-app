@@ -1,0 +1,53 @@
+{
+  "skill_name": "project-manager",
+  "iteration": 1,
+  "timestamp": "2026-03-29T20:45:00Z",
+  "configurations": [
+    {
+      "name": "with_skill",
+      "label": "With PM Skill",
+      "pass_rate": {"mean": 0.929, "stddev": 0.065},
+      "time_seconds": {"mean": 187.8, "stddev": 14.6},
+      "tokens": {"mean": 79874, "stddev": 9518}
+    },
+    {
+      "name": "without_skill",
+      "label": "Baseline (No Skill)",
+      "pass_rate": {"mean": 0.714, "stddev": 0.134},
+      "time_seconds": {"mean": 215.9, "stddev": 67.7},
+      "tokens": {"mean": 85986, "stddev": 2141}
+    }
+  ],
+  "delta": {
+    "pass_rate": "+21.5pp",
+    "time_seconds": "-13.0%",
+    "tokens": "-7.1%"
+  },
+  "evals": [
+    {
+      "eval_name": "couple-features-phase",
+      "with_skill": {"pass_rate": 1.0, "time_seconds": 192.6, "tokens": 88275},
+      "without_skill": {"pass_rate": 0.8, "time_seconds": 209.5, "tokens": 84955},
+      "notes": "Baseline missed tracker update. With-skill correctly sequenced backend→frontend."
+    },
+    {
+      "eval_name": "ux-polish-phase",
+      "with_skill": {"pass_rate": 1.0, "time_seconds": 171.2, "tokens": 69616},
+      "without_skill": {"pass_rate": 0.6, "time_seconds": 286.7, "tokens": 88921},
+      "notes": "Baseline did not reference prototype or run compilation check. With-skill followed design vision closely."
+    },
+    {
+      "eval_name": "strategic-phase-pick",
+      "with_skill": {"pass_rate": 1.0, "time_seconds": 199.7, "tokens": 81730},
+      "without_skill": {"pass_rate": 0.75, "time_seconds": 151.6, "tokens": 84082},
+      "notes": "Baseline did not use helper scripts. Both made good strategic choices."
+    }
+  ],
+  "analyst_observations": [
+    "The skill's biggest advantage is process consistency: it always reads the tracker, sequences work correctly, verifies compilation, and updates status. Baseline runs tend to skip 1-2 of these steps.",
+    "Tracker update is the most discriminating assertion — baseline agents never updated tracker.html, while with-skill always did. This is the PM skill's core loop behavior.",
+    "The prototype reference (coupleflow-prototype.jsx) was used by with-skill in eval 2 but ignored by baseline. This alignment with design vision is a key differentiator for UX tasks.",
+    "Time efficiency: with-skill runs were faster on average (188s vs 216s) and used fewer tokens (79.9K vs 86K), suggesting the structured approach prevents wasted exploration.",
+    "Baseline eval-2 was an outlier — took 287s and 89K tokens yet missed 2 assertions. It tried to build 7 tasks in one session, producing more code but with less verification rigor."
+  ]
+}

@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -465,6 +466,23 @@ func MarkBillPaid(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("MarkBillPaid debt update error: %v", err)
 		}
+	}
+
+	// Notify household partner
+	if bill.HouseholdID != "" {
+		// Look up the user's name for the notification
+		var userName string
+		_ = client.QueryRow(`SELECT COALESCE(full_name, email) FROM users WHERE id = $1`, bill.UserID).Scan(&userName)
+		if userName == "" {
+			userName = "Your partner"
+		}
+
+		SendHouseholdNotification(
+			bill.HouseholdID, bill.UserID,
+			"Bill Paid",
+			fmt.Sprintf("%s paid %s — $%.2f", userName, bill.Name, amount),
+			map[string]string{"screen": "/bills", "bill_id": billID},
+		)
 	}
 
 	bill.Status = "paid"

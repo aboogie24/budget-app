@@ -5,7 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
+import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 
 type SharingPrefs = {
@@ -67,10 +67,6 @@ export default function SharingPreferencesScreen() {
   const [prefs, setPrefs] = useState<SharingPrefs>(defaultPrefs);
   const [householdId, setHouseholdId] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
-  const API_URL =
-    Constants.expoConfig?.extra?.API_URL ??
-    Constants.manifest?.extra?.API_URL ??
-    'http://localhost:8080';
 
   useEffect(() => {
     const load = async () => {
@@ -81,28 +77,20 @@ export default function SharingPreferencesScreen() {
         // Resolve household id first, use the value directly (not stale state)
         let hhId: string | undefined;
         try {
-          const res = await fetch(`${API_URL}/auth/households/me?user_id=${user.id}`, {
-            headers: user.token ? { Authorization: `Bearer ${user.token}` } : undefined,
-            credentials: 'include',
-          });
-          if (res.ok) {
-            const hh = await res.json();
-            if (hh?.household_id) {
-              hhId = String(hh.household_id);
-              setHouseholdId(hhId);
-            }
+          const hh = await api.get(`/auth/households/me`, { user_id: user.id });
+          if (hh?.household_id) {
+            hhId = String(hh.household_id);
+            setHouseholdId(hhId);
           }
-        } catch (_) {}
+        } catch (e) {
+          console.error('Failed to load household:', e);
+        }
 
         // Fetch server prefs using the freshly resolved hhId
-        const qp = new URLSearchParams({ user_id: user.id });
-        if (hhId) qp.set('household_id', hhId);
-        const serverRes = await fetch(`${API_URL}/auth/sharing-preferences?${qp.toString()}`, {
-          headers: user.token ? { Authorization: `Bearer ${user.token}` } : undefined,
-          credentials: 'include',
-        });
-        if (serverRes.ok) {
-          const serverPrefs = await serverRes.json();
+        const params: any = { user_id: user.id };
+        if (hhId) params.household_id = hhId;
+        try {
+          const serverPrefs = await api.get(`/auth/sharing-preferences`, params);
           const mapped: SharingPrefs = {
             shareBudgets: serverPrefs.share_budgets ?? true,
             shareTransactions: serverPrefs.share_transactions ?? true,
@@ -115,11 +103,12 @@ export default function SharingPreferencesScreen() {
           setPrefs(mapped);
           await AsyncStorage.setItem(PREFS_KEY, JSON.stringify(mapped));
           return;
+        } catch (e2) {
+          console.error('Failed to load sharing preferences:', e2);
+          // fallback to local storage if server missing
+          const stored = await AsyncStorage.getItem(PREFS_KEY);
+          if (stored) setPrefs({ ...defaultPrefs, ...JSON.parse(stored) });
         }
-
-        // fallback to local storage if server missing
-        const stored = await AsyncStorage.getItem(PREFS_KEY);
-        if (stored) setPrefs({ ...defaultPrefs, ...JSON.parse(stored) });
       } catch (e) {
         // ignore, keep defaults
       }
