@@ -3,7 +3,7 @@ import { View, StyleSheet, TouchableOpacity, Text, Animated } from 'react-native
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/utils/ThemeContext';
 import { componentDefaults } from '@/utils/theme';
-import { GlassCard } from './GlassCard';
+import GlassCard from './GlassCard';
 
 interface QuickAction {
   id: string;
@@ -82,7 +82,7 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
                 onPress={() => handleActionPress(action)}
                 activeOpacity={0.7}
               >
-                <GlassCard variant="light" padding={12} radius={componentDefaults.borderRadius.lg}>
+                <GlassCard intensity="light" padding={12}>
                   <View style={{ alignItems: 'center', gap: 8 }}>
                     <View
                       style={[
@@ -117,7 +117,7 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
       >
         <Ionicons
           name={isOpen ? 'close' : 'add'}
-          size={28}
+          size={22}
           color="#ffffff"
           style={{ fontWeight: '700' }}
         />
@@ -129,16 +129,16 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
 const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
-    bottom: 100,
-    alignSelf: 'center',
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    bottom: 12,
+    right: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.4,
     shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOffset: { width: 0, height: 4 },
     elevation: 8,
     zIndex: 100,
   },
@@ -153,19 +153,17 @@ const styles = StyleSheet.create({
   },
   actionMenuContainer: {
     position: 'absolute',
-    bottom: 180,
-    alignSelf: 'center',
+    bottom: 72,
+    right: 20,
     zIndex: 99,
   },
   actionGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: componentDefaults.spacing.md,
-    width: 300,
+    gap: 8,
+    alignItems: 'flex-end',
+    width: 180,
   },
   actionItem: {
-    width: '48%',
+    width: '100%',
   },
   actionIconContainer: {
     width: 44,

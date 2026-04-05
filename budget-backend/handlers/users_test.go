@@ -14,8 +14,6 @@ import (
 
 func TestRegisterUser_ValidRegistration(t *testing.T) {
 	withUsersMockDB(t, func(mock sqlmock.Sqlmock) {
-		userID := "11111111-1111-1111-1111-111111111111"
-
 		// Check for existing user
 		mock.ExpectQuery(`SELECT id FROM users WHERE email = `).
 			WithArgs("newuser@example.com").
@@ -164,8 +162,6 @@ func TestRegisterUser_InvalidJSON(t *testing.T) {
 
 func TestCompleteOnboarding_Success(t *testing.T) {
 	withUsersMockDB(t, func(mock sqlmock.Sqlmock) {
-		userID := "11111111-1111-1111-1111-111111111111"
-
 		// UPDATE user
 		mock.ExpectExec(`UPDATE users`).
 			WillReturnResult(sqlmock.NewResult(0, 1))
@@ -233,7 +229,12 @@ func withUsersMockDB(t *testing.T, setup func(sqlmock.Sqlmock)) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	t.Cleanup(func() { mockSQL.Close() })
+
+	cleanup := db.OverridePool(mockSQL)
+	t.Cleanup(func() {
+		cleanup()
+		mockSQL.Close()
+	})
 
 	setup(mock)
 }

@@ -13,6 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { getCurrentUser } from '@/utils/storage';
+import { useTheme } from '@/utils/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/utils/apiClient';
 import { getLinkedAccountStatus } from '@/utils/api';
@@ -64,6 +65,7 @@ const Row = ({
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { theme, toggleTheme } = useTheme();
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [household, setHousehold] = useState<Household | null>(null);
@@ -327,6 +329,18 @@ export default function SettingsScreen() {
               onPress={() => router.push('/settings/budget-settings')}
             />
             <Row
+              icon="pricetags-outline"
+              title="Categories"
+              subtitle="Manage category tree & icons"
+              onPress={() => router.push('/settings/categories')}
+            />
+            <Row
+              icon="git-branch-outline"
+              title="Category Rules"
+              subtitle="Auto-categorization rules"
+              onPress={() => router.push('/settings/category-rules')}
+            />
+            <Row
               icon="receipt-outline"
               title="Bills & Recurring"
               subtitle="Manage recurring payments"
@@ -376,8 +390,8 @@ export default function SettingsScreen() {
             <Row
               icon="color-palette-outline"
               title="Theme"
-              value="Dark"
-              onPress={() => router.push('/theme-select')}
+              value={theme === 'dark' ? 'Dark' : 'Light'}
+              onPress={toggleTheme}
             />
           </View>
 

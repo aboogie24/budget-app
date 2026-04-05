@@ -15,17 +15,20 @@ type SavingsGoal struct {
 
 // DebtAccount represents a debt to pay down.
 type DebtAccount struct {
-	ID         string  `json:"id"`
-	UserID     string  `json:"user_id"`
-	HouseholdID string  `json:"household_id,omitempty"`
-	Name       string  `json:"name"`
-	Balance    float64 `json:"balance"`
-	APR        float64 `json:"apr"`
-	MinPayment float64 `json:"min_payment"`
-	DueDay     *int    `json:"due_day,omitempty"`
-	Strategy   string  `json:"strategy"`
-	IsShared   bool    `json:"is_shared"`
-	Source     string  `json:"source,omitempty"`
+	ID               string  `json:"id"`
+	UserID           string  `json:"user_id"`
+	HouseholdID      string  `json:"household_id,omitempty"`
+	Name             string  `json:"name"`
+	Balance          float64 `json:"balance"`
+	APR              float64 `json:"apr"`
+	MinPayment       float64 `json:"min_payment"`
+	DueDay           *int    `json:"due_day,omitempty"`
+	Strategy         string  `json:"strategy"`
+	IsShared         bool    `json:"is_shared"`
+	Source           string  `json:"source,omitempty"`
+	DebtCategory     string  `json:"debt_category"`      // "attack" or "structured"
+	LiabilityType    string  `json:"liability_type"`      // credit, auto, mortgage, student, personal, medical, other
+	AssetDepreciates *bool   `json:"asset_depreciates,omitempty"`
 }
 
 // FinancialPriority captures a ranked priority item for the couple.

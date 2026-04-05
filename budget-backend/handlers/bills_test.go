@@ -312,14 +312,21 @@ func TestMarkBillPaid_WithDebtDecrease(t *testing.T) {
 
 func TestDeleteBill(t *testing.T) {
 	billID := "b1111111-1111-1111-1111-111111111111"
+	userID := "11111111-1111-1111-1111-111111111111"
 
 	withBillsMockDB(t, func(mock sqlmock.Sqlmock) {
+		// ownershipCheck: SELECT user_id, household_id
+		mock.ExpectQuery(`SELECT user_id, household_id FROM`).
+			WithArgs(billID).
+			WillReturnRows(sqlmock.NewRows([]string{"user_id", "household_id"}).
+				AddRow(userID, nil))
+
 		mock.ExpectExec(`DELETE FROM bills`).
 			WithArgs(billID).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/auth/bills/"+billID, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/auth/bills/"+billID+"?user_id="+userID, nil)
 	req = mux.SetURLVars(req, map[string]string{"id": billID})
 	rr := httptest.NewRecorder()
 
@@ -332,14 +339,16 @@ func TestDeleteBill(t *testing.T) {
 
 func TestDeleteBill_NotFound(t *testing.T) {
 	billID := "b1111111-1111-1111-1111-111111111111"
+	userID := "11111111-1111-1111-1111-111111111111"
 
 	withBillsMockDB(t, func(mock sqlmock.Sqlmock) {
-		mock.ExpectExec(`DELETE FROM bills`).
+		// ownershipCheck: SELECT user_id, household_id — not found
+		mock.ExpectQuery(`SELECT user_id, household_id FROM`).
 			WithArgs(billID).
-			WillReturnResult(sqlmock.NewResult(0, 0))
+			WillReturnError(sql.ErrNoRows)
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/auth/bills/"+billID, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/auth/bills/"+billID+"?user_id="+userID, nil)
 	req = mux.SetURLVars(req, map[string]string{"id": billID})
 	rr := httptest.NewRecorder()
 

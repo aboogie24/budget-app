@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -238,6 +239,14 @@ func CreateBill(w http.ResponseWriter, r *http.Request) {
 	if b.IsShared && b.HouseholdID == "" {
 		http.Error(w, "Join or create a household before creating shared items", http.StatusBadRequest)
 		return
+	}
+
+	// Auto-suggest category from bill name if not provided.
+	if b.CategoryID == nil || *b.CategoryID == "" {
+		catID, _, _, _ := categories.ResolveCategory(client.Raw(), b.UserID, b.HouseholdID, b.Name, nil)
+		if catID != "" {
+			b.CategoryID = &catID
+		}
 	}
 
 	var hhVal any

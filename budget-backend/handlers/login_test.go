@@ -243,7 +243,12 @@ func withLoginMockDB(t *testing.T, setup func(sqlmock.Sqlmock)) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	t.Cleanup(func() { mockSQL.Close() })
+
+	cleanup := db.OverridePool(mockSQL)
+	t.Cleanup(func() {
+		cleanup()
+		mockSQL.Close()
+	})
 
 	setup(mock)
 }

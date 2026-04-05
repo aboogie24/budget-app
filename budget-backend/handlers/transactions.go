@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gorilla/mux"
 )
@@ -149,7 +150,10 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 				t.due_day,     -- 12
 				COALESCE(c.name, t.category_name), -- 13
 				c.color,       -- 14
-				t.source       -- 15
+				t.source,      -- 15
+				t.match_confidence, -- 16
+				t.matched_rule_id,  -- 17
+				COALESCE(t.user_verified, false) -- 18
 			FROM transactions t
 			LEFT JOIN categories c ON t.category_id = c.id
 			WHERE t.household_id IS NULL AND t.user_id = $1
@@ -171,7 +175,10 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 				t.due_day,     -- 12
 				COALESCE(c.name, t.category_name), -- 13
 				c.color,       -- 14
-				t.source       -- 15
+				t.source,      -- 15
+				t.match_confidence, -- 16
+				t.matched_rule_id,  -- 17
+				COALESCE(t.user_verified, false) -- 18
 			FROM transactions t
 			LEFT JOIN categories c ON t.category_id = c.id
 			WHERE t.user_id = $2
@@ -205,21 +212,24 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 		rowCount++
 		log.Print("Scanning")
 		err := rows.Scan(
-			&t.ID,         // 1
-			&t.UserID,     // 2
-			&hh,           // 3 household_id
-			&t.BudgetID,   // 4
-			&t.CategoryID, // 5
-			&t.Type,       // 6
-			&t.Amount,     // 7
-			&t.Currency,   // 8 currency
-			&note,         // 9 note
-			&t.Date,       // 10
-			&freq,         // 11 frequency
-			&t.DueDay,     // 12
-			&t.Category,   // 13
-			&t.Color,      // 14
-			&t.Source,     // 15
+			&t.ID,              // 1
+			&t.UserID,          // 2
+			&hh,                // 3 household_id
+			&t.BudgetID,        // 4
+			&t.CategoryID,      // 5
+			&t.Type,            // 6
+			&t.Amount,          // 7
+			&t.Currency,        // 8 currency
+			&note,              // 9 note
+			&t.Date,            // 10
+			&freq,              // 11 frequency
+			&t.DueDay,          // 12
+			&t.Category,        // 13
+			&t.Color,           // 14
+			&t.Source,           // 15
+			&t.MatchConfidence, // 16
+			&t.MatchedRuleID,   // 17
+			&t.UserVerified,    // 18
 		)
 		if hh.Valid {
 			val := hh.String
@@ -296,12 +306,15 @@ func UpdateTransaction(w http.ResponseWriter, r *http.Request) {
 		tx.Currency = "USD"
 	}
 
-	// Execute UPDATE query
-	_, err = dbClient.Exec(fmt.Sprintf(`
+	// Execute UPDATE query — when user sets a category, mark as verified
+	_, err = dbClient.Exec(`
 		UPDATE transactions
-		SET amount = $1, note = $2, category_id = $3, category_name = $4, type = $5, date = $6, frequency = $7, due_day = $8, budget_id = $9, currency = $10
+		SET amount = $1, note = $2, category_id = $3, category_name = $4, type = $5, date = $6,
+		    frequency = $7, due_day = $8, budget_id = $9, currency = $10,
+		    user_verified = CASE WHEN $3 IS NOT NULL THEN true ELSE user_verified END,
+		    match_confidence = CASE WHEN $3 IS NOT NULL THEN 'exact' ELSE match_confidence END
 		WHERE id = $11
-	`), tx.Amount, tx.Note, tx.CategoryID, tx.Category, tx.Type, tx.Date, tx.Frequency, tx.DueDay, tx.BudgetID, tx.Currency, id)
+	`, tx.Amount, tx.Note, tx.CategoryID, tx.Category, tx.Type, tx.Date, tx.Frequency, tx.DueDay, tx.BudgetID, tx.Currency, id)
 	if err != nil {
 		log.Printf("UpdateTransaction update error: %v", err)
 		http.Error(w, "Failed to update transaction", http.StatusInternalServerError)
@@ -328,7 +341,10 @@ func UpdateTransaction(w http.ResponseWriter, r *http.Request) {
 			t.due_day,
 			COALESCE(c.name, t.category_name),
 			c.color,
-			t.source
+			t.source,
+			t.match_confidence,
+			t.matched_rule_id,
+			COALESCE(t.user_verified, false)
 		FROM transactions t
 		LEFT JOIN categories c ON t.category_id = c.id
 		WHERE t.id = $1
@@ -348,6 +364,9 @@ func UpdateTransaction(w http.ResponseWriter, r *http.Request) {
 		&tx.Category,
 		&tx.Color,
 		&tx.Source,
+		&tx.MatchConfidence,
+		&tx.MatchedRuleID,
+		&tx.UserVerified,
 	)
 	if err != nil {
 		log.Printf("UpdateTransaction fetch error: %v", err)
@@ -400,6 +419,104 @@ func DeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// BackfillTransactionCategories resolves category_id for all transactions that
+// have a category_name but no category_id. This is a one-time management endpoint.
+// POST /auth/transactions/backfill-categories
+func BackfillTransactionCategories(w http.ResponseWriter, r *http.Request) {
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	hhID := db.ResolveHouseholdID(dbClient.Conn, userID)
+
+	rows, err := dbClient.Query(`
+		SELECT id, user_id, household_id, category_name, note
+		FROM transactions
+		WHERE category_id IS NULL AND category_name IS NOT NULL AND category_name != ''
+		  AND (user_id = $1 OR household_id::text = $2)
+	`, userID, hhID)
+	if err != nil {
+		log.Printf("BackfillTransactionCategories query error: %v", err)
+		http.Error(w, "Failed to query transactions", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type backfillRow struct {
+		id          string
+		userID      string
+		householdID *string
+		catName     string
+		note        string
+	}
+
+	var pending []backfillRow
+	for rows.Next() {
+		var br backfillRow
+		var hh, note sql.NullString
+		if err := rows.Scan(&br.id, &br.userID, &hh, &br.catName, &note); err != nil {
+			log.Printf("BackfillTransactionCategories scan error: %v", err)
+			continue
+		}
+		if hh.Valid {
+			br.householdID = &hh.String
+		}
+		br.note = note.String
+		pending = append(pending, br)
+	}
+
+	updated := 0
+	for _, br := range pending {
+		hhForResolver := ""
+		if br.householdID != nil {
+			hhForResolver = *br.householdID
+		}
+		// Use category_name as a pseudo Plaid category, and note as merchant name
+		merchantName := br.note
+		plaidCats := []string{br.catName}
+
+		catID, conf, ruleID, resolveErr := categories.ResolveCategory(dbClient.Conn, br.userID, hhForResolver, merchantName, plaidCats)
+		if resolveErr != nil {
+			log.Printf("BackfillTransactionCategories resolve error for tx %s: %v", br.id, resolveErr)
+			continue
+		}
+		if catID == "" {
+			continue
+		}
+
+		var matchedRuleID *string
+		if ruleID != nil {
+			matchedRuleID = ruleID
+		}
+
+		_, err := dbClient.Exec(`
+			UPDATE transactions
+			SET category_id = $1, match_confidence = $2, matched_rule_id = $3
+			WHERE id = $4
+		`, catID, conf, matchedRuleID, br.id)
+		if err != nil {
+			log.Printf("BackfillTransactionCategories update error for tx %s: %v", br.id, err)
+			continue
+		}
+		updated++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"total_pending": len(pending),
+		"updated":       updated,
+	})
 }
 
 // checkBudgetThresholdAfterTransaction checks if a budget has exceeded its alert threshold

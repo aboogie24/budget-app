@@ -80,7 +80,7 @@ export default function FrequencySettingsScreen() {
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.replace('/(tabs)/settings')} style={styles.backBtn}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
               <Ionicons name="arrow-back" size={20} color="#c084fc" />
             </TouchableOpacity>
             <Text style={styles.header}>Frequency</Text>

@@ -1,21 +1,8 @@
 import BudgetAppLogin from '../components/BudgetAppLogin';
-import React, { useEffect } from 'react';
-import { View } from 'react-native';
-import { useRouter } from 'expo-router';
-import { findUserSession } from '../utils/storage';
+import React from 'react';
 
 export default function LoginScreen() {
-  const router = useRouter();
-
-  useEffect(() => {
-    const checkIfLoggedIn = async () => {
-      const user = await findUserSession();
-      if (user) {
-        router.replace('/(tabs)/dashboard'); // ✅ Redirect to tabbed dashboard
-      }
-    };
-
-    checkIfLoggedIn();
-  }, []);
+  // Auth redirect is handled by _layout.tsx
+  // This screen only renders for unauthenticated users
   return <BudgetAppLogin />;
 }

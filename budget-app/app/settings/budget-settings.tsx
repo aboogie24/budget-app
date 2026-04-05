@@ -136,7 +136,7 @@ export default function BudgetSettingsScreen() {
         <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.replace('/(tabs)/settings')} style={styles.backBtn}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
               <Ionicons name="arrow-back" size={20} color="#c084fc" />
             </TouchableOpacity>
             <Text style={styles.header}>Budget Settings</Text>

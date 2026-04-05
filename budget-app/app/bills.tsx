@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
@@ -35,15 +36,22 @@ type Bill = {
   status?: string;
   category_name?: string;
   debt_name?: string;
+  owner?: string;
 };
 
 type Category = { id: string; name: string; type?: string };
 type Debt = { id: string; name: string; balance: number };
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: string; label: string }> = {
-  paid: { color: '#34d399', bg: 'rgba(52,211,153,0.12)', icon: 'checkmark-circle', label: 'Paid' },
-  unpaid: { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)', icon: 'time', label: 'Upcoming' },
-  overdue: { color: '#f87171', bg: 'rgba(248,113,113,0.12)', icon: 'alert-circle', label: 'Overdue' },
+  paid: { color: '#34d399', bg: 'rgba(52,211,153,0.12)', icon: 'checkmark', label: 'Paid' },
+  unpaid: { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)', icon: 'time-outline', label: 'Upcoming' },
+  overdue: { color: '#f87171', bg: 'rgba(248,113,113,0.12)', icon: 'warning-outline', label: 'Overdue' },
+};
+
+const OWNER_COLORS: Record<string, string> = {
+  You: '#a855f7',
+  Partner: '#ec4899',
+  Joint: '#06b6d4',
 };
 
 const FREQUENCY_OPTIONS = [
@@ -54,6 +62,146 @@ const FREQUENCY_OPTIONS = [
   { label: 'Yearly', value: 'yearly' },
 ];
 
+/* ---- Progress Ring Component ---- */
+function ProgressRing({
+  percent,
+  size = 64,
+  strokeWidth = 5,
+  color = '#34d399',
+}: {
+  percent: number;
+  size?: number;
+  strokeWidth?: number;
+  color?: string;
+}) {
+  const r = (size - strokeWidth) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (percent / 100) * circ;
+  return (
+    <Svg width={size} height={size}>
+      <Circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke="rgba(255,255,255,0.08)"
+        strokeWidth={strokeWidth}
+      />
+      <Circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeDasharray={`${circ}`}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        rotation={-90}
+        origin={`${size / 2}, ${size / 2}`}
+      />
+    </Svg>
+  );
+}
+
+/* ---- Owner Dot Component ---- */
+function OwnerDot({ owner }: { owner?: string }) {
+  const color = OWNER_COLORS[owner || ''] || 'rgba(255,255,255,0.35)';
+  return <View style={[styles.ownerDot, { backgroundColor: color }]} />;
+}
+
+/* ---- Bill Status Helper ---- */
+function getBillStatus(bill: Bill): string {
+  if (bill.status === 'paid') return 'paid';
+  const today = new Date().getDate();
+  if (bill.due_day < today && bill.status !== 'paid') return 'overdue';
+  return 'unpaid';
+}
+
+/* ---- Bill Owner Helper ---- */
+function getBillOwner(bill: Bill): string {
+  if (bill.owner) return bill.owner;
+  if (bill.is_shared) return 'Joint';
+  return 'You';
+}
+
+/* ---- Timeline Component ---- */
+function BillTimeline({ bills }: { bills: Bill[] }) {
+  const today = new Date().getDate();
+  const monthName = new Date().toLocaleString('en-US', { month: 'long' });
+  const sorted = [...bills].sort((a, b) => a.due_day - b.due_day);
+  const progressPercent = (today / 30) * 100;
+
+  return (
+    <View style={styles.glassCard}>
+      <View style={styles.timelineHeader}>
+        <Text style={styles.timelineTitleText}>
+          {monthName} Timeline
+        </Text>
+        <Text style={styles.timelineToday}>
+          Today: {ordinalSuffix(today)}
+        </Text>
+      </View>
+
+      {/* Timeline bar area */}
+      <View style={styles.timelineBarArea}>
+        {/* Track background */}
+        <View style={styles.timelineTrack} />
+
+        {/* Progress fill */}
+        <LinearGradient
+          colors={['#7c3aed', '#a855f7']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={[styles.timelineProgress, { width: `${progressPercent}%` }]}
+        />
+
+        {/* Bill dots */}
+        {sorted.map((b) => {
+          const status = getBillStatus(b);
+          const statusColor = STATUS_CONFIG[status].color;
+          const leftPercent = ((b.due_day - 1) / 30) * 100;
+          return (
+            <View
+              key={b.id}
+              style={[
+                styles.timelineDot,
+                {
+                  left: `${leftPercent}%`,
+                  backgroundColor: statusColor,
+                },
+              ]}
+            />
+          );
+        })}
+
+        {/* Today marker */}
+        <View
+          style={[
+            styles.todayMarker,
+            { left: `${progressPercent}%` },
+          ]}
+        />
+      </View>
+
+      {/* Legend */}
+      <View style={styles.timelineLegend}>
+        {[
+          { color: '#34d399', label: 'Paid' },
+          { color: '#fbbf24', label: 'Upcoming' },
+          { color: '#f87171', label: 'Overdue' },
+        ].map((l) => (
+          <View key={l.label} style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: l.color }]} />
+            <Text style={styles.legendText}>{l.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/* ---- Main Screen ---- */
 export default function BillsScreen() {
   const router = useRouter();
   const [bills, setBills] = useState<Bill[]>([]);
@@ -62,6 +210,7 @@ export default function BillsScreen() {
   const [editing, setEditing] = useState<Bill | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('all');
 
   // Dropdown data
   const [categories, setCategories] = useState<Category[]>([]);
@@ -249,66 +398,125 @@ export default function BillsScreen() {
     }
   };
 
-  const paidCount = bills.filter((b) => b.status === 'paid').length;
-  const totalDue = bills.reduce((s, b) => s + (b.amount_due || 0), 0);
-  const unpaidBills = bills.filter((b) => b.status !== 'paid');
-  const nextUpcoming = unpaidBills.sort((a, b) => a.due_day - b.due_day)[0];
+  // Computed values
+  const billsWithStatus = bills.map((b) => ({
+    ...b,
+    _status: getBillStatus(b),
+    _owner: getBillOwner(b),
+  }));
+
+  const paidCount = billsWithStatus.filter((b) => b._status === 'paid').length;
+  const totalDue = billsWithStatus.reduce((s, b) => s + (b.amount_due || 0), 0);
+  const paidAmount = billsWithStatus
+    .filter((b) => b._status === 'paid')
+    .reduce((s, b) => s + (b.amount_due || 0), 0);
+  const unpaidAmount = totalDue - paidAmount;
+  const overdueCount = billsWithStatus.filter((b) => b._status === 'overdue').length;
+  const upcomingCount = billsWithStatus.filter((b) => b._status === 'unpaid').length;
+  const paidPct = bills.length > 0 ? Math.round((paidCount / bills.length) * 100) : 0;
+
+  const filteredBills =
+    filter === 'all'
+      ? billsWithStatus
+      : billsWithStatus.filter((b) => b._status === filter);
 
   const fmt = (v: number) =>
-    v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
+    '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const getCategoryName = (id?: string) => categories.find((c) => c.id === id)?.name;
   const getDebtName = (id?: string) => debts.find((d) => d.id === id)?.name;
   const getFrequencyLabel = (val: string) =>
     FREQUENCY_OPTIONS.find((f) => f.value === val)?.label || val;
 
+  const filterTabs = [
+    { key: 'all', label: 'All', count: bills.length },
+    { key: 'unpaid', label: 'Upcoming', count: upcomingCount },
+    { key: 'paid', label: 'Paid', count: paidCount },
+    { key: 'overdue', label: 'Overdue', count: overdueCount },
+  ];
+
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
+        {/* Header */}
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity
+              onPress={() => router.navigate('/(tabs)/goals' as any)}
+              style={styles.iconButton}
+            >
+              <Ionicons name="arrow-back" size={18} color="#e5e7eb" />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Bills</Text>
-            <TouchableOpacity
-              onPress={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            >
-              <Ionicons name="add-circle" size={28} color="#c084fc" />
-            </TouchableOpacity>
           </View>
+          <TouchableOpacity
+            onPress={() => {
+              resetForm();
+              setShowForm(true);
+            }}
+          >
+            <LinearGradient
+              colors={['#7c3aed', '#a855f7']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.addButton}
+            >
+              <Ionicons name="add" size={18} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
 
-          {/* Summary Card */}
-          <View style={styles.summaryCard}>
-            <View style={styles.summaryRow}>
-              <View>
-                <Text style={styles.summaryLabel}>Bills Paid</Text>
-                <Text style={styles.summaryValue}>
-                  {paidCount} / {bills.length}
-                </Text>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 }}>
+          {/* Summary Hero Card */}
+          <View style={styles.heroCard}>
+            <View style={styles.heroContent}>
+              {/* Progress Ring */}
+              <View style={styles.ringContainer}>
+                <ProgressRing percent={paidPct} size={64} strokeWidth={5} color="#34d399" />
+                <View style={styles.ringCenter}>
+                  <Text style={styles.ringCount}>{paidCount}</Text>
+                  <Text style={styles.ringLabel}>of {bills.length}</Text>
+                </View>
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.summaryLabel}>Total Due</Text>
-                <Text style={styles.summaryValue}>{fmt(totalDue)}/mo</Text>
+
+              {/* Right side: Total Due + breakdown */}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.totalDueLabel}>Total Due</Text>
+                <Text style={styles.totalDueAmount}>
+                  {fmt(totalDue)}
+                  <Text style={styles.totalDuePeriod}>/mo</Text>
+                </Text>
+
+                <View style={styles.heroBreakdown}>
+                  <View>
+                    <Text style={styles.breakdownLabel}>Paid</Text>
+                    <Text style={[styles.breakdownValue, { color: '#34d399' }]}>
+                      {fmt(paidAmount)}
+                    </Text>
+                  </View>
+                  <View>
+                    <Text style={styles.breakdownLabel}>Remaining</Text>
+                    <Text style={[styles.breakdownValue, { color: '#fbbf24' }]}>
+                      {fmt(unpaidAmount)}
+                    </Text>
+                  </View>
+                  {overdueCount > 0 && (
+                    <View>
+                      <Text style={styles.breakdownLabel}>Overdue</Text>
+                      <Text style={[styles.breakdownValue, { color: '#f87171' }]}>
+                        {overdueCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
               </View>
             </View>
-            {nextUpcoming && (
-              <View style={styles.nextUpcoming}>
-                <Ionicons name="time-outline" size={14} color="#fbbf24" />
-                <Text style={styles.nextUpcomingText}>
-                  Next: {nextUpcoming.name} — {fmt(nextUpcoming.amount_due)} due on the{' '}
-                  {nextUpcoming.due_day}
-                  {ordinalSuffix(nextUpcoming.due_day)}
-                </Text>
-              </View>
-            )}
           </View>
 
-          {/* Auto-detect button */}
+          {/* Timeline */}
+          {bills.length > 0 && <BillTimeline bills={billsWithStatus} />}
+
+          {/* Auto-detect Button */}
           <TouchableOpacity style={styles.autoDetectBtn} onPress={handleAutoDetect} disabled={detecting}>
             {detecting ? (
               <ActivityIndicator size="small" color="#60a5fa" />
@@ -319,6 +527,62 @@ export default function BillsScreen() {
               {detecting ? 'Scanning...' : 'Auto-detect from bank'}
             </Text>
           </TouchableOpacity>
+
+          {/* Filter Tabs */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginBottom: 14 }}
+            contentContainerStyle={{ gap: 8 }}
+          >
+            {filterTabs.map((f) => {
+              const isActive = filter === f.key;
+              return (
+                <TouchableOpacity
+                  key={f.key}
+                  onPress={() => setFilter(f.key)}
+                  style={[
+                    styles.filterTab,
+                    isActive && styles.filterTabActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.filterTabText,
+                      isActive && styles.filterTabTextActive,
+                    ]}
+                  >
+                    {f.label}
+                  </Text>
+                  <View
+                    style={[
+                      styles.filterBadge,
+                      isActive && styles.filterBadgeActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.filterBadgeText,
+                        isActive && styles.filterBadgeTextActive,
+                      ]}
+                    >
+                      {f.count}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* Owner Legend */}
+          <View style={styles.ownerLegend}>
+            {['You', 'Partner', 'Joint'].map((o) => (
+              <View key={o} style={styles.legendItem}>
+                <OwnerDot owner={o} />
+                <Text style={styles.ownerLegendText}>{o}</Text>
+              </View>
+            ))}
+          </View>
 
           {/* Bill List */}
           {error && (
@@ -347,51 +611,52 @@ export default function BillsScreen() {
               }}
             />
           ) : (
-            bills.map((b) => {
-              const status = STATUS_CONFIG[b.status || 'unpaid'];
+            filteredBills.map((b) => {
+              const status = STATUS_CONFIG[b._status];
+              const owner = b._owner;
               return (
                 <TouchableOpacity key={b.id} style={styles.card} onPress={() => openEdit(b)}>
+                  {/* Top row: owner dot + name + badges + amount */}
                   <View style={styles.cardHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                      <Text style={styles.cardTitle} numberOfLines={1}>
-                        {b.name}
-                      </Text>
-                      {b.is_autopay && (
-                        <View style={styles.badge}>
-                          <Ionicons name="flash" size={10} color="#60a5fa" />
-                          <Text style={styles.badgeText}>Auto</Text>
-                        </View>
-                      )}
-                      {b.debt_account_id && (
-                        <View style={[styles.badge, { backgroundColor: 'rgba(244,114,182,0.12)' }]}>
-                          <Ionicons name="link" size={10} color="#f472b6" />
-                          <Text style={[styles.badgeText, { color: '#f472b6' }]}>Debt</Text>
-                        </View>
-                      )}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <View style={styles.cardNameRow}>
+                        <OwnerDot owner={owner} />
+                        <Text style={styles.cardTitle} numberOfLines={1}>
+                          {b.name}
+                        </Text>
+                        {b.is_autopay && (
+                          <View style={styles.badge}>
+                            <Ionicons name="flash" size={9} color="#60a5fa" />
+                            <Text style={styles.badgeText}>Auto</Text>
+                          </View>
+                        )}
+                        {b.debt_account_id && (
+                          <View style={[styles.badge, { backgroundColor: 'rgba(236,72,153,0.12)' }]}>
+                            <Ionicons name="link" size={9} color="#f472b6" />
+                            <Text style={[styles.badgeText, { color: '#f472b6' }]}>Debt</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Details row */}
+                      <View style={styles.cardDetails}>
+                        <Text style={styles.detailText}>
+                          Due {b.due_day}
+                          {ordinalSuffix(b.due_day)}
+                        </Text>
+                        {b.payee ? <Text style={styles.detailText}>{b.payee}</Text> : null}
+                        {(b.category_name || getCategoryName(b.category_id)) ? (
+                          <Text style={styles.detailText}>
+                            {b.category_name || getCategoryName(b.category_id)}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                     <Text style={styles.cardAmount}>{fmt(b.amount_due)}</Text>
                   </View>
 
-                  <View style={styles.cardDetails}>
-                    <Text style={styles.detailText}>
-                      Due {b.due_day}
-                      {ordinalSuffix(b.due_day)}
-                    </Text>
-                    {b.payee && <Text style={styles.detailText}>{b.payee}</Text>}
-                    {(b.category_name || getCategoryName(b.category_id)) && (
-                      <Text style={styles.detailText}>
-                        {b.category_name || getCategoryName(b.category_id)}
-                      </Text>
-                    )}
-                    {(b.debt_name || getDebtName(b.debt_account_id)) && (
-                      <Text style={[styles.detailText, { color: '#f472b6' }]}>
-                        {b.debt_name || getDebtName(b.debt_account_id)}
-                      </Text>
-                    )}
-                  </View>
-
+                  {/* Footer: status chip + actions */}
                   <View style={styles.cardFooter}>
-                    {/* Status chip */}
                     <View style={[styles.statusChip, { backgroundColor: status.bg }]}>
                       <Ionicons name={status.icon as any} size={12} color={status.color} />
                       <Text style={[styles.statusText, { color: status.color }]}>
@@ -399,8 +664,8 @@ export default function BillsScreen() {
                       </Text>
                     </View>
 
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      {b.status !== 'paid' && (
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {b._status !== 'paid' && (
                         <TouchableOpacity
                           style={styles.payBtn}
                           onPress={(e) => {
@@ -408,7 +673,7 @@ export default function BillsScreen() {
                             handleMarkPaid(b);
                           }}
                         >
-                          <Ionicons name="checkmark-circle-outline" size={14} color="#34d399" />
+                          <Ionicons name="checkmark" size={12} color="#34d399" />
                           <Text style={styles.payBtnText}>Mark Paid</Text>
                         </TouchableOpacity>
                       )}
@@ -419,7 +684,7 @@ export default function BillsScreen() {
                           handleDelete(b.id);
                         }}
                       >
-                        <Ionicons name="trash-outline" size={14} color="#f87171" />
+                        <Ionicons name="trash-outline" size={12} color="#f87171" />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -549,7 +814,7 @@ export default function BillsScreen() {
                 </TouchableOpacity>
               </ScrollView>
 
-              {/* Frequency Picker — inline overlay inside form modal */}
+              {/* Frequency Picker */}
               {showFrequencyPicker && (
                 <TouchableOpacity
                   style={styles.pickerOverlayBackdrop}
@@ -584,7 +849,7 @@ export default function BillsScreen() {
                 </TouchableOpacity>
               )}
 
-              {/* Category Picker — inline overlay inside form modal */}
+              {/* Category Picker */}
               {showCategoryPicker && (
                 <TouchableOpacity
                   style={styles.pickerOverlayBackdrop}
@@ -637,7 +902,7 @@ export default function BillsScreen() {
                 </TouchableOpacity>
               )}
 
-              {/* Debt Account Picker — inline overlay inside form modal */}
+              {/* Debt Account Picker */}
               {showDebtPicker && (
                 <TouchableOpacity
                   style={styles.pickerOverlayBackdrop}
@@ -710,68 +975,313 @@ function ordinalSuffix(day: number): string {
 }
 
 const styles = StyleSheet.create({
+  /* ---- Header ---- */
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
   },
-  headerTitle: { color: '#f8fafc', fontSize: 20, fontWeight: '800' },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+  },
   iconButton: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
-  summaryCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 12,
+  addButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  summaryLabel: { color: '#cbd5e1', fontSize: 12 },
-  summaryValue: { color: '#f8fafc', fontSize: 18, fontWeight: '800', marginTop: 4 },
-  nextUpcoming: {
+
+  /* ---- Glass Card (shared) ---- */
+  glassCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    padding: 16,
+    marginBottom: 16,
+  },
+
+  /* ---- Summary Hero ---- */
+  heroCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(168,85,247,0.2)',
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    padding: 20,
+    marginBottom: 16,
+  },
+  heroContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    gap: 16,
   },
-  nextUpcomingText: { color: '#fbbf24', fontSize: 13 },
+  ringContainer: {
+    position: 'relative',
+    width: 64,
+    height: 64,
+    flexShrink: 0,
+  },
+  ringCenter: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ringCount: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  ringLabel: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 8,
+  },
+  totalDueLabel: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    fontWeight: '500',
+  },
+  totalDueAmount: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  totalDuePeriod: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
+    fontWeight: '400',
+  },
+  heroBreakdown: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 8,
+  },
+  breakdownLabel: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 10,
+  },
+  breakdownValue: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  /* ---- Timeline ---- */
+  timelineHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  timelineTitleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.7)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  timelineToday: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.35)',
+  },
+  timelineBarArea: {
+    position: 'relative',
+    height: 32,
+    marginBottom: 6,
+  },
+  timelineTrack: {
+    position: 'absolute',
+    top: 12,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 2,
+  },
+  timelineProgress: {
+    position: 'absolute',
+    top: 12,
+    left: 0,
+    height: 3,
+    borderRadius: 2,
+  },
+  timelineDot: {
+    position: 'absolute',
+    top: 6,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: '#0f0a1e',
+    marginLeft: -7,
+  },
+  todayMarker: {
+    position: 'absolute',
+    top: 2,
+    width: 2,
+    height: 22,
+    backgroundColor: '#a855f7',
+    borderRadius: 1,
+    marginLeft: -1,
+  },
+  timelineLegend: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'center',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  legendDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  legendText: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.4)',
+  },
+
+  /* ---- Auto-detect ---- */
   autoDetectBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: 'rgba(96,165,250,0.1)',
+    backgroundColor: 'rgba(96,165,250,0.08)',
     borderRadius: 12,
     paddingVertical: 10,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.2)',
+    borderColor: 'rgba(96,165,250,0.15)',
   },
-  autoDetectText: { color: '#60a5fa', fontWeight: '700', fontSize: 14 },
-  card: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
+  autoDetectText: {
+    color: '#60a5fa',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+
+  /* ---- Filter Tabs ---- */
+  filterTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 10,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardTitle: { color: '#f8fafc', fontWeight: '700', fontSize: 15, flexShrink: 1 },
-  cardAmount: { color: '#c084fc', fontWeight: '800', fontSize: 16, marginLeft: 8 },
+  filterTabActive: {
+    backgroundColor: 'rgba(168,85,247,0.2)',
+    borderColor: 'rgba(168,85,247,0.4)',
+  },
+  filterTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.5)',
+  },
+  filterTabTextActive: {
+    color: '#a855f7',
+  },
+  filterBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  filterBadgeActive: {
+    backgroundColor: 'rgba(168,85,247,0.15)',
+  },
+  filterBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.3)',
+  },
+  filterBadgeTextActive: {
+    color: '#a855f7',
+  },
+
+  /* ---- Owner Legend ---- */
+  ownerLegend: {
+    flexDirection: 'row',
+    gap: 14,
+    marginBottom: 10,
+    paddingLeft: 4,
+  },
+  ownerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  ownerLegendText: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.4)',
+  },
+
+  /* ---- Bill Cards ---- */
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    padding: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 8,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  cardNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  cardTitle: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+    flexShrink: 1,
+  },
+  cardAmount: {
+    color: '#c084fc',
+    fontWeight: '800',
+    fontSize: 16,
+    marginLeft: 8,
+    flexShrink: 0,
+  },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -781,14 +1291,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  badgeText: { color: '#60a5fa', fontSize: 10, fontWeight: '700' },
-  cardDetails: { flexDirection: 'row', gap: 12, marginTop: 8, flexWrap: 'wrap' },
-  detailText: { color: '#94a3b8', fontSize: 12 },
+  badgeText: {
+    color: '#60a5fa',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  cardDetails: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+    flexWrap: 'wrap',
+  },
+  detailText: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 11,
+  },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 10,
   },
   statusChip: {
     flexDirection: 'row',
@@ -798,28 +1320,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 10,
   },
-  statusText: { fontSize: 12, fontWeight: '700' },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   payBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 6,
+    paddingVertical: 5,
     paddingHorizontal: 10,
     backgroundColor: 'rgba(52,211,153,0.12)',
     borderRadius: 10,
   },
-  payBtnText: { color: '#34d399', fontWeight: '700', fontSize: 13 },
-  deleteBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    backgroundColor: 'rgba(248,113,113,0.12)',
-    borderRadius: 10,
+  payBtnText: {
+    color: '#34d399',
+    fontWeight: '700',
+    fontSize: 12,
   },
-  emptyState: { alignItems: 'center', marginTop: 60, gap: 8 },
-  emptyText: { color: '#e5e7eb', fontWeight: '700', fontSize: 16 },
-  emptySubtext: { color: '#94a3b8', fontSize: 13 },
+  deleteBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(248,113,113,0.08)',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-  // Modal styles
+  /* ---- Modal Styles ---- */
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -838,8 +1366,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: { color: '#f8fafc', fontSize: 18, fontWeight: '800' },
-  label: { color: '#e5e7eb', fontSize: 13, fontWeight: '700', marginBottom: 6, marginTop: 12 },
+  modalTitle: {
+    color: '#f8fafc',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  label: {
+    color: '#e5e7eb',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 6,
+    marginTop: 12,
+  },
   input: {
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: 12,
@@ -861,24 +1399,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
-  pickerBtnText: { color: '#f8fafc', fontSize: 15 },
+  pickerBtnText: {
+    color: '#f8fafc',
+    fontSize: 15,
+  },
   switchRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 16,
   },
-  switchLabel: { color: '#e5e7eb', fontSize: 14, fontWeight: '700' },
-  saveBtn: { borderRadius: 14, overflow: 'hidden', marginTop: 20, marginBottom: 20 },
+  switchLabel: {
+    color: '#e5e7eb',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  saveBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 20,
+    marginBottom: 20,
+  },
   saveBtnInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 16,
   },
-  saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  saveBtnText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 16,
+  },
 
-  // Picker overlay styles (rendered inside the form modal)
+  /* ---- Picker Overlay ---- */
   pickerOverlayBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -892,7 +1446,12 @@ const styles = StyleSheet.create({
     padding: 20,
     maxHeight: '60%',
   },
-  pickerSheetTitle: { color: '#f8fafc', fontSize: 16, fontWeight: '800', marginBottom: 12 },
+  pickerSheetTitle: {
+    color: '#f8fafc',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 12,
+  },
   pickerOption: {
     paddingVertical: 12,
     paddingHorizontal: 14,
@@ -902,6 +1461,12 @@ const styles = StyleSheet.create({
   pickerOptionActive: {
     backgroundColor: 'rgba(168,85,247,0.18)',
   },
-  pickerOptionText: { color: '#e5e7eb', fontSize: 15 },
-  pickerOptionTextActive: { color: '#fff', fontWeight: '700' },
+  pickerOptionText: {
+    color: '#e5e7eb',
+    fontSize: 15,
+  },
+  pickerOptionTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
 });

@@ -7,6 +7,7 @@ export interface UserData {
   isFirstLogin: boolean;
   name?: string;
   budgetGoal?: string;
+  onboarding_complete?: boolean;
 }
 
 const USERS_KEY = 'budgetAppUsers';

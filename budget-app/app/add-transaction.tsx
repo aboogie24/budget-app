@@ -15,36 +15,40 @@ import { getCurrentUser } from '../utils/storage';
 import { api } from '../utils/apiClient';
 import { v4 as uuidv4 } from 'uuid';
 import { successHaptic, errorHaptic } from '../utils/haptics';
+import CategoryPicker from '../components/CategoryPicker';
 
 const frequencyOptions = ['one-time', 'weekly', 'biweekly', 'monthly'];
 
 export default function AddTransactionScreen() {
   const params = useLocalSearchParams();
-  const type = (params.type as string) || 'expense';
+  const initialType = (params.type as string) || 'expense';
   const router = useRouter();
 
+  const [type, setType] = useState(initialType);
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('');
-  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<{ id: string; name: string } | null>(null);
+  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
+  const [userId, setUserId] = useState('');
   const [note, setNote] = useState('');
   const [frequency, setFrequency] = useState('one-time');
   const [dueDay, setDueDay] = useState('');
 
+  // Load user ID on mount and reset category when type changes
   useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const currentUser = await getCurrentUser();
-        const data = await api.get(`/auth/categories`, { type, user_id: currentUser?.id });
-        setCategories(Array.isArray(data) ? data : []);
-      } catch (e) {
-        console.error('Failed to fetch categories:', e);
-      }
+    const loadUser = async () => {
+      const currentUser = await getCurrentUser();
+      if (currentUser?.id) setUserId(currentUser.id);
     };
-    fetchCategories();
+    loadUser();
+  }, []);
+
+  // Reset selected category when type changes
+  useEffect(() => {
+    setSelectedCategory(null);
   }, [type]);
 
   const handleRedirect = async () => {
-    router.replace('/(tabs)/budget');
+    router.back();
   };
 
   const handleSave = async () => {
@@ -67,36 +71,9 @@ export default function AddTransactionScreen() {
       }
     }
 
-    // Check if category exists, otherwise create it
-    let selectedCategory = categories.find(
-      (c) => c.name.toLowerCase() === category.toLowerCase()
-    );
-
     if (!selectedCategory) {
-      console.log(category, currentUser.id)
-      try {
-        const newCatPayload = {
-          id: uuidv4(),
-          name: category,
-          user_id: currentUser.id,
-          type,
-          color: "#4CAF50",
-        }
-
-        console.log(newCatPayload)
-        const created = await api.post(`/auth/categories`, newCatPayload);
-
-        console.log(created)
-
-        selectedCategory = created;
-        if (created) {
-          setCategories((prev) => [...prev, created]);
-        }
-      } catch (err) {
-        console.error('Failed to create category:', err);
-        Alert.alert('Error', 'Failed to create category.');
-        return;
-      }
+      Alert.alert('Missing category', 'Please select a category.');
+      return;
     }
 
     const transaction = {
@@ -104,8 +81,8 @@ export default function AddTransactionScreen() {
       user_id: currentUser.id,
       type,
       amount: parseFloat(amount),
-      category_id: selectedCategory?.id,
-      category: selectedCategory?.name,
+      category_id: selectedCategory.id,
+      category_name: selectedCategory.name,
       note,
       date: new Date().toISOString(),
       frequency,
@@ -117,7 +94,7 @@ export default function AddTransactionScreen() {
       await api.post(`/auth/transactions`, transaction);
       successHaptic();
       Alert.alert('Success', 'Transaction saved.');
-      router.replace('/(tabs)/budget');
+      router.back();
     } catch (err) {
       console.error('Error saving:', err);
       errorHaptic();
@@ -134,31 +111,39 @@ export default function AddTransactionScreen() {
               <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
             </TouchableOpacity>
             <View style={styles.headerCenter}>
-              <Text style={styles.headerTitle}>
-                {type === 'income' ? 'New Income' : 'New Expense'}
-              </Text>
+              <Text style={styles.headerTitle}>New Transaction</Text>
               <Text style={styles.headerSubtitle}>Log it to keep budgets fresh</Text>
             </View>
             <View style={{ width: 40 }} />
           </View>
 
-          <View style={styles.typePill}>
-            <Ionicons
-              name={type === 'income' ? 'trending-up' : 'card-outline'}
-              size={18}
-              color={type === 'income' ? '#34d399' : '#f472b6'}
-            />
-            <Text
-              style={[
-                styles.typePillText,
-                { color: type === 'income' ? '#34d399' : '#f472b6' },
-              ]}
+          {/* Type toggle */}
+          <View style={styles.typeToggle}>
+            <TouchableOpacity
+              style={[styles.typeToggleBtn, type === 'expense' && styles.typeToggleBtnActiveExpense]}
+              onPress={() => setType('expense')}
             >
-              {type === 'income' ? 'Income' : 'Expense'}
-            </Text>
+              <Ionicons name="card-outline" size={16} color={type === 'expense' ? '#f87171' : '#94a3b8'} />
+              <Text style={[styles.typeToggleText, type === 'expense' && { color: '#f87171', fontWeight: '700' }]}>Expense</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.typeToggleBtn, type === 'income' && styles.typeToggleBtnActiveIncome]}
+              onPress={() => setType('income')}
+            >
+              <Ionicons name="trending-up" size={16} color={type === 'income' ? '#34d399' : '#94a3b8'} />
+              <Text style={[styles.typeToggleText, type === 'income' && { color: '#34d399', fontWeight: '700' }]}>Income</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
+            <LabeledInput
+              label="Name"
+              icon="text-outline"
+              placeholder={type === 'income' ? 'e.g. Paycheck, Freelance gig' : 'e.g. Coffee, Uber, Amazon'}
+              value={note}
+              onChangeText={setNote}
+            />
+
             <LabeledInput
               label="Amount"
               icon="cash-outline"
@@ -168,39 +153,27 @@ export default function AddTransactionScreen() {
               onChangeText={setAmount}
             />
 
-            <LabeledInput
-              label="Category"
-              icon="pricetag-outline"
-              placeholder="Groceries, Salary, Rent…"
-              value={category}
-              onChangeText={(text) => setCategory(text)}
-            />
-
-            {category.length > 0 && (
-              <View style={{ maxHeight: 120, marginBottom: 12 }}>
-                {categories
-                  .filter((c) =>
-                    c.name.toLowerCase().includes(category.toLowerCase())
-                  )
-                  .map((item) => (
-                    <TouchableOpacity
-                      key={item.id}
-                      onPress={() => setCategory(item.name)}
-                      style={styles.suggestionItem}
-                    >
-                      <Text style={{ color: '#e5e7eb' }}>{item.name}</Text>
-                    </TouchableOpacity>
-                  ))}
-              </View>
-            )}
-
-            <LabeledInput
-              label="Note (optional)"
-              icon="create-outline"
-              placeholder="Add a quick note"
-              value={note}
-              onChangeText={setNote}
-            />
+            <View style={{ marginBottom: 14 }}>
+              <Text style={styles.label}>Category</Text>
+              <TouchableOpacity
+                style={styles.inputWrapper}
+                onPress={() => setCategoryPickerVisible(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="pricetag-outline" size={18} color="#cbd5e1" style={{ marginRight: 10 }} />
+                <Text
+                  style={[
+                    styles.input,
+                    { paddingVertical: 12 },
+                    !selectedCategory && { color: '#94a3b8' },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {selectedCategory ? selectedCategory.name : 'Tap to select category'}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color="#64748b" />
+              </TouchableOpacity>
+            </View>
 
             <Text style={styles.label}>Frequency</Text>
             <View style={styles.frequencyRow}>
@@ -250,6 +223,19 @@ export default function AddTransactionScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {userId ? (
+        <CategoryPicker
+          visible={categoryPickerVisible}
+          onClose={() => setCategoryPickerVisible(false)}
+          onSelect={(cat) => {
+            setSelectedCategory({ id: cat.id, name: cat.name });
+            setCategoryPickerVisible(false);
+          }}
+          type={type as 'income' | 'expense'}
+          userId={userId}
+        />
+      ) : null}
     </LinearGradient>
   );
 }
@@ -378,15 +364,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 16,
   },
-  suggestionItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 8,
-    marginBottom: 6,
-  },
   iconButton: {
     width: 40,
     height: 40,
@@ -397,21 +374,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
-  typePill: {
+  typeToggle: {
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
-    alignSelf: 'flex-start',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
     marginBottom: 14,
   },
-  typePillText: {
-    fontWeight: '700',
+  typeToggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  typeToggleBtnActiveExpense: {
+    backgroundColor: 'rgba(248,113,113,0.1)',
+    borderColor: 'rgba(248,113,113,0.3)',
+  },
+  typeToggleBtnActiveIncome: {
+    backgroundColor: 'rgba(52,211,153,0.1)',
+    borderColor: 'rgba(52,211,153,0.3)',
+  },
+  typeToggleText: {
     fontSize: 14,
+    color: '#94a3b8',
   },
 });

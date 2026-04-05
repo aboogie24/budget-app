@@ -36,7 +36,7 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			h.id,
 			h.name,
-			json_agg(json_build_object('user_id', am.user_id, 'role', am.role, 'email', u.email)) AS members
+			json_agg(json_build_object('user_id', am.user_id, 'role', am.role, 'email', u.email, 'full_name', COALESCE(u.full_name, u.email))) AS members
 		FROM household_members hm
 		JOIN households h ON hm.household_id = h.id
 		JOIN household_members am ON am.household_id = h.id
@@ -45,7 +45,9 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 		GROUP BY h.id, h.name
 	`, userID)
 	if err != nil {
-		http.Error(w, "Query error", http.StatusInternalServerError)
+		log.Printf("GetHouseholdForUser query error for user %s: %v", userID, err)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"error": "Query error"})
 		return
 	}
 	defer rows.Close()
@@ -66,7 +68,12 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Error(w, "No household", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"household_id": nil,
+		"name":         nil,
+		"members":      []any{},
+	})
 }
 
 // POST /households
@@ -356,20 +363,14 @@ func GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {
 		householdID = resolved
 	}
 
-	// Aggregate all transactions, debts, and savings goals for the household
+	// Aggregate using separate subqueries to avoid cross-join multiplication
 	query := `
 		SELECT
-			COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS total_income,
-			COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expenses,
-			COALESCE(SUM(d.amount), 0) AS total_debt,
-			COALESCE(SUM(sg.target_amount), 0) AS total_savings_target,
-			COALESCE(SUM(sg.current_amount), 0) AS total_savings_current
-		FROM (
-			SELECT hm.household_id FROM household_members hm WHERE hm.household_id = $1
-		) hh
-		LEFT JOIN transactions t ON t.household_id = hh.household_id
-		LEFT JOIN debts d ON d.household_id = hh.household_id
-		LEFT JOIN savings_goals sg ON sg.household_id = hh.household_id
+			COALESCE((SELECT SUM(amount) FROM transactions WHERE household_id = $1 AND type = 'income' AND date >= date_trunc('month', CURRENT_DATE)), 0),
+			COALESCE((SELECT SUM(amount) FROM transactions WHERE household_id = $1 AND type = 'expense' AND date >= date_trunc('month', CURRENT_DATE)), 0),
+			COALESCE((SELECT SUM(balance) FROM debt_accounts WHERE household_id = $1), 0),
+			COALESCE((SELECT SUM(target_amount) FROM savings_goals WHERE household_id = $1), 0),
+			COALESCE((SELECT SUM(current_amount) FROM savings_goals WHERE household_id = $1), 0)
 	`
 
 	var totalIncome, totalExpenses, totalDebt, totalSavingsTarget, totalSavingsCurrent float64

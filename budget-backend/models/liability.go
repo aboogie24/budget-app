@@ -2,13 +2,29 @@ package models
 
 import "time"
 
+// DebtCategoryDefaults maps liability types to their default debt category.
+var DebtCategoryDefaults = map[string]string{
+	"credit":   "attack",
+	"auto":     "attack",
+	"personal": "attack",
+	"medical":  "attack",
+	"student":  "attack",
+	"mortgage": "structured",
+	"other":    "attack",
+}
+
 type Liability struct {
 	ID                    string   `json:"id"`
 	UserID                string   `json:"user_id"`
 	HouseholdID           *string  `json:"household_id,omitempty"`
 	LinkedAccountID       *string  `json:"linked_account_id,omitempty"`
 	PlaidAccountID        string   `json:"plaid_account_id"`
-	LiabilityType         string   `json:"liability_type"` // credit, mortgage, student
+	LiabilityType         string   `json:"liability_type"` // credit, mortgage, student, auto, personal, medical, other
+	DebtCategory          string   `json:"debt_category"`  // "attack" or "structured"
+	ManualEntry           bool     `json:"manual_entry"`
+	CurrentBalance        *float64 `json:"current_balance,omitempty"`
+	DisplayName           *string  `json:"display_name,omitempty"`
+	AssetDepreciates      *bool    `json:"asset_depreciates,omitempty"`
 	AccountNumber         *string  `json:"account_number,omitempty"`
 	LastPaymentAmount     *float64 `json:"last_payment_amount,omitempty"`
 	LastPaymentDate       *string  `json:"last_payment_date,omitempty"`

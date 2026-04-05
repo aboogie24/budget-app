@@ -107,7 +107,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <body>
 <div class="app" id="app"></div>
 <script>
-// === TASK DATA: Reflects actual CoupleFlow codebase state as of March 29, 2026 ===
+// === TASK DATA: Reflects actual CoupleFlow codebase state as of April 1, 2026 ===
 const tasks = [
   // ─── PHASE 1: Core Infrastructure (MOSTLY DONE) ───
   {id:1, title:"User registration & login (JWT auth)", phase:"Core Infrastructure", status:"done", priority:"critical", area:"backend", notes:"Fully implemented: register, login, logout, JWT tokens"},
@@ -199,6 +199,39 @@ const tasks = [
   {id:75, title:"Beta testing (TestFlight / Internal)", phase:"Launch Prep", status:"todo", priority:"high", area:"devops", notes:"Get 5-10 couples testing the app before public launch"},
   {id:76, title:"Crash reporting & analytics (Sentry/Amplitude)", phase:"Launch Prep", status:"todo", priority:"medium", area:"fullstack", notes:"Need observability before launch"},
   {id:77, title:"User feedback mechanism in-app", phase:"Launch Prep", status:"todo", priority:"medium", area:"frontend", notes:"Simple feedback form or shake-to-report"},
+
+  // ─── PHASE 8: Workflow & Polish (IN PROGRESS) ───
+  {id:78, title:"Remove dashboard-v2.tsx and .bak dead files", phase:"Workflow & Polish", status:"done", priority:"medium", area:"frontend", notes:"DONE 2026-03-30. Removed dashboard-v2.tsx, explore.tsx.bak, index.tsx.bak, index.tsx.bak.2 from (tabs)/. Also removed babel.config.js.bak and PlaidLink.tsx.bak from project root."},
+  {id:79, title:"Implement Google Sign-In (OAuth)", phase:"Workflow & Polish", status:"done", priority:"high", area:"fullstack", notes:"DONE 2026-03-30. Backend: POST /users/oauth/google endpoint in oauth.go — verifies ID token via Google tokeninfo API, finds-or-creates user, returns JWT. Frontend: expo-auth-session Google.useIdTokenAuthRequest hook in register.tsx, sends id_token to backend. Migration 20260330000001 adds auth_provider/auth_provider_id columns. Config: app.config.ts reads GOOGLE_*_CLIENT_ID from env, .env.example updated."},
+  {id:80, title:"Implement Apple Sign-In", phase:"Workflow & Polish", status:"done", priority:"high", area:"fullstack", notes:"DONE 2026-03-30. Backend: POST /users/oauth/apple endpoint in oauth.go — decodes Apple identity JWT, finds-or-creates user, returns JWT. Frontend: expo-apple-authentication signInAsync in register.tsx (iOS only), sends identity_token + name + email to backend. Config: usesAppleSignIn in app.config.ts, expo-apple-authentication plugin added, APPLE_BUNDLE_ID in backend .env.example."},
+  {id:81, title:"Audit & fix back button navigation", phase:"Workflow & Polish", status:"done", priority:"medium", area:"frontend", notes:"DONE 2026-03-30. Audited all router.replace/push/back calls. Fixed 9 screens that used hardcoded router.replace for back navigation instead of router.back(): budget/edit/[id].tsx (2), add-transaction.tsx (2), link-account.tsx (3), sharing-preferences.tsx (2), pending-invites.tsx (1), household-setup.tsx (1), settings/frequency.tsx (1), settings/categories.tsx (1), settings/budget-settings.tsx (1). These screens are reachable from multiple entry points so router.back() is correct."},
+  {id:82, title:"Verify login → onboarding → dashboard flow", phase:"Workflow & Polish", status:"done", priority:"high", area:"frontend", notes:"DONE 2026-03-30. Fixed 4 issues: (1) index.tsx and login.tsx now check onboarding_complete before routing — incomplete onboarding goes to /setup not dashboard. (2) partner-mode 'With Partner' now routes to /register first (household-setup requires auth). (3) Added /setup to _layout.tsx public routes list. (4) Added onboarding_complete to UserData type. (5) Fixed pre-existing missing React import in _layout.tsx."},
+  {id:83, title:"Fix GlassCard prop mismatches across codebase", phase:"Workflow & Polish", status:"done", priority:"low", area:"frontend", notes:"DONE 2026-03-30. Fixed named→default import in 5 files, variant→intensity prop, removed nonexistent blur/radius props"},
+
+  // ─── PHASE 9: Screen Redesigns (IN PROGRESS) ───
+  {id:84, title:"Create screen redesign prototypes (12 screens)", phase:"Screen Redesigns", status:"done", priority:"high", area:"design", notes:"DONE 2026-04-01. Created JSX prototypes for all 12 screens: home, login, register, onboarding, calendar, finances, debts, budget, ai-chat, settings, add-transaction, partner-dashboard. Glassmorphic dark theme with purple accents."},
+  {id:85, title:"Budget overview screen (category breakdown + progress)", phase:"Screen Redesigns", status:"done", priority:"critical", area:"frontend", notes:"DONE 2026-04-01. Created budget/index.tsx with month navigation, total spent vs budget progress bar, category-by-category breakdown with couple spending splits, alert count for over-budget categories, add budget button. Biggest gap filled."},
+  {id:86, title:"Tab layout update (show Budget, hide Finance)", phase:"Screen Redesigns", status:"done", priority:"high", area:"frontend", notes:"DONE 2026-04-01. Updated _layout.tsx: Budget tab now visible with wallet icon, Goals/Finance tab hidden (accessible via drawer). Nav order: Home, Calendar, AI, Budget, Settings."},
+  {id:87, title:"Login screen redesign verification", phase:"Screen Redesigns", status:"done", priority:"medium", area:"frontend", notes:"DONE 2026-04-01. Verified BudgetAppLogin.tsx already matches redesign: CoupleFlow logo with overlapping circles, glassmorphic inputs, gradient login button, Google/Apple OAuth, purple accent theme."},
+  {id:88, title:"Dashboard/home screen redesign verification", phase:"Screen Redesigns", status:"done", priority:"medium", area:"frontend", notes:"DONE 2026-04-01. Verified dashboard.tsx already matches redesign: greeting + couple avatars, AI insight card, CoupleFlow level progress, weekly spending bar chart, budget/savings/bills mini cards, net worth sparkline, recent activity."},
+  {id:89, title:"Calendar screen refinements per redesign", phase:"Screen Redesigns", status:"todo", priority:"medium", area:"frontend", notes:"Calendar already has glassmorphic theme. Redesign adds: couple-aware day markers (you vs partner spending), improved bill due date indicators."},
+  {id:90, title:"Settings screen refinements per redesign", phase:"Screen Redesigns", status:"todo", priority:"low", area:"frontend", notes:"Settings already functional. Redesign adds: profile section with couple avatars, notification toggles section, visual polish."},
+  {id:91, title:"Add-transaction screen refinements per redesign", phase:"Screen Redesigns", status:"todo", priority:"low", area:"frontend", notes:"Add-transaction already functional. Redesign adds: payer selector (You/Partner), quick category grid with icons, receipt camera button."},
+  {id:92, title:"Partner dashboard refinements per redesign", phase:"Screen Redesigns", status:"todo", priority:"low", area:"frontend", notes:"Partner dashboard already functional. Redesign adds: spending comparison chart, shared goals progress section."},
+
+  // ─── PHASE 10: Flinks Bank Integration (PLANNED) ───
+  {id:93, title:"Database migration: provider column + flinks fields", phase:"Flinks Integration", status:"todo", priority:"high", area:"backend", notes:"Add provider column to linked_accounts, flinks_login_id, flinks_institution fields. See FLINKS-INTEGRATION-PLAN.md Phase A."},
+  {id:94, title:"BankProvider interface abstraction", phase:"Flinks Integration", status:"todo", priority:"high", area:"backend", notes:"Create internal/banking/provider.go with BankProvider interface. Refactor existing Plaid code to implement it. Phase A."},
+  {id:95, title:"Flinks client implementation", phase:"Flinks Integration", status:"todo", priority:"high", area:"backend", notes:"Create internal/flinks/client.go with GenerateAuthorizeToken, Authorize, GetAccountsDetail, polling. Phase B."},
+  {id:96, title:"Flinks API endpoints", phase:"Flinks Integration", status:"todo", priority:"high", area:"backend", notes:"POST /auth/flinks/authorize-token, POST /auth/flinks/connect, POST /webhooks/flinks, GET /auth/bank/providers. Phase C."},
+  {id:97, title:"Frontend provider selection (Plaid or Flinks)", phase:"Flinks Integration", status:"todo", priority:"high", area:"frontend", notes:"Update link-account screen with provider picker. Flinks Connect WebView integration. Phase D."},
+  {id:98, title:"Unified sync endpoint + testing", phase:"Flinks Integration", status:"todo", priority:"medium", area:"fullstack", notes:"POST /auth/bank/sync that auto-detects provider. E2E testing with both providers. Phase E."},
+
+  // ─── PHASE 11: AI Plan Implementation (PLANNED) ───
+  {id:99, title:"Path planning engine (debt payoff + savings projection)", phase:"AI Enhancement", status:"todo", priority:"high", area:"backend", notes:"Deterministic Go calculators for debt avalanche/snowball/hybrid and compound savings projections. COUPLEFLOW-AI-PLAN.md Phase 2."},
+  {id:100, title:"Couple collaboration (plan approval flow)", phase:"AI Enhancement", status:"todo", priority:"high", area:"fullstack", notes:"Partner review, approve/reject financial plans, negotiation via AI. Phase 3."},
+  {id:101, title:"Monthly snapshot & milestone tracking", phase:"AI Enhancement", status:"todo", priority:"medium", area:"fullstack", notes:"Automated monthly snapshots, milestone progress visualization. Phase 4."},
+  {id:102, title:"Proactive intelligence (nudges + what-if)", phase:"AI Enhancement", status:"todo", priority:"medium", area:"fullstack", notes:"Background nudge generation, what-if scenario simulator, monthly review automation. Phase 5."},
 ];
 
 // === DERIVED DATA ===
@@ -210,7 +243,11 @@ const phaseColors = {
   "Couple Features":"#f472b6",
   "UX Polish":"#eab308",
   "Testing & Quality":"#ef4444",
-  "Launch Prep":"#f97316"
+  "Launch Prep":"#f97316",
+  "Workflow & Polish":"#06b6d4",
+  "Screen Redesigns":"#8b5cf6",
+  "Flinks Integration":"#14b8a6",
+  "AI Enhancement":"#f43f5e"
 };
 const phaseTimeline = {
   "Core Infrastructure":{start:0,end:1},
@@ -219,7 +256,11 @@ const phaseTimeline = {
   "Couple Features":{start:2,end:4},
   "UX Polish":{start:2,end:4},
   "Testing & Quality":{start:3,end:5},
-  "Launch Prep":{start:4,end:6}
+  "Launch Prep":{start:4,end:6},
+  "Workflow & Polish":{start:4,end:6},
+  "Screen Redesigns":{start:1,end:2},
+  "Flinks Integration":{start:2,end:4},
+  "AI Enhancement":{start:3,end:6}
 };
 const months = ["Mar '26","Apr '26","May '26","Jun '26","Jul '26","Aug '26"];
 
@@ -250,7 +291,7 @@ function render(){
         <div class="header-sub">React Native + Go • ${s.total} tasks across ${phases.length} phases</div>
       </div>
       <div class="header-right">
-        <span class="last-updated">Updated: March 29, 2026</span>
+        <span class="last-updated">Updated: April 1, 2026</span>
       </div>
     </div>
 

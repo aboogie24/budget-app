@@ -88,7 +88,7 @@ export default function EditBudget() {
       };
       await api.put(`/auth/budgets/${params.id}`, body);
       Alert.alert('Saved', 'Budget updated.');
-      router.replace('/(tabs)/budget');
+      router.back();
     } catch (e) {
       Alert.alert('Error', 'Could not save budget.');
     } finally {
@@ -101,7 +101,7 @@ export default function EditBudget() {
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.replace('/(tabs)/budget')} style={styles.iconBtn}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
               <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>

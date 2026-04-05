@@ -1,0 +1,1456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CoupleFlow AI — Product & Architecture Plan</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.0/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --surface2: #222240;
+    --border: #2d2d50;
+    --text: #e0e0f0;
+    --text-muted: #8888aa;
+    --accent: #7c3aed;
+    --accent2: #a855f7;
+    --green: #22c55e;
+    --orange: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.7;
+    padding: 0;
+  }
+
+  /* Hero */
+  .hero {
+    background: linear-gradient(135deg, #1a1a2e 0%, #2d1b69 50%, #1a1a2e 100%);
+    padding: 80px 40px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: 3rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #a855f7, #6366f1, #22d3ee);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 12px;
+  }
+  .hero p {
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+
+  /* Navigation */
+  .toc {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(15, 15, 26, 0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 40px;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .toc::-webkit-scrollbar { display: none; }
+  .toc a {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    padding: 6px 14px;
+    border-radius: 20px;
+    white-space: nowrap;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+  }
+  .toc a:hover {
+    color: var(--accent2);
+    background: rgba(124, 58, 237, 0.1);
+    border-color: var(--border);
+  }
+
+  /* Main */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 40px 100px;
+  }
+
+  /* Sections */
+  section {
+    margin-bottom: 60px;
+    scroll-margin-top: 70px;
+  }
+
+  h2 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h2 .num {
+    font-size: 0.9rem;
+    color: var(--accent2);
+    background: rgba(124, 58, 237, 0.15);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-weight: 600;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 30px 0 12px;
+    color: #ccc;
+  }
+
+  p { margin-bottom: 16px; color: var(--text); }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin: 20px 0;
+  }
+  .card-accent {
+    border-left: 4px solid var(--accent);
+  }
+
+  /* Diagram containers */
+  .diagram-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 30px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .diagram-wrap .mermaid {
+    display: flex;
+    justify-content: center;
+  }
+  .diagram-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+
+  /* Framework levels */
+  .framework {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 24px 0;
+  }
+  .level {
+    padding: 24px 28px;
+    border-left: 4px solid;
+    position: relative;
+  }
+  .level::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+  }
+  .level-1 { background: rgba(220, 38, 38, 0.08); border-color: #dc2626; }
+  .level-2 { background: rgba(234, 88, 12, 0.08); border-color: #ea580c; }
+  .level-3 { background: rgba(202, 138, 4, 0.08); border-color: #ca8a04; }
+  .level-4 { background: rgba(22, 163, 74, 0.08); border-color: #16a34a; }
+  .level-5 { background: rgba(124, 58, 237, 0.08); border-color: #7c3aed; }
+  .level h4 {
+    font-size: 1.1rem;
+    margin-bottom: 8px;
+    font-weight: 700;
+  }
+  .level-1 h4 { color: #f87171; }
+  .level-2 h4 { color: #fb923c; }
+  .level-3 h4 { color: #fbbf24; }
+  .level-4 h4 { color: #4ade80; }
+  .level-5 h4 { color: #a78bfa; }
+  .level ul {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 20px;
+  }
+  .level li {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+  }
+  .level li::before {
+    content: '\2713 ';
+    opacity: 0.5;
+  }
+
+  /* Tool grid */
+  .tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .tool-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .tool-card h5 {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.9rem;
+    color: var(--accent2);
+    margin-bottom: 8px;
+  }
+  .tool-card p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  /* API endpoints */
+  .endpoint-group {
+    margin: 16px 0;
+  }
+  .endpoint-group h4 {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .endpoint {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(45, 45, 80, 0.5);
+    font-size: 0.9rem;
+  }
+  .method {
+    font-family: monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    min-width: 52px;
+    text-align: center;
+  }
+  .method-get { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+  .method-post { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+  .method-put { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  .method-delete { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  .endpoint code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+  .endpoint .desc {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-left: auto;
+  }
+
+  /* Phase timeline */
+  .timeline {
+    position: relative;
+    margin: 30px 0;
+    padding-left: 40px;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 16px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .phase {
+    position: relative;
+    margin-bottom: 28px;
+    padding: 20px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .phase::before {
+    content: '';
+    position: absolute;
+    left: -32px;
+    top: 26px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--bg);
+  }
+  .phase-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .phase h4 { color: #fff; font-size: 1.05rem; }
+  .phase-weeks {
+    font-size: 0.8rem;
+    color: var(--accent2);
+    background: rgba(124, 58, 237, 0.12);
+    padding: 3px 10px;
+    border-radius: 10px;
+  }
+  .phase ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .phase li {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding: 2px 0;
+  }
+  .phase li::before { content: '- '; opacity: 0.4; }
+
+  /* Decision table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+  }
+  th {
+    text-align: left;
+    padding: 12px 16px;
+    background: var(--surface2);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(45, 45, 80, 0.3);
+    font-size: 0.9rem;
+  }
+  td:first-child { color: #fff; font-weight: 500; }
+  td:nth-child(2) { color: var(--accent2); font-family: monospace; font-size: 0.85rem; }
+
+  /* Chat mockup */
+  .chat-mockup {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    max-width: 420px;
+    margin: 24px auto;
+    overflow: hidden;
+    font-size: 0.9rem;
+  }
+  .chat-header {
+    background: var(--surface2);
+    padding: 14px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .chat-header span { font-weight: 600; color: #fff; }
+  .chat-body { padding: 20px; }
+  .chat-bubble {
+    padding: 14px 18px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+  .chat-ai {
+    background: rgba(124, 58, 237, 0.12);
+    border: 1px solid rgba(124, 58, 237, 0.2);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-user {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    margin-left: 40px;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-plan-card {
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    border-radius: 12px;
+    padding: 14px;
+    margin: 10px 0;
+    font-size: 0.85rem;
+  }
+  .chat-plan-card h5 { color: #4ade80; margin-bottom: 6px; font-size: 0.9rem; }
+  .chat-plan-card .stat { color: var(--green); font-weight: 600; }
+  .chat-input {
+    background: var(--surface2);
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+  .quick-actions {
+    display: flex;
+    gap: 8px;
+    padding: 10px 20px;
+    flex-wrap: wrap;
+  }
+  .quick-btn {
+    font-size: 0.75rem;
+    padding: 5px 12px;
+    border-radius: 16px;
+    background: rgba(124, 58, 237, 0.1);
+    border: 1px solid rgba(124, 58, 237, 0.25);
+    color: var(--accent2);
+  }
+
+  /* Capabilities grid */
+  .cap-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .cap-box {
+    padding: 20px;
+    border-radius: 12px;
+  }
+  .cap-can { background: rgba(34, 197, 94, 0.06); border: 1px solid rgba(34, 197, 94, 0.15); }
+  .cap-cant { background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.15); }
+  .cap-box h4 { margin-bottom: 10px; font-size: 0.95rem; }
+  .cap-can h4 { color: #4ade80; }
+  .cap-cant h4 { color: #f87171; }
+  .cap-box li {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding: 3px 0;
+    list-style: none;
+  }
+
+  /* Security */
+  .security-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .sec-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .sec-item strong { color: var(--text); display: block; margin-bottom: 4px; }
+
+  @media (max-width: 768px) {
+    .hero { padding: 50px 20px; }
+    .hero h1 { font-size: 2rem; }
+    .container { padding: 20px; }
+    .level ul, .cap-grid { grid-template-columns: 1fr; }
+    .toc { padding: 10px 16px; }
+    .chat-mockup { max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>CoupleFlow AI</h1>
+  <p>A goal-driven financial assistant for couples. It doesn't just track money — it predicts a path to financial success.</p>
+</div>
+
+<nav class="toc">
+  <a href="#vision">Vision</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#assistant">AI Assistant</a>
+  <a href="#pathplanning">Path Planning</a>
+  <a href="#framework">Framework</a>
+  <a href="#couples">Couples</a>
+  <a href="#data">Data Model</a>
+  <a href="#api">API Design</a>
+  <a href="#claude">Claude Integration</a>
+  <a href="#ux">UX Flows</a>
+  <a href="#background">Background AI</a>
+  <a href="#phases">Phases</a>
+  <a href="#decisions">Decisions</a>
+  <a href="#security">Security</a>
+</nav>
+
+<div class="container">
+
+<!-- 1. VISION -->
+<section id="vision">
+  <h2><span class="num">01</span> Vision</h2>
+  <div class="card card-accent">
+    <p>CoupleFlow AI is a <strong>goal-driven financial assistant for couples</strong>. Whether a couple wants to eliminate debt, build an emergency fund, or save for a dream vacation, the AI creates a personalized, month-by-month roadmap and guides them together through every milestone.</p>
+    <p style="color: var(--accent2); font-weight: 600; margin-bottom: 0;">Core Principle: The AI is a financial co-pilot, not an autopilot. It builds the plan, the couple owns it.</p>
+  </div>
+</section>
+
+<!-- 2. ARCHITECTURE -->
+<section id="architecture">
+  <h2><span class="num">02</span> System Architecture</h2>
+
+  <h3>High-Level Architecture</h3>
+  <div class="diagram-wrap">
+    <div class="diagram-label">System Overview</div>
+    <div class="mermaid">
+graph TB
+    subgraph Client["React Native App - Expo"]
+        Dashboard["Dashboard View\nDaily finances, balances,\nspending insights"]
+        AIChat["AI Chat Interface\nFinancial advisor,\ngoal planning"]
+        Goals["Goal Tracker\nProgress, milestones,\ncelebrations"]
+        Partner["Partner View\nShared dashboard,\njoint decisions"]
+    end
+
+    subgraph Backend["Go API Server"]
+        Router["Gorilla Mux Router"]
+        Auth["Auth Middleware\nJWT + Sessions"]
+        API["REST API Handlers"]
+        AIService["AI Service Layer"]
+        PathEngine["Path Planning Engine"]
+        Scheduler["Background Jobs\nRecurring txns,\nalert checks,\nplan updates"]
+    end
+
+    subgraph AI["AI Layer"]
+        Claude["Claude API\n Anthropic"]
+        PromptMgr["Prompt Manager\nSystem prompts,\ncontext builder"]
+        ConvoStore["Conversation\nHistory Store"]
+        ToolDefs["Tool Definitions\nFinancial calculators,\ndata lookups"]
+    end
+
+    subgraph Data["PostgreSQL"]
+        Users["Users and\nHouseholds"]
+        Financial["Transactions,\nBudgets, Bills"]
+        GoalData["Goals, Debts,\nSavings"]
+        Plans["Financial Plans\nand Milestones"]
+        ChatHistory["Chat History\nand Context"]
+    end
+
+    subgraph External["External Services"]
+        Plaid["Plaid API\nBank sync"]
+        Push["Expo Push\nNotifications"]
+    end
+
+    Client <-->|HTTPS| Router
+    Router --> Auth --> API
+    API --> AIService
+    AIService <-->|Tool Use| Claude
+    AIService --> PromptMgr
+    AIService --> ConvoStore
+    AIService --> ToolDefs
+    API --> PathEngine
+    PathEngine --> GoalData
+    API --> Financial
+    API --> Plans
+    ConvoStore --> ChatHistory
+    Scheduler --> PathEngine
+    Backend <--> Plaid
+    Backend --> Push
+    </div>
+  </div>
+
+  <h3>AI Service Detail</h3>
+  <div class="diagram-wrap">
+    <div class="diagram-label">Request Flow Through AI Service</div>
+    <div class="mermaid">
+graph LR
+    subgraph Request["User Message"]
+        Msg["How fast can we\npay off our credit cards?"]
+    end
+
+    subgraph ContextBuilder["Context Builder"]
+        Profile["User Profile\nIncome, expenses,\nrisk tolerance"]
+        FinSnap["Financial Snapshot\nBalances, debts,\nmonthly cash flow"]
+        GoalCtx["Active Goals\nCurrent plans,\nprogress"]
+        PartnerCtx["Partner Context\nShared vs individual,\npermissions"]
+    end
+
+    subgraph ClaudeCall["Claude API Call"]
+        SysPrompt["System Prompt\nFinancial advisor\npersona + rules"]
+        Tools["Tool Use\ncalculate_payoff\nproject_savings\nsimulate_budget"]
+        Response["Structured Response\nAnalysis + Plan +\nAction Items"]
+    end
+
+    subgraph Output["Response to User"]
+        Chat["Conversational\nexplanation"]
+        Visual["Charts and\nprojections"]
+        Actions["Actionable\nnext steps"]
+    end
+
+    Msg --> ContextBuilder
+    ContextBuilder --> ClaudeCall
+    ClaudeCall --> Output
+    </div>
+  </div>
+</section>
+
+<!-- 3. AI ASSISTANT -->
+<section id="assistant">
+  <h2><span class="num">03</span> AI Assistant Design</h2>
+
+  <h3>Hybrid UX Model</h3>
+  <p>The app uses a <strong>dashboard + AI chat</strong> hybrid. The dashboard handles daily financial viewing; the AI chat handles planning, advice, and goal creation.</p>
+
+  <div class="diagram-wrap">
+    <div class="diagram-label">Dashboard + AI Chat Connection Points</div>
+    <div class="mermaid">
+graph TB
+    subgraph DailyUX["Dashboard - Daily Use"]
+        Balance["Account Balances"]
+        Recent["Recent Transactions"]
+        BudgetBar["Budget Progress Bars"]
+        Alerts["AI-Powered Nudges\nYou are 80% through\ndining budget, 12 days left"]
+        GoalRing["Goal Progress Rings"]
+    end
+
+    subgraph AIUX["AI Chat - Planning and Advice"]
+        Welcome["What financial goal\nshould we tackle first?"]
+        GoalSetup["Guided Goal Creation\nAI asks questions,\nbuilds the plan"]
+        WhatIf["What-If Scenarios\nWhat if we cut dining\nby $200/month?"]
+        Review["Monthly Plan Review\nHere is how February went.\nLet us adjust March."]
+        Advice["On-Demand Advice\nShould we refinance?\nIs this purchase worth it?"]
+    end
+
+    subgraph Bridge["Connection Points"]
+        DashToChat["Dashboard nudge\nOpens chat with context"]
+        ChatToDash["Chat creates goal\nAppears on dashboard"]
+        Notif["Push notification\nDeep links to chat"]
+    end
+
+    DailyUX --> Bridge
+    Bridge --> AIUX
+    AIUX --> Bridge
+    Bridge --> DailyUX
+    </div>
+  </div>
+
+  <h3>AI Persona &amp; Capabilities</h3>
+  <p>The AI assistant is a <strong>warm, knowledgeable financial advisor</strong> who understands couples dynamics. Never judgmental about spending. Celebrates wins. Speaks plainly — no jargon.</p>
+
+  <div class="cap-grid">
+    <div class="cap-box cap-can">
+      <h4>Can Do</h4>
+      <ul>
+        <li>Analyze spending patterns and predict future cash flow</li>
+        <li>Create debt payoff plans (avalanche, snowball, hybrid)</li>
+        <li>Project savings timelines for goals</li>
+        <li>Simulate "what-if" budget scenarios</li>
+        <li>Generate month-by-month financial roadmaps</li>
+        <li>Provide couple-aware advice (fair splitting, shared goals)</li>
+        <li>Send proactive check-ins and nudges</li>
+      </ul>
+    </div>
+    <div class="cap-box cap-cant">
+      <h4>Cannot Do</h4>
+      <ul>
+        <li>Execute transactions or move money</li>
+        <li>Provide tax advice or legal guidance</li>
+        <li>Access accounts the user hasn't linked</li>
+        <li>Make decisions without couple consensus</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Chat Interface Concept</h3>
+  <div class="chat-mockup">
+    <div class="chat-header">
+      <span>CoupleFlow AI</span>
+      <span style="color: var(--text-muted); font-size: 0.8rem;">+ New</span>
+    </div>
+    <div class="chat-body">
+      <div class="chat-bubble chat-ai">
+        Based on your finances, here's what I recommend:
+        <br><br>
+        You have <strong>$1,200/mo available</strong> after expenses. Here's a plan:
+        <div class="chat-plan-card">
+          <h5>6-Month Debt Freedom Plan</h5>
+          <p>Month 1-2: Pay off Visa ($2,100)<br>
+          Month 3-5: Pay off Amex ($5,400)<br>
+          Month 6: Build savings buffer</p>
+          <p>Total interest saved: <span class="stat">$847</span> vs. minimum payments</p>
+        </div>
+        Want me to adjust anything?
+      </div>
+      <div class="chat-bubble chat-user">
+        What if we put $800 instead of $700?
+      </div>
+    </div>
+    <div class="quick-actions">
+      <span class="quick-btn">Review my month</span>
+      <span class="quick-btn">What-if scenario</span>
+      <span class="quick-btn">Adjust our plan</span>
+    </div>
+    <div class="chat-input">Ask CoupleFlow AI...</div>
+  </div>
+</section>
+
+<!-- 4. PATH PLANNING -->
+<section id="pathplanning">
+  <h2><span class="num">04</span> Goal Path Planning Engine</h2>
+  <p>This is the core differentiator — the AI doesn't just track goals, it <strong>plans the path</strong> to reach them.</p>
+
+  <div class="diagram-wrap">
+    <div class="diagram-label">End-to-End Path Planning Flow</div>
+    <div class="mermaid">
+flowchart TD
+    Start([Couple Opens Goal Planner]) --> Gather
+
+    subgraph Gather["Step 1: Gather Context"]
+        Income["Combined Monthly Income"]
+        Expenses["Fixed and Variable Expenses"]
+        Debts["All Debts\nbalances, rates, minimums"]
+        Savings["Current Savings and\nEmergency Fund"]
+        Linked["Plaid-Linked Accounts\nauto-populated"]
+    end
+
+    Gather --> Goals
+
+    subgraph Goals["Step 2: Define Goals"]
+        G1["Goal 1: Emergency Fund\n$10,000 target"]
+        G2["Goal 2: Pay Off Credit Cards\n$8,500 total"]
+        G3["Goal 3: Vacation Fund\n$3,000 by December"]
+    end
+
+    Goals --> Prioritize
+
+    subgraph Prioritize["Step 3: AI Prioritizes"]
+        Risk["Risk Assessment\nNo emergency fund = high risk"]
+        Math["Financial Math\nHigh-APR debt costs $X/month"]
+        Pref["Couple Preferences\nWhat matters most to you?"]
+        Rec["AI Recommendation\nSuggested priority order\nwith reasoning"]
+    end
+
+    Prioritize --> Plan
+
+    subgraph Plan["Step 4: Generate Path"]
+        M1["Month 1-3:\nBuild $1,000 starter\nemergency fund"]
+        M2["Month 4-8:\nAvalanche attack on\ncredit card debt"]
+        M3["Month 9-11:\nGrow emergency fund\nto $10,000"]
+        M4["Month 12:\nVacation fund sprint\nplus celebration!"]
+    end
+
+    Plan --> Review
+
+    subgraph Review["Step 5: Couple Review"]
+        Show["Present plan to\nboth partners"]
+        Adjust["Allow adjustments\nCan we start vacation\nsaving sooner?"]
+        Commit["Both partners\ncommit to plan"]
+    end
+
+    Review --> Execute
+
+    subgraph Execute["Step 6: Execute and Track"]
+        Monthly["Monthly check-ins\nAI reviews progress"]
+        Adapt["Adaptive replanning\nIncome changed?\nUnexpected expense?"]
+        Celebrate["Milestone celebrations"]
+    end
+
+    Execute -->|Life happens| Gather
+    </div>
+  </div>
+
+  <h3>Prediction Algorithm</h3>
+  <div class="diagram-wrap">
+    <div class="diagram-label">Calculation Pipeline: Go Engine + Claude Reasoning</div>
+    <div class="mermaid">
+flowchart LR
+    subgraph Inputs["Inputs"]
+        I1["Monthly take-home pay"]
+        I2["Fixed expenses"]
+        I3["Variable spending\n3-month average"]
+        I4["Debt details\nbalance, APR, min"]
+        I5["Current savings"]
+        I6["Goal targets and dates"]
+    end
+
+    subgraph Calculation["Calculation Engine - Go"]
+        CF["Cash Flow Analysis\nIncome - Fixed - Variable\n= Available monthly"]
+        Debt["Debt Payoff Simulator\nAvalanche/Snowball/Hybrid\nMonth-by-month projection"]
+        Save["Savings Projector\nCompound interest,\ncontribution schedule"]
+        Risk["Risk Scorer\nMonths of runway,\ndebt-to-income ratio"]
+    end
+
+    subgraph Claude["Claude AI Layer"]
+        Optimize["Optimize Allocation\nHow much to each goal\nper month?"]
+        Scenario["Scenario Generation\nBest case / Expected /\nConservative"]
+        Explain["Natural Language\nExplanation\nWhy this path works"]
+        Couple["Couple-Aware Advice\nFair contribution splits,\nshared vs. personal goals"]
+    end
+
+    subgraph Output["Plan Output"]
+        Timeline["Month-by-Month\nTimeline"]
+        Milestones["Key Milestones\nand Celebrations"]
+        Actions["Monthly Action Items\nfor Each Partner"]
+        Projections["Visual Projections\nCharts and Graphs"]
+    end
+
+    Inputs --> Calculation --> Claude --> Output
+    </div>
+  </div>
+</section>
+
+<!-- 5. FRAMEWORK -->
+<section id="framework">
+  <h2><span class="num">05</span> The CoupleFlow Method</h2>
+  <p>The AI follows a structured framework for financial success — a guided sequence the couple progresses through:</p>
+
+  <div class="framework">
+    <div class="level level-1">
+      <h4>Level 1: Foundation</h4>
+      <ul>
+        <li>Track all income &amp; expenses</li>
+        <li>Create a joint budget</li>
+        <li>Build $1,000 starter emergency fund</li>
+        <li>Pay all minimums on time</li>
+      </ul>
+    </div>
+    <div class="level level-2">
+      <h4>Level 2: Attack Debt</h4>
+      <ul>
+        <li>List all debts with rates</li>
+        <li>Choose strategy: avalanche or snowball</li>
+        <li>Allocate extra payments</li>
+        <li>Celebrate each payoff</li>
+      </ul>
+    </div>
+    <div class="level level-3">
+      <h4>Level 3: Build Security</h4>
+      <ul>
+        <li>Grow emergency fund to 3-6 months</li>
+        <li>Review insurance coverage</li>
+        <li>Start retirement contributions</li>
+        <li>Automate savings</li>
+      </ul>
+    </div>
+    <div class="level level-4">
+      <h4>Level 4: Grow Wealth</h4>
+      <ul>
+        <li>Max retirement accounts</li>
+        <li>Open investment accounts</li>
+        <li>Plan big purchases</li>
+        <li>Build passive income</li>
+      </ul>
+    </div>
+    <div class="level level-5">
+      <h4>Level 5: Dream Big</h4>
+      <ul>
+        <li>Fund dream goals (travel, home, etc.)</li>
+        <li>Give generously</li>
+        <li>Achieve financial independence</li>
+        <li>Mentor others</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 6. COUPLES -->
+<section id="couples">
+  <h2><span class="num">06</span> Couple Collaboration</h2>
+
+  <h3>Partner Decision Flow</h3>
+  <p>Financial plans require both partners to agree. The AI facilitates negotiation:</p>
+
+  <div class="diagram-wrap">
+    <div class="diagram-label">Plan Negotiation Sequence</div>
+    <div class="mermaid">
+sequenceDiagram
+    actor P1 as Partner 1 - Alfred
+    participant AI as CoupleFlow AI
+    actor P2 as Partner 2
+
+    P1->>AI: Let us plan to pay off our debt
+    AI->>AI: Analyze household finances
+    AI->>P1: Proposed plan: 5-month debt payoff, $800/mo extra
+    AI->>P2: Alfred started a debt payoff plan. Review?
+
+    P2->>AI: Can we do $600 instead? Want to keep fun money
+    AI->>AI: Recalculate with $600/mo
+    AI->>P1: Partner suggested $600/mo. Extends to 7 months. Comparison:
+    AI->>P2: Same comparison shown
+
+    P1->>AI: Meet in the middle at $700
+    AI->>AI: Recalculate with $700/mo
+    AI->>P1: $700/mo = 6 month payoff. Ready to commit?
+    AI->>P2: $700/mo = 6 month payoff. Ready to commit?
+
+    P2->>AI: Yes lets do it!
+    P1->>AI: Agreed!
+    AI->>AI: Lock plan, create milestones
+    AI->>P1: Plan committed! First milestone: $2,100 paid by Apr 30
+    AI->>P2: Plan committed! First milestone: $2,100 paid by Apr 30
+    </div>
+  </div>
+
+  <h3>Shared vs. Personal Goals</h3>
+  <div class="diagram-wrap">
+    <div class="diagram-label">Goal Visibility & Privacy Model</div>
+    <div class="mermaid">
+graph TB
+    subgraph Household["Household Finances"]
+        Joint["Joint Goals\nBoth partners contribute\nBoth must approve changes"]
+        P1Solo["Partner 1 Personal\nIndividual goals\nVisible but separate"]
+        P2Solo["Partner 2 Personal\nIndividual goals\nVisible but separate"]
+    end
+
+    subgraph JointEx["Joint Goal Examples"]
+        J1["Emergency Fund"]
+        J2["Family Vacation"]
+        J3["New Car Fund"]
+        J4["Joint Debt Payoff"]
+    end
+
+    subgraph P1Ex["Partner 1 Examples"]
+        P1a["Gaming PC Fund"]
+        P1b["Course Tuition"]
+    end
+
+    subgraph P2Ex["Partner 2 Examples"]
+        P2a["Wardrobe Budget"]
+        P2b["Guitar Lessons"]
+    end
+
+    Joint --- JointEx
+    P1Solo --- P1Ex
+    P2Solo --- P2Ex
+
+    subgraph Privacy["Sharing Controls"]
+        Full["Full Visibility\nBoth see everything"]
+        Partial["Partial\nSee totals, not details"]
+        Private["Private\nOnly you see it"]
+    end
+
+    P1Solo --> Privacy
+    P2Solo --> Privacy
+    </div>
+  </div>
+</section>
+
+<!-- 7. DATA MODEL -->
+<section id="data">
+  <h2><span class="num">07</span> Data Model (New Tables)</h2>
+  <p>These additions extend the existing PostgreSQL schema:</p>
+
+  <div class="diagram-wrap">
+    <div class="diagram-label">Entity Relationship Diagram — New AI Tables</div>
+    <div class="mermaid">
+erDiagram
+    USERS ||--o{ AI_CONVERSATIONS : has
+    USERS ||--o{ FINANCIAL_PLANS : creates
+    HOUSEHOLDS ||--o{ FINANCIAL_PLANS : owns
+    FINANCIAL_PLANS ||--|{ PLAN_MILESTONES : contains
+    FINANCIAL_PLANS ||--|{ PLAN_ALLOCATIONS : defines
+    FINANCIAL_PLANS }o--o{ SAVINGS_GOALS : targets
+    FINANCIAL_PLANS }o--o{ DEBT_ACCOUNTS : targets
+    AI_CONVERSATIONS ||--|{ AI_MESSAGES : contains
+    USERS ||--o{ PLAN_APPROVALS : gives
+    FINANCIAL_PLANS ||--|{ PLAN_APPROVALS : requires
+    FINANCIAL_PLANS ||--|{ PLAN_SNAPSHOTS : tracks
+
+    AI_CONVERSATIONS {
+        uuid id PK
+        uuid user_id FK
+        uuid household_id FK
+        string title
+        string conversation_type
+        jsonb context_snapshot
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    AI_MESSAGES {
+        uuid id PK
+        uuid conversation_id FK
+        string role
+        text content
+        jsonb tool_calls
+        jsonb tool_results
+        int token_count
+        timestamp created_at
+    }
+
+    FINANCIAL_PLANS {
+        uuid id PK
+        uuid household_id FK
+        uuid created_by FK
+        string name
+        string plan_type
+        string status
+        string framework_level
+        decimal monthly_contribution
+        date start_date
+        date projected_end_date
+        jsonb ai_analysis
+        jsonb scenarios
+        timestamp created_at
+    }
+
+    PLAN_MILESTONES {
+        uuid id PK
+        uuid plan_id FK
+        string title
+        decimal target_amount
+        date target_date
+        string status
+        timestamp completed_at
+    }
+
+    PLAN_ALLOCATIONS {
+        uuid id PK
+        uuid plan_id FK
+        uuid target_id
+        string target_type
+        decimal monthly_amount
+        int priority_order
+    }
+
+    PLAN_APPROVALS {
+        uuid id PK
+        uuid plan_id FK
+        uuid user_id FK
+        string status
+        text feedback
+        timestamp responded_at
+    }
+
+    PLAN_SNAPSHOTS {
+        uuid id PK
+        uuid plan_id FK
+        date snapshot_date
+        jsonb financial_state
+        jsonb progress_metrics
+        text ai_review_summary
+    }
+    </div>
+  </div>
+</section>
+
+<!-- 8. API DESIGN -->
+<section id="api">
+  <h2><span class="num">08</span> API Design (New Endpoints)</h2>
+
+  <div class="card">
+    <div class="endpoint-group">
+      <h4>AI Chat</h4>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/ai/conversations</code><span class="desc">Create new conversation</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/ai/conversations</code><span class="desc">List conversations</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/ai/conversations/:id</code><span class="desc">Get with messages</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/ai/conversations/:id/messages</code><span class="desc">Send message (SSE stream)</span></div>
+      <div class="endpoint"><span class="method method-delete">DELETE</span><code>/auth/ai/conversations/:id</code><span class="desc">Delete conversation</span></div>
+    </div>
+
+    <div class="endpoint-group">
+      <h4>Financial Plans</h4>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/plans</code><span class="desc">Create plan (AI generates)</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/plans</code><span class="desc">List household plans</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/plans/:id</code><span class="desc">Get plan + milestones</span></div>
+      <div class="endpoint"><span class="method method-put">PUT</span><code>/auth/plans/:id</code><span class="desc">Update plan</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/plans/:id/approve</code><span class="desc">Partner approves</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/plans/:id/reject</code><span class="desc">Partner rejects + feedback</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/plans/:id/pause</code><span class="desc">Pause plan</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/plans/:id/resume</code><span class="desc">Resume plan</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/plans/:id/recalculate</code><span class="desc">AI recalculates</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/plans/:id/scenarios</code><span class="desc">Best/expected/conservative</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/plans/:id/progress</code><span class="desc">Progress vs. plan</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/plans/:id/snapshots</code><span class="desc">Monthly snapshot</span></div>
+    </div>
+
+    <div class="endpoint-group">
+      <h4>AI Insights</h4>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/ai/nudges</code><span class="desc">Dashboard nudge cards</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/ai/framework-level</code><span class="desc">Current framework level</span></div>
+      <div class="endpoint"><span class="method method-post">POST</span><code>/auth/ai/what-if</code><span class="desc">Simulate scenario</span></div>
+      <div class="endpoint"><span class="method method-get">GET</span><code>/auth/ai/monthly-review</code><span class="desc">Generate monthly review</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9. CLAUDE INTEGRATION -->
+<section id="claude">
+  <h2><span class="num">09</span> Claude Integration</h2>
+
+  <h3>Tool Definitions for Claude</h3>
+  <p>The AI assistant uses Claude's <strong>tool use</strong> feature to access real financial data:</p>
+
+  <div class="tool-grid">
+    <div class="tool-card">
+      <h5>get_financial_snapshot</h5>
+      <p>Returns: income, expenses, balances, net worth for the household</p>
+    </div>
+    <div class="tool-card">
+      <h5>get_debts</h5>
+      <p>Returns: all debts with balances, APRs, minimum payments</p>
+    </div>
+    <div class="tool-card">
+      <h5>get_savings_goals</h5>
+      <p>Returns: all goals with current/target amounts and timelines</p>
+    </div>
+    <div class="tool-card">
+      <h5>get_spending_by_category</h5>
+      <p>Params: months (1-12). Returns: categorized spending averages</p>
+    </div>
+    <div class="tool-card">
+      <h5>calculate_debt_payoff</h5>
+      <p>Params: strategy, extra_payment. Returns: month-by-month payoff schedule</p>
+    </div>
+    <div class="tool-card">
+      <h5>project_savings</h5>
+      <p>Params: monthly_amount, target, rate. Returns: timeline with compound growth</p>
+    </div>
+    <div class="tool-card">
+      <h5>simulate_budget_change</h5>
+      <p>Params: category, new_amount. Returns: impact on cash flow and goals</p>
+    </div>
+    <div class="tool-card">
+      <h5>create_financial_plan</h5>
+      <p>Params: goals, monthly_budget, strategy. Returns: full plan saved to DB</p>
+    </div>
+    <div class="tool-card">
+      <h5>get_partner_status</h5>
+      <p>Returns: partner's pending reviews, shared goals, activity</p>
+    </div>
+  </div>
+
+  <h3>System Prompt Architecture</h3>
+  <div class="diagram-wrap">
+    <div class="diagram-label">Prompt Composition — Static + Dynamic</div>
+    <div class="mermaid">
+flowchart TD
+    subgraph Static["Static Prompt Layers"]
+        Base["Base Persona\nYou are CoupleFlow AI,\na warm financial advisor\nfor couples..."]
+        Framework["Framework Rules\nThe CoupleFlow Method:\nFoundation to Attack Debt to\nBuild Security to Grow to Dream"]
+        Safety["Safety Guardrails\nNever recommend specific stocks.\nNever shame spending.\nAlways present options, not orders."]
+    end
+
+    subgraph Dynamic["Dynamic Context - injected per request"]
+        UserCtx["User: Alfred, Partner: name\nHousehold income: $X/mo\nFramework level: Attack Debt"]
+        FinCtx["Cash flow: +$1,200/mo available\nTotal debt: $8,500\nEmergency fund: $1,000"]
+        GoalCtx["Active plan: 6-month debt payoff\nProgress: Month 2 of 6\nOn track: Yes"]
+        History["Recent conversation summary\nlast 5 messages"]
+    end
+
+    Static --> Compose["Composed System Prompt"]
+    Dynamic --> Compose
+    Compose --> Claude["Claude API Call"]
+    </div>
+  </div>
+</section>
+
+<!-- 10. UX FLOWS -->
+<section id="ux">
+  <h2><span class="num">10</span> UX Flows</h2>
+
+  <h3>Navigation Architecture</h3>
+  <div class="diagram-wrap">
+    <div class="diagram-label">Screen Map &amp; Navigation</div>
+    <div class="mermaid">
+graph TD
+    subgraph TabBar["Bottom Tab Navigation"]
+        T1["Home\nDashboard"]
+        T2["AI\nChat"]
+        T3["Goals\nPlans"]
+        T4["Budget"]
+        T5["Settings"]
+    end
+
+    T1 --> Home
+    T2 --> Chat
+    T3 --> GoalStack
+    T4 --> BudgetStack
+
+    subgraph Home["Home Stack"]
+        Dash["Dashboard\nBalances, recent txns,\nAI nudges, goal rings"]
+        Txns["Transaction List"]
+        TxnDetail["Transaction Detail"]
+    end
+
+    subgraph Chat["AI Chat Stack"]
+        ConvoList["Conversation List\nPast chats organized\nby topic"]
+        ActiveChat["Active Chat\nMessage thread with\nrich responses"]
+        PlanPreview["Plan Preview\nReview AI-generated\nplan before committing"]
+    end
+
+    subgraph GoalStack["Goals Stack"]
+        GoalDash["Goals Dashboard\nFramework level indicator,\nactive plans, progress"]
+        PlanDetail["Plan Detail\nTimeline, milestones,\npartner status"]
+        Milestone["Milestone Detail\nWhat to do this month"]
+    end
+
+    subgraph BudgetStack["Budget Stack"]
+        BudgetOverview["Budget Overview\nCategory bars,\nAI suggestions"]
+        CategoryDetail["Category Detail\nSpending trends,\nAI comparison"]
+    end
+
+    Dash -->|AI nudge tap| ActiveChat
+    Dash -->|Goal ring tap| PlanDetail
+    ActiveChat -->|Plan created| PlanPreview
+    PlanPreview -->|Committed| PlanDetail
+    </div>
+  </div>
+</section>
+
+<!-- 11. BACKGROUND AI -->
+<section id="background">
+  <h2><span class="num">11</span> Background Intelligence</h2>
+  <p>The AI doesn't wait to be asked — it proactively monitors and nudges:</p>
+
+  <div class="diagram-wrap">
+    <div class="diagram-label">Proactive AI Trigger System</div>
+    <div class="mermaid">
+flowchart TD
+    subgraph Triggers["Background Triggers"]
+        Daily["Daily Job\nCheck budgets,\nupcoming bills"]
+        Weekly["Weekly Job\nSpending trend\nanalysis"]
+        Monthly["Monthly Job\nFull plan review,\nsnapshot creation"]
+        Event["Event-Driven\nLarge transaction,\nbill paid, goal hit"]
+    end
+
+    subgraph Analysis["AI Analysis"]
+        Budget["Budget Alert\nDining is at 85%\nwith 12 days left"]
+        Trend["Trend Detection\nGrocery spending up\n22% vs last month"]
+        Risk["Risk Alert\nEmergency fund would\nonly cover 1.2 months"]
+        Win["Win Detection\nYou paid off your\nfirst credit card!"]
+        Replan["Replan Trigger\nIncome changed -\nwant to update the plan?"]
+    end
+
+    subgraph Delivery["Delivery"]
+        Push["Push Notification"]
+        Nudge["Dashboard Nudge Card"]
+        ChatMsg["Chat Message\nnext time they open"]
+    end
+
+    Triggers --> Analysis --> Delivery
+    </div>
+  </div>
+</section>
+
+<!-- 12. PHASES -->
+<section id="phases">
+  <h2><span class="num">12</span> Implementation Phases</h2>
+
+  <div class="timeline">
+    <div class="phase">
+      <div class="phase-header">
+        <h4>Phase 1: AI Foundation</h4>
+        <span class="phase-weeks">Weeks 1-3</span>
+      </div>
+      <ul>
+        <li>Claude API integration in Go backend</li>
+        <li>Conversation storage (new DB tables + migrations)</li>
+        <li>Basic AI chat endpoint with SSE streaming</li>
+        <li>System prompt with financial advisor persona</li>
+        <li>Tool definitions: get_financial_snapshot, get_debts, get_savings_goals</li>
+        <li>Frontend: AI chat screen with message UI</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <div class="phase-header">
+        <h4>Phase 2: Path Planning Engine</h4>
+        <span class="phase-weeks">Weeks 4-6</span>
+      </div>
+      <ul>
+        <li>Debt payoff calculator (avalanche/snowball/hybrid)</li>
+        <li>Savings projection calculator</li>
+        <li>Cash flow analyzer</li>
+        <li>Financial plan data model + API</li>
+        <li>Claude tools: calculate_debt_payoff, project_savings, create_financial_plan</li>
+        <li>Frontend: Plan creation flow, plan detail view</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <div class="phase-header">
+        <h4>Phase 3: Couple Collaboration</h4>
+        <span class="phase-weeks">Weeks 7-8</span>
+      </div>
+      <ul>
+        <li>Plan approval/rejection flow</li>
+        <li>Partner notifications for plan reviews</li>
+        <li>Shared vs. personal goal visibility</li>
+        <li>Couple decision negotiation via AI</li>
+        <li>Frontend: Partner review screens, approval UI</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <div class="phase-header">
+        <h4>Phase 4: Framework &amp; Milestones</h4>
+        <span class="phase-weeks">Weeks 9-10</span>
+      </div>
+      <ul>
+        <li>CoupleFlow Method framework level tracking</li>
+        <li>Milestone creation and tracking</li>
+        <li>Monthly snapshot system</li>
+        <li>Progress visualization</li>
+        <li>Frontend: Goals dashboard with framework level, milestone cards</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <div class="phase-header">
+        <h4>Phase 5: Proactive Intelligence</h4>
+        <span class="phase-weeks">Weeks 11-12</span>
+      </div>
+      <ul>
+        <li>Background jobs for budget monitoring</li>
+        <li>AI nudge generation system</li>
+        <li>Monthly review automation</li>
+        <li>What-if scenario simulator</li>
+        <li>Dashboard nudge cards + push notifications</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <div class="phase-header">
+        <h4>Phase 6: Polish &amp; Launch</h4>
+        <span class="phase-weeks">Weeks 13-14</span>
+      </div>
+      <ul>
+        <li>UX refinement (glassmorphic design alignment)</li>
+        <li>Error handling and edge cases</li>
+        <li>Performance optimization</li>
+        <li>Testing (unit, integration, E2E)</li>
+        <li>App Store preparation</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 13. DECISIONS -->
+<section id="decisions">
+  <h2><span class="num">13</span> Tech Decisions</h2>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Decision</th><th>Choice</th><th>Rationale</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>AI Provider</td><td>Claude (Anthropic)</td><td>Superior reasoning for financial analysis, excellent tool use, conversational quality</td></tr>
+        <tr><td>AI Communication</td><td>Server-side SSE streaming</td><td>Real-time response feel, backend controls context and tools</td></tr>
+        <tr><td>Conversation Storage</td><td>PostgreSQL</td><td>Conversations are structured, not semantic search — relational fits</td></tr>
+        <tr><td>Financial Calculations</td><td>Go (deterministic)</td><td>Debt payoff and savings math must be exact — not AI-generated</td></tr>
+        <tr><td>Plan Explanations</td><td>Claude (conversational)</td><td>Why this plan works, trade-offs, advice — Claude's strength</td></tr>
+        <tr><td>Background Jobs</td><td>Go cron scheduler</td><td>Already have scheduler infrastructure, keep it simple</td></tr>
+        <tr><td>Prompt Management</td><td>Go templates + DB config</td><td>Version and A/B test prompts without redeployment</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 14. SECURITY -->
+<section id="security">
+  <h2><span class="num">14</span> Security &amp; Privacy</h2>
+
+  <div class="security-grid">
+    <div class="sec-item">
+      <strong>Data Isolation</strong>
+      All financial data stays server-side; Claude only receives aggregated summaries, never raw bank credentials
+    </div>
+    <div class="sec-item">
+      <strong>Encryption</strong>
+      Conversation history encrypted at rest in PostgreSQL
+    </div>
+    <div class="sec-item">
+      <strong>Partner Privacy</strong>
+      Partners can only see shared goals and joint conversations (respects sharing_preferences)
+    </div>
+    <div class="sec-item">
+      <strong>Token Security</strong>
+      AI never stores or logs Plaid tokens or banking credentials
+    </div>
+    <div class="sec-item">
+      <strong>Rate Limiting</strong>
+      Rate limiting on AI endpoints to prevent abuse and cost overruns
+    </div>
+    <div class="sec-item">
+      <strong>Cost Controls</strong>
+      Monthly monitoring and caps for Claude API usage per household
+    </div>
+    <div class="sec-item">
+      <strong>Data Deletion</strong>
+      Users can delete all AI conversation history at any time
+    </div>
+    <div class="sec-item">
+      <strong>Audit Trail</strong>
+      All plan changes and approvals logged in activity feed
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#7c3aed',
+      primaryTextColor: '#e0e0f0',
+      primaryBorderColor: '#2d2d50',
+      lineColor: '#6366f1',
+      secondaryColor: '#1a1a2e',
+      tertiaryColor: '#222240',
+      fontFamily: 'Inter, -apple-system, sans-serif',
+      fontSize: '13px',
+      background: '#1a1a2e',
+      mainBkg: '#222240',
+      nodeBorder: '#2d2d50',
+      clusterBkg: 'rgba(124, 58, 237, 0.06)',
+      clusterBorder: '#2d2d50',
+      titleColor: '#e0e0f0',
+      edgeLabelBackground: '#1a1a2e',
+      actorTextColor: '#e0e0f0',
+      actorBkg: '#222240',
+      actorBorder: '#7c3aed',
+      signalColor: '#6366f1',
+      signalTextColor: '#e0e0f0',
+      activationBorderColor: '#7c3aed',
+      activationBkg: '#2d2d50',
+      sequenceNumberColor: '#7c3aed',
+      noteBkgColor: '#222240',
+      noteTextColor: '#e0e0f0',
+      noteBorderColor: '#2d2d50',
+      entityFill: '#222240',
+      entityStroke: '#7c3aed',
+      entityTextColor: '#e0e0f0',
+      labelBoxBkgColor: '#222240',
+      labelBoxBorderColor: '#2d2d50',
+      labelTextColor: '#e0e0f0',
+    },
+    flowchart: { curve: 'basis', padding: 20 },
+    sequence: { mirrorActors: false, messageMargin: 40 },
+    er: { layoutDirection: 'TB' }
+  });
+</script>
+</body>
+</html>

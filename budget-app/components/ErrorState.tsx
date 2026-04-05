@@ -3,7 +3,7 @@ import { View, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/utils/ThemeContext';
 import { componentDefaults } from '@/utils/theme';
-import { GlassCard } from './GlassCard';
+import GlassCard from './GlassCard';
 
 interface ErrorStateProps {
   title: string;
@@ -26,7 +26,7 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
 
   return (
     <GlassCard
-      variant="light"
+      intensity="light"
       style={styles.container}
       padding={componentDefaults.spacing.lg}
     >

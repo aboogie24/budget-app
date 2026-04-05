@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aboogie/budget-backend/db"
@@ -15,6 +16,17 @@ import (
 
 func TestCreateBudget_ValidCreation(t *testing.T) {
 	userID := "11111111-1111-1111-1111-111111111111"
+
+	withBudgetsMockDB(t, func(mock sqlmock.Sqlmock) {
+		// ResolveHouseholdID
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnError(sql.ErrNoRows)
+
+		// INSERT budget
+		mock.ExpectExec(`INSERT INTO budgets`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	})
 
 	body := map[string]interface{}{
 		"user_id": userID,
@@ -158,7 +170,7 @@ func TestGetBudgetsByUser_ReturnsUserBudgets(t *testing.T) {
 			"category_id", "category_name", "created_at", "updated_at", "start_date", "frequency", "is_shared",
 		}).AddRow(
 			"b1", userID, nil, "Groceries", 500.0, "expense",
-			nil, nil, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", nil, "monthly", false,
+			nil, nil, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil, "monthly", false,
 		)
 		mock.ExpectQuery(`FROM budgets b`).
 			WithArgs(userID).
@@ -202,9 +214,9 @@ func TestGetBudgetsByUser_WithHouseholdAndSharedBudgets(t *testing.T) {
 			"category_id", "category_name", "created_at", "updated_at", "start_date", "frequency", "is_shared",
 		}).
 			AddRow("b1", userID, householdID, "Groceries", 500.0, "expense",
-				nil, nil, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", nil, "monthly", false).
+				nil, nil, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil, "monthly", false).
 			AddRow("b2", "other-user-id", householdID, "Utilities", 200.0, "expense",
-				nil, nil, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", nil, "monthly", true)
+				nil, nil, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil, "monthly", true)
 
 		mock.ExpectQuery(`FROM budgets b`).
 			WithArgs(householdID, userID).
@@ -236,11 +248,16 @@ func TestUpdateBudget_SuccessfulUpdate(t *testing.T) {
 	userID := "11111111-1111-1111-1111-111111111111"
 
 	withBudgetsMockDB(t, func(mock sqlmock.Sqlmock) {
-		// ownershipCheck query
-		mock.ExpectQuery(`SELECT user_id FROM budgets WHERE id = `).
+		// householdAccessCheck query
+		mock.ExpectQuery(`SELECT user_id, household_id, COALESCE`).
 			WithArgs(budgetID).
-			WillReturnRows(sqlmock.NewRows([]string{"user_id"}).
-				AddRow(userID))
+			WillReturnRows(sqlmock.NewRows([]string{"user_id", "household_id", "is_shared"}).
+				AddRow(userID, nil, false))
+
+		// ResolveHouseholdID query
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnError(sql.ErrNoRows)
 
 		// UPDATE query
 		mock.ExpectExec(`UPDATE budgets`).
@@ -273,11 +290,11 @@ func TestUpdateBudget_OwnershipCheckFail(t *testing.T) {
 	otherUserID := "22222222-2222-2222-2222-222222222222"
 
 	withBudgetsMockDB(t, func(mock sqlmock.Sqlmock) {
-		// ownershipCheck returns different user
-		mock.ExpectQuery(`SELECT user_id FROM budgets WHERE id = `).
+		// householdAccessCheck returns different owner, not shared
+		mock.ExpectQuery(`SELECT user_id, household_id, COALESCE`).
 			WithArgs(budgetID).
-			WillReturnRows(sqlmock.NewRows([]string{"user_id"}).
-				AddRow(otherUserID))
+			WillReturnRows(sqlmock.NewRows([]string{"user_id", "household_id", "is_shared"}).
+				AddRow(otherUserID, nil, false))
 	})
 
 	body := map[string]interface{}{
@@ -327,11 +344,11 @@ func TestDeleteBudget_SuccessfulDelete(t *testing.T) {
 	userID := "11111111-1111-1111-1111-111111111111"
 
 	withBudgetsMockDB(t, func(mock sqlmock.Sqlmock) {
-		// ownershipCheck query
-		mock.ExpectQuery(`SELECT user_id FROM budgets WHERE id = `).
+		// ownershipCheck query (SELECT user_id, household_id)
+		mock.ExpectQuery(`SELECT user_id, household_id FROM`).
 			WithArgs(budgetID).
-			WillReturnRows(sqlmock.NewRows([]string{"user_id"}).
-				AddRow(userID))
+			WillReturnRows(sqlmock.NewRows([]string{"user_id", "household_id"}).
+				AddRow(userID, nil))
 
 		// DELETE query
 		mock.ExpectExec(`DELETE FROM budgets`).
@@ -357,9 +374,12 @@ func withBudgetsMockDB(t *testing.T, setup func(sqlmock.Sqlmock)) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	t.Cleanup(func() { mockSQL.Close() })
 
-	// Note: CreateBudget doesn't use a factory, so we can't mock it
-	// This test helper is for other budget handlers that do use factories
+	cleanup := db.OverridePool(mockSQL)
+	t.Cleanup(func() {
+		cleanup()
+		mockSQL.Close()
+	})
+
 	setup(mock)
 }

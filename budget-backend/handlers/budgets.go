@@ -14,6 +14,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 func CreateBudget(w http.ResponseWriter, r *http.Request) {
@@ -261,6 +262,55 @@ func UpdateBudget(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(budget)
 }
 
+// GetBudgetByID returns a single budget by ID.
+func GetBudgetByID(w http.ResponseWriter, r *http.Request) {
+	budgetID := mux.Vars(r)["id"]
+	if budgetID == "" {
+		http.Error(w, "Missing budget ID", http.StatusBadRequest)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	var b struct {
+		ID          string  `json:"id"`
+		UserID      string  `json:"user_id"`
+		HouseholdID *string `json:"household_id,omitempty"`
+		Name        string  `json:"name"`
+		Amount      float64 `json:"amount"`
+		Type        string  `json:"type"`
+		CategoryID  *string `json:"category_id,omitempty"`
+		CatName     *string `json:"category_name,omitempty"`
+		Frequency   string  `json:"frequency"`
+		IsShared    bool    `json:"is_shared"`
+		StartDate   *string `json:"start_date,omitempty"`
+		Source      *string `json:"source,omitempty"`
+	}
+
+	err = dbClient.QueryRow(`
+		SELECT b.id, b.user_id, b.household_id::text, b.name, b.amount, b.type,
+		       b.category_id::text, COALESCE(c.name, ''), COALESCE(b.frequency, 'monthly'),
+		       COALESCE(b.is_shared, false), b.start_date::text, b.source
+		FROM budgets b
+		LEFT JOIN categories c ON b.category_id = c.id
+		WHERE b.id = $1
+	`, budgetID).Scan(&b.ID, &b.UserID, &b.HouseholdID, &b.Name, &b.Amount, &b.Type,
+		&b.CategoryID, &b.CatName, &b.Frequency, &b.IsShared, &b.StartDate, &b.Source)
+	if err != nil {
+		log.Printf("GetBudgetByID error: %v", err)
+		http.Error(w, "Budget not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(b)
+}
+
 // GetBudgetSummary returns budget-vs-actual spending per category for a
 // given month/year. One endpoint replaces three separate frontend calls.
 func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
@@ -395,18 +445,37 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Fetch expense transactions in this month.
 	// Exclude bill-sourced transactions — bills are tracked separately via bill_payments.
-	txQuery := `
-		SELECT COALESCE(t.category_id::text, ''), t.amount
+	// JOIN categories to get parent_id so subcategory spending rolls up to parent budgets.
+	// Non-split transactions use their own category_id; split transactions contribute
+	// via transaction_splits rows so each split's category is counted individually.
+	txQueryNonSplit := `
+		SELECT COALESCE(t.category_id::text, ''), COALESCE(c.parent_id::text, ''), t.amount
 		FROM transactions t
-		WHERE t.type = 'expense'
+		LEFT JOIN categories c ON t.category_id = c.id
+		WHERE COALESCE(t.is_split, false) = false
+		  AND t.type = 'expense'
+		  AND t.date >= $1 AND t.date < $2
+		  AND COALESCE(t.source, '') != 'bill'
+	`
+	txQuerySplit := `
+		SELECT ts.category_id::text, COALESCE(c.parent_id::text, ''), ts.amount
+		FROM transaction_splits ts
+		JOIN transactions t ON ts.transaction_id = t.id
+		LEFT JOIN categories c ON ts.category_id = c.id
+		WHERE t.is_split = true
+		  AND t.type = 'expense'
 		  AND t.date >= $1 AND t.date < $2
 		  AND COALESCE(t.source, '') != 'bill'
 	`
 	var txRows *sql.Rows
 	if hhID == "" {
-		txRows, err = dbClient.Query(txQuery+" AND t.user_id = $3", monthStart, monthEnd, userID)
+		txRows, err = dbClient.Query(
+			txQueryNonSplit+" AND t.user_id = $3"+
+				" UNION ALL "+
+				txQuerySplit+" AND t.user_id = $3",
+			monthStart, monthEnd, userID)
 	} else {
-		txRows, err = dbClient.Query(txQuery+`
+		userFilter := `
 			AND (t.user_id = $4
 			   OR t.household_id::text = $3
 			   OR (t.household_id IS NOT NULL AND t.user_id IN (
@@ -416,8 +485,12 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 			       WHERE hm.household_id::text = $3
 			         AND hm.user_id != $4
 			         AND COALESCE(sp.share_transactions, true) = true
-			   )))
-		`, monthStart, monthEnd, hhID, userID)
+			   )))`
+		txRows, err = dbClient.Query(
+			txQueryNonSplit+userFilter+
+				" UNION ALL "+
+				txQuerySplit+userFilter,
+			monthStart, monthEnd, hhID, userID)
 	}
 	if err != nil {
 		http.Error(w, "Failed to fetch transactions", http.StatusInternalServerError)
@@ -429,11 +502,67 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 	spentByCategory := map[string]float64{}
 	var totalSpentAll float64
 	for txRows.Next() {
-		var catID string
+		var catID, parentID string
 		var amt float64
-		if err := txRows.Scan(&catID, &amt); err == nil {
+		if err := txRows.Scan(&catID, &parentID, &amt); err == nil {
 			spentByCategory[catID] += amt
+			// Roll up subcategory spending to the parent category so parent-level budgets
+			// accumulate spending from all their children.
+			if parentID != "" {
+				spentByCategory[parentID] += amt
+			}
 			totalSpentAll += amt
+		}
+	}
+
+	// 3b. Fetch income transactions in this month (for income budget tracking).
+	// JOIN categories to get parent_id for subcategory rollup, same as expenses.
+	// Handle splits the same way as expenses.
+	earnedByCategory := map[string]float64{}
+	incNonSplit := `
+		SELECT COALESCE(t.category_id::text, ''), COALESCE(c.parent_id::text, ''), t.amount
+		FROM transactions t
+		LEFT JOIN categories c ON t.category_id = c.id
+		WHERE COALESCE(t.is_split, false) = false
+		  AND t.type = 'income'
+		  AND t.date >= $1 AND t.date < $2
+	`
+	incSplit := `
+		SELECT ts.category_id::text, COALESCE(c.parent_id::text, ''), ts.amount
+		FROM transaction_splits ts
+		JOIN transactions t ON ts.transaction_id = t.id
+		LEFT JOIN categories c ON ts.category_id = c.id
+		WHERE t.is_split = true
+		  AND t.type = 'income'
+		  AND t.date >= $1 AND t.date < $2
+	`
+	var incTxRows *sql.Rows
+	if hhID == "" {
+		incTxRows, err = dbClient.Query(
+			incNonSplit+" AND t.user_id = $3"+
+				" UNION ALL "+
+				incSplit+" AND t.user_id = $3",
+			monthStart, monthEnd, userID)
+	} else {
+		incTxRows, err = dbClient.Query(
+			incNonSplit+" AND (t.user_id = $3 OR t.household_id::text = $4)"+
+				" UNION ALL "+
+				incSplit+" AND (t.user_id = $3 OR t.household_id::text = $4)",
+			monthStart, monthEnd, userID, hhID)
+	}
+	if err != nil {
+		log.Printf("budget summary: fetch income txns: %v", err)
+	} else {
+		defer incTxRows.Close()
+		for incTxRows.Next() {
+			var catID, parentID string
+			var amt float64
+			if err := incTxRows.Scan(&catID, &parentID, &amt); err == nil {
+				earnedByCategory[catID] += amt
+				if parentID != "" {
+					earnedByCategory[parentID] += amt
+				}
+			}
 		}
 	}
 
@@ -503,24 +632,197 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. Build the response.
+	type subcategorySummary struct {
+		ID               string  `json:"id"`
+		Name             string  `json:"name"`
+		Color            string  `json:"color"`
+		Icon             string  `json:"icon"`
+		Spent            float64 `json:"spent"`
+		TransactionCount int     `json:"transaction_count"`
+		HasUnverified    bool    `json:"has_unverified"`
+		UnverifiedCount  int     `json:"unverified_count"`
+	}
 	type categorySummary struct {
-		ID    string  `json:"id"`
-		Name  string  `json:"name"`
-		Spent float64 `json:"spent"`
+		ID               string               `json:"id"`
+		Name             string               `json:"name"`
+		Color            string               `json:"color"`
+		Icon             string               `json:"icon"`
+		Spent            float64              `json:"spent"`
+		TransactionCount int                  `json:"transaction_count"`
+		HasUnverified    bool                 `json:"has_unverified"`
+		UnverifiedCount  int                  `json:"unverified_count"`
+		Subcategories    []subcategorySummary  `json:"subcategories"`
 	}
 	type budgetSummary struct {
-		ID          string            `json:"id"`
-		Name        string            `json:"name"`
-		Type        string            `json:"type"`
-		Amount      float64           `json:"budgeted"`
-		Spent       float64           `json:"spent"`
-		Remaining   float64           `json:"remaining"`
-		Percent     int               `json:"percent"`
-		Frequency   string            `json:"frequency"`
-		HouseholdID *string           `json:"household_id,omitempty"`
-		IsShared    bool              `json:"is_shared"`
-		Categories  []categorySummary `json:"categories"`
-		Source      string            `json:"source,omitempty"`
+		ID              string            `json:"id"`
+		Name            string            `json:"name"`
+		Type            string            `json:"type"`
+		Amount          float64           `json:"budgeted"`
+		Spent           float64           `json:"spent"`
+		Remaining       float64           `json:"remaining"`
+		Percent         int               `json:"percent"`
+		Frequency       string            `json:"frequency"`
+		HouseholdID     *string           `json:"household_id,omitempty"`
+		IsShared        bool              `json:"is_shared"`
+		Categories      []categorySummary `json:"categories"`
+		Source          string            `json:"source,omitempty"`
+		TotalUnverified int               `json:"total_unverified"`
+	}
+
+	// 5a. Collect all category IDs referenced in spending to look up details.
+	allCatIDs := map[string]bool{}
+	for catID := range spentByCategory {
+		if catID != "" {
+			allCatIDs[catID] = true
+		}
+	}
+	for catID := range earnedByCategory {
+		if catID != "" {
+			allCatIDs[catID] = true
+		}
+	}
+	// Also include categories from budget_categories join table.
+	for _, cats := range budgetCats {
+		for _, c := range cats {
+			allCatIDs[c.ID] = true
+		}
+	}
+	// And from budget.CategoryID.
+	for _, b := range budgetList {
+		if b.CategoryID != nil && *b.CategoryID != "" {
+			allCatIDs[*b.CategoryID] = true
+		}
+	}
+
+	// Look up category details (name, color, icon, parent_id).
+	type catDetail struct {
+		ID       string
+		Name     string
+		Color    string
+		Icon     string
+		ParentID string
+	}
+	catDetails := map[string]catDetail{}
+	if len(allCatIDs) > 0 {
+		catIDSlice := make([]string, 0, len(allCatIDs))
+		for id := range allCatIDs {
+			catIDSlice = append(catIDSlice, id)
+		}
+		catDetailRows, catErr := dbClient.Query(`
+			SELECT id, name, COALESCE(color, '#7c3aed'), COALESCE(icon, ''), COALESCE(parent_id::text, '')
+			FROM categories WHERE id = ANY($1)
+		`, pq.Array(catIDSlice))
+		if catErr != nil {
+			log.Printf("budget summary: fetch cat details: %v", catErr)
+		} else {
+			defer catDetailRows.Close()
+			for catDetailRows.Next() {
+				var cd catDetail
+				if err := catDetailRows.Scan(&cd.ID, &cd.Name, &cd.Color, &cd.Icon, &cd.ParentID); err == nil {
+					catDetails[cd.ID] = cd
+				}
+			}
+		}
+	}
+
+	// 5b. Query transaction counts per category for this month.
+	txCountByCategory := map[string]int{}
+	if len(allCatIDs) > 0 {
+		catIDSlice := make([]string, 0, len(allCatIDs))
+		for id := range allCatIDs {
+			catIDSlice = append(catIDSlice, id)
+		}
+		countRows, countErr := dbClient.Query(`
+			SELECT COALESCE(category_id::text, ''), COUNT(*)
+			FROM transactions
+			WHERE category_id = ANY($1) AND date >= $2 AND date < $3
+			GROUP BY category_id
+		`, pq.Array(catIDSlice), monthStart, monthEnd)
+		if countErr != nil {
+			log.Printf("budget summary: fetch tx counts: %v", countErr)
+		} else {
+			defer countRows.Close()
+			for countRows.Next() {
+				var cid string
+				var cnt int
+				if err := countRows.Scan(&cid, &cnt); err == nil {
+					txCountByCategory[cid] = cnt
+				}
+			}
+		}
+	}
+
+	// 5c. Query unverified transaction counts per category.
+	unverifiedByCategory := map[string]int{}
+	globalTotalUnverified := 0
+	if len(allCatIDs) > 0 {
+		catIDSlice := make([]string, 0, len(allCatIDs))
+		for id := range allCatIDs {
+			catIDSlice = append(catIDSlice, id)
+		}
+		uvRows, uvErr := dbClient.Query(`
+			SELECT category_id::text, COUNT(*)
+			FROM transactions
+			WHERE user_verified = false AND category_id = ANY($1) AND date >= $2 AND date < $3
+			GROUP BY category_id
+		`, pq.Array(catIDSlice), monthStart, monthEnd)
+		if uvErr != nil {
+			log.Printf("budget summary: fetch unverified counts: %v", uvErr)
+		} else {
+			defer uvRows.Close()
+			for uvRows.Next() {
+				var cid string
+				var cnt int
+				if err := uvRows.Scan(&cid, &cnt); err == nil {
+					unverifiedByCategory[cid] = cnt
+					globalTotalUnverified += cnt
+				}
+			}
+		}
+	}
+
+	// Helper to build a subcategory summary.
+	buildSubcatSummary := func(catID string, isIncome bool) subcategorySummary {
+		cd := catDetails[catID]
+		var spent float64
+		if isIncome {
+			spent = earnedByCategory[catID]
+		} else {
+			spent = spentByCategory[catID]
+		}
+		uvCount := unverifiedByCategory[catID]
+		return subcategorySummary{
+			ID:               catID,
+			Name:             cd.Name,
+			Color:            cd.Color,
+			Icon:             cd.Icon,
+			Spent:            spent,
+			TransactionCount: txCountByCategory[catID],
+			HasUnverified:    uvCount > 0,
+			UnverifiedCount:  uvCount,
+		}
+	}
+
+	// Helper: given a parent category ID, find all child categories that have spending.
+	childrenOf := func(parentID string, isIncome bool) []subcategorySummary {
+		var subs []subcategorySummary
+		spending := spentByCategory
+		if isIncome {
+			spending = earnedByCategory
+		}
+		for cid := range spending {
+			if cid == "" || cid == parentID {
+				continue
+			}
+			cd, ok := catDetails[cid]
+			if !ok {
+				continue
+			}
+			if cd.ParentID == parentID {
+				subs = append(subs, buildSubcatSummary(cid, isIncome))
+			}
+		}
+		return subs
 	}
 
 	countOccurrences := func(startDate *time.Time, freq string) int {
@@ -566,10 +868,39 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		isIncome := b.Type == "income"
+
 		var spent float64
+		var budgetUnverified int
 		var catSummaries []categorySummary
 		for _, c := range cats {
-			cs := categorySummary{ID: c.ID, Name: c.Name, Spent: spentByCategory[c.ID]}
+			var catSpent float64
+			if isIncome {
+				catSpent = earnedByCategory[c.ID]
+			} else {
+				catSpent = spentByCategory[c.ID]
+			}
+			cd := catDetails[c.ID]
+			uvCount := unverifiedByCategory[c.ID]
+			budgetUnverified += uvCount
+
+			subs := childrenOf(c.ID, isIncome)
+			if subs == nil {
+				subs = []subcategorySummary{}
+			}
+
+			cs := categorySummary{
+				ID:               c.ID,
+				Name:             c.Name,
+				Color:            cd.Color,
+				Icon:             cd.Icon,
+				Spent:            catSpent,
+				TransactionCount: txCountByCategory[c.ID],
+				HasUnverified:    uvCount > 0,
+				UnverifiedCount:  uvCount,
+				Subcategories:    subs,
+			}
+			// Use parent-level spent (already rolled up) for budget total.
 			spent += cs.Spent
 			catSummaries = append(catSummaries, cs)
 		}
@@ -591,17 +922,18 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		}
 
 		summaries = append(summaries, budgetSummary{
-			ID:          b.ID,
-			Name:        b.Name,
-			Type:        b.Type,
-			Amount:      effective,
-			Spent:       spent,
-			Remaining:   remaining,
-			Percent:     pct,
-			Frequency:   b.Frequency,
-			HouseholdID: b.HouseholdID,
-			IsShared:    b.IsShared,
-			Categories:  catSummaries,
+			ID:              b.ID,
+			Name:            b.Name,
+			Type:            b.Type,
+			Amount:          effective,
+			Spent:           spent,
+			Remaining:       remaining,
+			Percent:         pct,
+			Frequency:       b.Frequency,
+			HouseholdID:     b.HouseholdID,
+			IsShared:        b.IsShared,
+			Categories:      catSummaries,
+			TotalUnverified: budgetUnverified,
 		})
 	}
 
@@ -627,7 +959,19 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 
 		var catSummaries []categorySummary
 		if be.CategoryID != nil && *be.CategoryID != "" {
-			catSummaries = []categorySummary{{ID: *be.CategoryID, Name: be.CatName, Spent: spent}}
+			cd := catDetails[*be.CategoryID]
+			uvCount := unverifiedByCategory[*be.CategoryID]
+			catSummaries = []categorySummary{{
+				ID:               *be.CategoryID,
+				Name:             be.CatName,
+				Color:            cd.Color,
+				Icon:             cd.Icon,
+				Spent:            spent,
+				TransactionCount: txCountByCategory[*be.CategoryID],
+				HasUnverified:    uvCount > 0,
+				UnverifiedCount:  uvCount,
+				Subcategories:    []subcategorySummary{},
+			}}
 		} else {
 			catSummaries = []categorySummary{}
 		}
@@ -663,13 +1007,14 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"month":           month,
-		"year":            year,
-		"total_income":    totalIncome,
-		"total_budgeted":  totalBudgeted,
-		"total_spent":     totalSpentAll,
-		"total_remaining": totalRemaining,
-		"budgets":         summaries,
+		"month":            month,
+		"year":             year,
+		"total_income":     totalIncome,
+		"total_budgeted":   totalBudgeted,
+		"total_spent":      totalSpentAll,
+		"total_remaining":  totalRemaining,
+		"total_unverified": globalTotalUnverified,
+		"budgets":          summaries,
 	})
 }
 

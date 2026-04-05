@@ -159,7 +159,7 @@ export default function SavingsScreen() {
         <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
+            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
               <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Savings Goals</Text>

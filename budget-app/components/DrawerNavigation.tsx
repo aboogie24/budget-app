@@ -3,7 +3,7 @@ import { View, StyleSheet, TouchableOpacity, Text, ScrollView, Animated } from '
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/utils/ThemeContext';
 import { componentDefaults } from '@/utils/theme';
-import { GlassCard } from './GlassCard';
+import GlassCard from './GlassCard';
 
 interface DrawerItem {
   id: string;
@@ -67,9 +67,8 @@ export const DrawerNavigation: React.FC<DrawerNavigationProps> = ({
       >
         <GlassCard
           style={styles.drawerContent}
-          variant="light"
+          intensity="light"
           padding={0}
-          blur={20}
         >
           {/* Header */}
           <View style={styles.drawerHeader}>

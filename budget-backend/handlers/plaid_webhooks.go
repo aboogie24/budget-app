@@ -172,7 +172,7 @@ func handleTransactionsWebhook(ctx context.Context, dbClient *db.DB, client *mod
 			for _, txID := range removed {
 				// Mark as removed or delete from the appropriate place
 				// For now we log it, but in production you might want a soft delete
-				log.Printf("Transaction removed: %s", txID)
+				log.Printf("Transaction removed: %v", txID)
 			}
 
 			cursor = resp.GetNextCursor()

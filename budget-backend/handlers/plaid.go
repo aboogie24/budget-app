@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gofrs/uuid"
 	"github.com/plaid/plaid-go/v20/plaid"
@@ -59,14 +60,15 @@ func ExchangeToken(client *models.Client) http.HandlerFunc {
 			defer dbClient.Close()
 			linkedID := uuid.Must(uuid.NewV4()).String()
 			_, _ = dbClient.Exec(
-				`INSERT INTO linked_accounts (id, user_id, household_id, item_id, access_token, institution_name) 
-				 VALUES ($1,$2,$3,$4,$5,$6)`,
+				`INSERT INTO linked_accounts (id, user_id, household_id, item_id, access_token, institution_name, provider)
+				 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 				linkedID,
 				req.UserID,
 				nullable(req.HouseholdID),
 				resp.GetItemId(),
 				resp.GetAccessToken(),
 				req.Institution,
+				"plaid",
 			)
 		}
 
@@ -208,8 +210,9 @@ func SyncTransactions(client *models.Client) http.HandlerFunc {
 					}
 
 					catName := ""
-					if cats := tx.GetCategory(); len(cats) > 0 {
-						catName = cats[0]
+					plaidCats := tx.GetCategory()
+					if len(plaidCats) > 0 {
+						catName = plaidCats[0]
 					}
 
 					effectiveHH := acct.householdID
@@ -217,10 +220,36 @@ func SyncTransactions(client *models.Client) http.HandlerFunc {
 						effectiveHH = &hhID
 					}
 
+					// Resolve category using mapping rules
+					var resolvedCatID *string
+					var matchConfidence *string
+					var matchedRuleID *string
+					merchantName := tx.GetMerchantName()
+					if merchantName == "" {
+						merchantName = tx.GetName()
+					}
+					hhForResolver := ""
+					if effectiveHH != nil {
+						hhForResolver = *effectiveHH
+					}
+					catID, conf, ruleID, resolveErr := categories.ResolveCategory(dbClient.Conn, userID, hhForResolver, merchantName, plaidCats)
+					if resolveErr != nil {
+						log.Printf("Category resolve error (non-fatal): %v", resolveErr)
+					}
+					if catID != "" {
+						resolvedCatID = &catID
+					}
+					if conf != "" && conf != "low" {
+						matchConfidence = &conf
+					}
+					if ruleID != nil {
+						matchedRuleID = ruleID
+					}
+
 					source := "bank"
 					_, insertErr := dbClient.Exec(`
-						INSERT INTO transactions (id, user_id, household_id, type, amount, category_name, note, date, source)
-						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+						INSERT INTO transactions (id, user_id, household_id, type, amount, category_id, category_name, note, date, source, match_confidence, matched_rule_id)
+						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 						ON CONFLICT DO NOTHING
 					`,
 						txID,
@@ -228,10 +257,13 @@ func SyncTransactions(client *models.Client) http.HandlerFunc {
 						effectiveHH,
 						txType,
 						amount,
+						resolvedCatID,
 						catName,
 						tx.GetName(),
 						tx.GetDate(),
 						source,
+						matchConfidence,
+						matchedRuleID,
 					)
 					if insertErr != nil {
 						log.Printf("Failed to insert Plaid transaction: %v", insertErr)
@@ -1110,6 +1142,9 @@ func nullableBool(b bool) interface{} {
 func GetLinkedAccountStatus(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	if userID == "" {
+		userID, _ = getUserIDFromRequest(r)
+	}
+	if userID == "" {
 		http.Error(w, "Missing user ID", http.StatusUnauthorized)
 		return
 	}
@@ -1126,7 +1161,7 @@ func GetLinkedAccountStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Query linked accounts for the user and household members
 	rows, err := dbClient.Query(`
-		SELECT id, institution_name, item_status, error_code, created_at, updated_at
+		SELECT id, institution_name, item_status, error_code, created_at, updated_at, provider
 		FROM linked_accounts
 		WHERE user_id = $1 OR household_id = $2
 		ORDER BY created_at DESC
@@ -1144,12 +1179,13 @@ func GetLinkedAccountStatus(w http.ResponseWriter, r *http.Request) {
 		ErrorCode       *string   `json:"error_code"`
 		CreatedAt       time.Time `json:"created_at"`
 		UpdatedAt       time.Time `json:"updated_at"`
+		Provider        string    `json:"provider"`
 	}
 
 	var accounts []LinkedAccountStatus
 	for rows.Next() {
 		var acct LinkedAccountStatus
-		if err := rows.Scan(&acct.ID, &acct.InstitutionName, &acct.ItemStatus, &acct.ErrorCode, &acct.CreatedAt, &acct.UpdatedAt); err != nil {
+		if err := rows.Scan(&acct.ID, &acct.InstitutionName, &acct.ItemStatus, &acct.ErrorCode, &acct.CreatedAt, &acct.UpdatedAt, &acct.Provider); err != nil {
 			log.Printf("Failed to scan linked account: %v", err)
 			continue
 		}

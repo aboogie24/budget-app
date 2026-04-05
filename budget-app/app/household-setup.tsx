@@ -241,7 +241,7 @@ export default function HouseholdManagement() {
     <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/settings')}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={20} color="#c084fc" />
           </TouchableOpacity>
           <Text style={styles.headerText}>Household</Text>

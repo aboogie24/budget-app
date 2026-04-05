@@ -34,16 +34,20 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="budget"
+        name="ai-chat"
         options={{
-          title: 'Budget',
-          tabBarIcon: ({ color, size }) => <Ionicons name="cash" size={size} color={color} />,
+          title: 'AI',
+          tabBarIcon: ({ color, size }) => <Ionicons name="sparkles" size={size} color={color} />,
         }}
+      />
+      <Tabs.Screen
+        name="budget"
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="goals"
         options={{
-          title: 'Finances',
+          title: 'Finance',
           tabBarIcon: ({ color, size }) => <Ionicons name="wallet-outline" size={size} color={color} />,
         }}
       />

@@ -247,7 +247,9 @@ func ListDebts(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	rows, err := client.Query(`
-		SELECT id, user_id, COALESCE(household_id::text, ''), name, balance, apr, min_payment, due_day, COALESCE(strategy, ''), is_shared, COALESCE(source, 'manual')
+		SELECT id, user_id, COALESCE(household_id::text, ''), name, balance, apr, min_payment, due_day,
+		       COALESCE(strategy, ''), is_shared, COALESCE(source, 'manual'),
+		       COALESCE(debt_category, 'attack'), COALESCE(liability_type, 'other'), asset_depreciates
 		FROM debt_accounts
 		WHERE user_id = $1
 	`, userID)
@@ -266,7 +268,7 @@ func ListDebts(w http.ResponseWriter, r *http.Request) {
 			dueDay sql.NullInt32
 			hhID   string
 		)
-		if err := rows.Scan(&d.ID, &d.UserID, &hhID, &d.Name, &d.Balance, &d.APR, &d.MinPayment, &dueDay, &d.Strategy, &d.IsShared, &d.Source); err != nil {
+		if err := rows.Scan(&d.ID, &d.UserID, &hhID, &d.Name, &d.Balance, &d.APR, &d.MinPayment, &dueDay, &d.Strategy, &d.IsShared, &d.Source, &d.DebtCategory, &d.LiabilityType, &d.AssetDepreciates); err != nil {
 			log.Printf("ListDebts scan error: %v", err)
 			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
@@ -332,10 +334,22 @@ func CreateDebt(w http.ResponseWriter, r *http.Request) {
 		hhVal = d.HouseholdID
 	}
 
+	// Apply default debt_category based on liability_type if not set
+	if d.DebtCategory == "" {
+		if cat, ok := models.DebtCategoryDefaults[d.LiabilityType]; ok {
+			d.DebtCategory = cat
+		} else {
+			d.DebtCategory = "attack"
+		}
+	}
+	if d.LiabilityType == "" {
+		d.LiabilityType = "other"
+	}
+
 	_, err = client.Exec(`
-		INSERT INTO debt_accounts (id, user_id, household_id, name, balance, apr, min_payment, due_day, strategy, is_shared)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-	`, d.ID, d.UserID, hhVal, d.Name, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared)
+		INSERT INTO debt_accounts (id, user_id, household_id, name, balance, apr, min_payment, due_day, strategy, is_shared, debt_category, liability_type, asset_depreciates)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`, d.ID, d.UserID, hhVal, d.Name, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, d.DebtCategory, d.LiabilityType, d.AssetDepreciates)
 	if err != nil {
 		log.Printf("CreateDebt insert error: %v", err)
 		http.Error(w, "Insert error: "+err.Error(), http.StatusInternalServerError)

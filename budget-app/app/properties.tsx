@@ -16,6 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import GradientBackground from '@/components/GradientBackground';
+import { ErrorState } from '@/components/ErrorState';
+import { colors, spacing, glassEffects, typography, gradients } from '@/utils/design-system';
 
 type Property = {
   id: string;
@@ -50,6 +53,7 @@ export default function PropertiesScreen() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Property | null>(null);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Form state
   const [streetAddress, setStreetAddress] = useState('');
@@ -62,6 +66,7 @@ export default function PropertiesScreen() {
 
   const loadData = useCallback(async () => {
     try {
+      setError(null);
       const userId = await api.getUserId();
       if (!userId) return;
       const [propsData, debtsData] = await Promise.all([
@@ -72,6 +77,7 @@ export default function PropertiesScreen() {
       setDebts(Array.isArray(debtsData) ? debtsData : []);
     } catch (e) {
       console.error('Failed to load properties:', e);
+      setError('Failed to load properties');
     } finally {
       setLoading(false);
     }
@@ -198,13 +204,13 @@ export default function PropertiesScreen() {
   };
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple">
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
+            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
+              <Ionicons name="arrow-back" size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Properties</Text>
             <TouchableOpacity
@@ -213,12 +219,22 @@ export default function PropertiesScreen() {
                 setShowForm(true);
               }}
             >
-              <Ionicons name="add-circle" size={28} color="#a78bfa" />
+              <Ionicons name="add-circle" size={28} color={colors.primary2} />
             </TouchableOpacity>
           </View>
 
+          {/* Error state */}
+          {error && (
+            <ErrorState
+              title="Error"
+              message={error}
+              onRetry={loadData}
+              onDismiss={() => setError(null)}
+            />
+          )}
+
           {/* Summary card */}
-          {properties.length > 0 && (
+          {!error && properties.length > 0 && (
             <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <View>
@@ -227,21 +243,21 @@ export default function PropertiesScreen() {
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={styles.summaryLabel}>Total Equity</Text>
-                  <Text style={[styles.summaryValue, { color: '#a78bfa' }]}>{fmt(totalEquity)}</Text>
+                  <Text style={[styles.summaryValue, { color: colors.primary2 }]}>{fmt(totalEquity)}</Text>
                 </View>
               </View>
             </View>
           )}
 
-          {loading ? (
-            <ActivityIndicator color="#a78bfa" style={{ marginTop: 40 }} />
-          ) : properties.length === 0 ? (
+          {!error && loading ? (
+            <ActivityIndicator color={colors.primary2} style={{ marginTop: 40 }} />
+          ) : !error && properties.length === 0 && !loading ? (
             <View style={styles.emptyState}>
-              <Ionicons name="home-outline" size={48} color="#475569" />
+              <Ionicons name="home-outline" size={48} color={colors.textDark} />
               <Text style={styles.emptyText}>No properties tracked yet</Text>
               <Text style={styles.emptySubtext}>Tap + to add your first property</Text>
             </View>
-          ) : (
+          ) : !error ? (
             properties.map((p) => {
               const val = effectiveValue(p);
               const mortgage = p.debt_balance || 0;
@@ -253,7 +269,7 @@ export default function PropertiesScreen() {
                   <View style={styles.cardHeader}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
                       <View style={styles.homeIcon}>
-                        <Ionicons name="home" size={18} color="#a78bfa" />
+                        <Ionicons name="home" size={18} color={colors.primary2} />
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.cardTitle} numberOfLines={1}>{p.street_address}</Text>
@@ -279,7 +295,7 @@ export default function PropertiesScreen() {
                     {p.debt_name && (
                       <View style={styles.valueRow}>
                         <Text style={styles.valueLabel}>Mortgage ({p.debt_name})</Text>
-                        <Text style={[styles.valueAmount, { color: '#f87171' }]}>-{fmt(mortgage)}</Text>
+                        <Text style={[styles.valueAmount, { color: colors.error }]}>-{fmt(mortgage)}</Text>
                       </View>
                     )}
 
@@ -288,7 +304,7 @@ export default function PropertiesScreen() {
                         <View style={styles.equityDivider} />
                         <View style={styles.valueRow}>
                           <Text style={styles.equityLabel}>Equity</Text>
-                          <Text style={[styles.equityValue, { color: equity >= 0 ? '#34d399' : '#f87171' }]}>
+                          <Text style={[styles.equityValue, { color: equity >= 0 ? colors.success : colors.error }]}>
                             {equity < 0 ? '-' : ''}{fmt(Math.abs(equity))}
                           </Text>
                         </View>
@@ -306,10 +322,10 @@ export default function PropertiesScreen() {
                       disabled={refreshingId === p.id}
                     >
                       {refreshingId === p.id ? (
-                        <ActivityIndicator size="small" color="#a78bfa" />
+                        <ActivityIndicator size="small" color={colors.primary2} />
                       ) : (
                         <>
-                          <Ionicons name="refresh-outline" size={14} color="#a78bfa" />
+                          <Ionicons name="refresh-outline" size={14} color={colors.primary2} />
                           <Text style={styles.refreshBtnText}>Refresh</Text>
                         </>
                       )}
@@ -321,14 +337,14 @@ export default function PropertiesScreen() {
                         handleDelete(p);
                       }}
                     >
-                      <Ionicons name="trash-outline" size={14} color="#f87171" />
+                      <Ionicons name="trash-outline" size={14} color={colors.error} />
                       <Text style={styles.deleteBtnText}>Delete</Text>
                     </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
               );
             })
-          )}
+          ) : null}
         </ScrollView>
 
         {/* Add/Edit Modal */}
@@ -346,7 +362,7 @@ export default function PropertiesScreen() {
                       resetForm();
                     }}
                   >
-                    <Ionicons name="close" size={24} color="#cbd5e1" />
+                    <Ionicons name="close" size={24} color={colors.textMuted} />
                   </TouchableOpacity>
                 </View>
 
@@ -354,7 +370,7 @@ export default function PropertiesScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="123 Main Street"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.textMuted}
                   value={streetAddress}
                   onChangeText={setStreetAddress}
                 />
@@ -363,7 +379,7 @@ export default function PropertiesScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="Brooklyn"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.textMuted}
                   value={city}
                   onChangeText={setCity}
                 />
@@ -374,7 +390,7 @@ export default function PropertiesScreen() {
                     <TextInput
                       style={styles.input}
                       placeholder="NY"
-                      placeholderTextColor="#94a3b8"
+                      placeholderTextColor={colors.textMuted}
                       value={state}
                       onChangeText={setState}
                       maxLength={2}
@@ -386,7 +402,7 @@ export default function PropertiesScreen() {
                     <TextInput
                       style={styles.input}
                       placeholder="11201"
-                      placeholderTextColor="#94a3b8"
+                      placeholderTextColor={colors.textMuted}
                       value={zipCode}
                       onChangeText={setZipCode}
                       keyboardType="numeric"
@@ -399,7 +415,7 @@ export default function PropertiesScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="Override Zestimate"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.textMuted}
                   keyboardType="numeric"
                   value={manualValue}
                   onChangeText={setManualValue}
@@ -434,14 +450,14 @@ export default function PropertiesScreen() {
                   <Switch
                     value={isShared}
                     onValueChange={setIsShared}
-                    trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(168,85,247,0.4)' }}
-                    thumbColor={isShared ? '#c084fc' : '#64748b'}
+                    trackColor={{ false: colors.glassLight, true: 'rgba(168,85,247,0.4)' }}
+                    thumbColor={isShared ? colors.accent : colors.textDark}
                   />
                 </View>
 
                 {!editing && (
                   <View style={styles.infoCard}>
-                    <Ionicons name="information-circle-outline" size={16} color="#a78bfa" />
+                    <Ionicons name="information-circle-outline" size={16} color={colors.primary2} />
                     <Text style={styles.infoText}>
                       We'll automatically look up the Zestimate from Zillow when you save.
                     </Text>
@@ -450,7 +466,7 @@ export default function PropertiesScreen() {
 
                 <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
                   <LinearGradient
-                    colors={['#a855f7', '#7c3aed']}
+                    colors={[...gradients.primaryGradient]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={styles.saveBtnInner}
@@ -463,48 +479,66 @@ export default function PropertiesScreen() {
           </View>
         </Modal>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollContent: {
+    padding: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: 120,
+  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
-  headerTitle: { color: '#f8fafc', fontSize: 20, fontWeight: '800' },
+  headerTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+  },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: colors.borderGlass,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: colors.glassLight,
   },
   summaryCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 16,
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  summaryLabel: { color: '#cbd5e1', fontSize: 12 },
-  summaryValue: { color: '#f8fafc', fontSize: 18, fontWeight: '800', marginTop: 4 },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  summaryLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+  },
+  summaryValue: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: spacing.xs,
+  },
   card: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 10,
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   homeIcon: {
     width: 36,
     height: 36,
@@ -513,26 +547,56 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardTitle: { color: '#f8fafc', fontWeight: '700', fontSize: 15 },
-  cardAddress: { color: '#94a3b8', fontSize: 12, marginTop: 2 },
-  valueSection: { marginTop: 12 },
+  cardTitle: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  cardAddress: {
+    color: colors.textMuted,
+    ...typography.caption,
+    marginTop: 2,
+  },
+  valueSection: { marginTop: spacing.md },
   valueRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: spacing.xs,
   },
-  valueLabel: { color: '#cbd5e1', fontSize: 13 },
-  valueAmount: { color: '#f8fafc', fontWeight: '700', fontSize: 15 },
-  valueSource: { color: '#64748b', fontSize: 11, marginTop: 1 },
+  valueLabel: {
+    color: colors.textMuted,
+    fontSize: 13,
+  },
+  valueAmount: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  valueSource: {
+    color: colors.textDark,
+    fontSize: 11,
+    marginTop: 1,
+  },
   equityDivider: {
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: colors.borderLight,
     marginVertical: 6,
   },
-  equityLabel: { color: '#f8fafc', fontWeight: '700', fontSize: 13 },
-  equityValue: { fontWeight: '800', fontSize: 16 },
-  cardActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  equityLabel: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  equityValue: {
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
   refreshBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -542,7 +606,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(167,139,250,0.12)',
     borderRadius: 10,
   },
-  refreshBtnText: { color: '#a78bfa', fontWeight: '700', fontSize: 13 },
+  refreshBtnText: {
+    color: colors.primary2,
+    fontWeight: '700',
+    fontSize: 13,
+  },
   deleteBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -552,17 +620,32 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(248,113,113,0.12)',
     borderRadius: 10,
   },
-  deleteBtnText: { color: '#f87171', fontWeight: '700', fontSize: 13 },
-  emptyState: { alignItems: 'center', marginTop: 60, gap: 8 },
-  emptyText: { color: '#e5e7eb', fontWeight: '700', fontSize: 16 },
-  emptySubtext: { color: '#94a3b8', fontSize: 13 },
+  deleteBtnText: {
+    color: colors.error,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 60,
+    gap: spacing.sm,
+  },
+  emptyText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  emptySubtext: {
+    color: colors.textMuted,
+    fontSize: 13,
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -572,36 +655,57 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
-  modalTitle: { color: '#f8fafc', fontSize: 18, fontWeight: '800' },
-  label: { color: '#e5e7eb', fontSize: 13, fontWeight: '700', marginBottom: 6, marginTop: 12 },
+  modalTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  label: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 6,
+    marginTop: spacing.md,
+  },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: colors.glassLight,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#f8fafc',
+    color: colors.text,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.borderGlass,
     fontSize: 15,
   },
-  mortgagePicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  mortgagePicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
   mortgageOption: {
-    paddingVertical: 8,
+    paddingVertical: spacing.sm,
     paddingHorizontal: 14,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: colors.glassLight,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.borderGlass,
     maxWidth: '100%',
   },
   mortgageOptionActive: {
     backgroundColor: 'rgba(168,85,247,0.18)',
     borderColor: 'rgba(168,85,247,0.7)',
   },
-  mortgageText: { color: '#e5e7eb', fontSize: 13 },
-  mortgageTextActive: { color: '#fff', fontWeight: '700' },
+  mortgageText: {
+    color: colors.text,
+    fontSize: 13,
+  },
+  mortgageTextActive: {
+    color: colors.text,
+    fontWeight: '700',
+  },
   sharedToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -613,26 +717,47 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(96,165,250,0.15)',
   },
-  sharedLabel: { color: '#f8fafc', fontWeight: '700', fontSize: 14 },
-  sharedDesc: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
+  sharedLabel: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  sharedDesc: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
   infoCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 16,
-    padding: 12,
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    padding: spacing.md,
     backgroundColor: 'rgba(167,139,250,0.08)',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(167,139,250,0.15)',
   },
-  infoText: { color: '#94a3b8', fontSize: 12, flex: 1 },
-  saveBtn: { borderRadius: 14, overflow: 'hidden', marginTop: 20, marginBottom: 20 },
+  infoText: {
+    color: colors.textMuted,
+    ...typography.caption,
+    flex: 1,
+  },
+  saveBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 20,
+    marginBottom: 20,
+  },
   saveBtnInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    paddingVertical: spacing.lg,
   },
-  saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  saveBtnText: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 16,
+  },
 });

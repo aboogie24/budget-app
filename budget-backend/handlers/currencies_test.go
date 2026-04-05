@@ -35,7 +35,7 @@ func TestGetSupportedCurrencies_ReturnsCompleteList(t *testing.T) {
 	expectedCodes := []string{"USD", "EUR", "GBP"}
 	found := make(map[string]bool)
 	for _, c := range currencies {
-		code := c["Code"].(string)
+		code, _ := c["code"].(string)
 		for _, exp := range expectedCodes {
 			if code == exp {
 				found[exp] = true
@@ -314,7 +314,12 @@ func withCurrenciesMockDB(t *testing.T, setup func(sqlmock.Sqlmock)) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	t.Cleanup(func() { mockSQL.Close() })
+
+	cleanup := db.OverridePool(mockSQL)
+	t.Cleanup(func() {
+		cleanup()
+		mockSQL.Close()
+	})
 
 	setup(mock)
 }

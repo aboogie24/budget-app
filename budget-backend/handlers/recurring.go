@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/ai"
 	"github.com/gofrs/uuid"
 )
 
@@ -205,6 +206,7 @@ func StartRecurringTicker() {
 
 		RunBillReminders()
 		RunBudgetAlerts()
+		RunNudgeGeneration()
 
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
@@ -216,6 +218,7 @@ func StartRecurringTicker() {
 			}
 			RunBillReminders()
 			RunBudgetAlerts()
+			RunNudgeGeneration()
 		}
 	}()
 }
@@ -359,4 +362,49 @@ func RunBudgetAlerts() {
 		sent++
 	}
 	log.Printf("budget alerts: sent %d notifications", sent)
+}
+
+// RunNudgeGeneration generates AI nudges for all users and sends push notifications
+// for high-priority ones.
+func RunNudgeGeneration() {
+	client, err := db.New()
+	if err != nil {
+		log.Printf("nudge generation: db error: %v", err)
+		return
+	}
+	defer client.Close()
+
+	rows, err := client.Query(`SELECT DISTINCT id FROM users`)
+	if err != nil {
+		log.Printf("nudge generation: user query error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	totalGenerated := 0
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			continue
+		}
+
+		householdID := db.ResolveHouseholdID(client.Raw(), userID)
+		nudges := ai.GenerateNudges(client.Raw(), userID, householdID)
+		if err := ai.SaveNudges(client.Raw(), nudges); err != nil {
+			log.Printf("nudge generation: save error for user %s: %v", userID, err)
+			continue
+		}
+		totalGenerated += len(nudges)
+
+		// Send push notifications for high-priority nudges (priority <= 3)
+		for _, n := range nudges {
+			if n.Priority <= 3 {
+				SendPushNotification(userID, n.Title, n.Body, map[string]string{
+					"screen": "/(tabs)/nudges",
+					"type":   n.NudgeType,
+				})
+			}
+		}
+	}
+	log.Printf("nudge generation: created %d nudges", totalGenerated)
 }

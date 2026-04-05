@@ -13,6 +13,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'com.github.aboogie.budgetapp',
+    usesAppleSignIn: true,
   },
   android: {
     adaptiveIcon: {
@@ -46,6 +47,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     'expo-font',
+    'expo-apple-authentication',
     'expo-web-browser',
     '@react-native-community/datetimepicker',
   ],
@@ -59,6 +61,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   extra: {
     API_URL: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080',
+    GOOGLE_IOS_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
+    GOOGLE_ANDROID_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
+    GOOGLE_WEB_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',
     router: {},
     eas: {
       projectId: '15c3004a-989d-45ed-ae17-903dae308ca9',

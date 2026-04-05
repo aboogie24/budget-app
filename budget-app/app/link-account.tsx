@@ -7,12 +7,15 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
+import { WebView } from 'react-native-webview';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { fetchLinkedAccounts, deleteLinkedAccount, syncPlaidTransactions, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
@@ -31,8 +34,17 @@ type LinkedAccount = {
   id: string;
   institution_name: string;
   item_id: string;
+  provider?: string;
   created_at: string;
 };
+
+type ProviderInfo = {
+  name: string;
+  label?: string;
+  description?: string;
+};
+
+type SelectedProvider = 'plaid' | 'flinks' | null;
 
 export default function LinkAccountScreen() {
   const router = useRouter();
@@ -45,6 +57,17 @@ export default function LinkAccountScreen() {
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
+  /* ── Provider selection state ────────────────────────────────── */
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [loadingProviders, setLoadingProviders] = useState(true);
+  const [selectedProvider, setSelectedProvider] = useState<SelectedProvider>(null);
+  const [showProviderSelection, setShowProviderSelection] = useState(false);
+
+  /* ── Flinks state ────────────────────────────────────────────── */
+  const [flinksWebViewVisible, setFlinksWebViewVisible] = useState(false);
+  const [flinksConnectUrl, setFlinksConnectUrl] = useState<string | null>(null);
+  const [flinksLoading, setFlinksLoading] = useState(false);
+
   /* ── Check native SDK availability ────────────────────────── */
   const plaidModule: any = PlaidLink;
   const nativeHook =
@@ -52,6 +75,30 @@ export default function LinkAccountScreen() {
     plaidModule?.default?.usePlaidLink ??
     undefined;
   const nativeAvailable = typeof nativeHook === 'function';
+
+  /* ── Fetch available providers ──────────────────────────────── */
+  const fetchProviders = async () => {
+    setLoadingProviders(true);
+    try {
+      const data = await api.get<ProviderInfo[]>('/auth/bank/providers');
+      const list = Array.isArray(data) ? data : [];
+      setProviders(list);
+
+      // If only Plaid is available, skip provider selection
+      const flinksAvailable = list.some((p) => p.name === 'flinks');
+      if (!flinksAvailable) {
+        setShowProviderSelection(false);
+      } else {
+        setShowProviderSelection(true);
+      }
+    } catch {
+      // If providers endpoint fails, fall back to Plaid-only
+      setProviders([{ name: 'plaid' }]);
+      setShowProviderSelection(false);
+    } finally {
+      setLoadingProviders(false);
+    }
+  };
 
   /* ── Load linked accounts ───────────────────────────────────── */
   const loadAccounts = useCallback(async () => {
@@ -77,7 +124,7 @@ export default function LinkAccountScreen() {
     setLoading(true);
     try {
       const data = await api.get(`/auth/link_token`, { user_id: user.id });
-      setLinkToken(data.link_token);
+      setLinkToken((data as any).link_token);
       setError(null);
     } catch (e: any) {
       console.error(e);
@@ -90,15 +137,17 @@ export default function LinkAccountScreen() {
   useEffect(() => {
     loadAccounts();
     fetchLinkToken();
+    fetchProviders();
   }, []);
 
-  /* ── Exchange public token with backend ───────────────────── */
+  /* ── Exchange public token with backend (Plaid) ──────────── */
   const exchangeToken = async (
     publicToken: string,
     institutionName?: string,
   ) => {
     try {
-      const res = await fetch(`${API_URL}/auth/exchange_token`, {
+      const baseUrl = api.getBaseUrl();
+      const res = await fetch(`${baseUrl}/auth/exchange_token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -144,7 +193,8 @@ export default function LinkAccountScreen() {
     if (!linkToken) return;
     setLinking(true);
     try {
-      const url = `${API_URL}/plaid/link-page?token=${encodeURIComponent(linkToken)}`;
+      const baseUrl = api.getBaseUrl();
+      const url = `${baseUrl}/plaid/link-page?token=${encodeURIComponent(linkToken)}`;
       const result = await WebBrowser.openAuthSessionAsync(url, `${APP_SCHEME}://`);
 
       if (result.type === 'success' && result.url) {
@@ -168,6 +218,85 @@ export default function LinkAccountScreen() {
     } finally {
       setLinking(false);
       fetchLinkToken();
+    }
+  };
+
+  /* ── Flinks Connect flow ────────────────────────────────────── */
+  const openFlinksConnect = async () => {
+    setFlinksLoading(true);
+    try {
+      const data = await api.post<{ authorize_token: string; connect_url: string }>(
+        '/auth/flinks/authorize-token',
+      );
+      if (!data?.connect_url) {
+        throw new Error('No connect URL received from server.');
+      }
+      // Append the authorize token as a query param if not already present
+      let connectUrl = data.connect_url;
+      if (data.authorize_token && !connectUrl.includes('authorizeToken=')) {
+        const separator = connectUrl.includes('?') ? '&' : '?';
+        connectUrl += `${separator}authorizeToken=${encodeURIComponent(data.authorize_token)}`;
+      }
+      setFlinksConnectUrl(connectUrl);
+      setFlinksWebViewVisible(true);
+    } catch (e: any) {
+      console.error('Flinks authorize error:', e);
+      Alert.alert('Error', 'Failed to start Flinks connection: ' + (e.message || String(e)));
+    } finally {
+      setFlinksLoading(false);
+    }
+  };
+
+  /* ── Extract query param from URL ──────────────────────────── */
+  const extractParam = (url: string, param: string): string | null => {
+    try {
+      // Handle both full URLs and deep-link URLs
+      const safeUrl = url.startsWith('http') ? url : `https://app/${url}`;
+      const parsed = new URL(safeUrl);
+      return parsed.searchParams.get(param);
+    } catch {
+      // Fallback regex extraction
+      const match = url.match(new RegExp(`[?&]${param}=([^&]+)`));
+      return match ? decodeURIComponent(match[1]) : null;
+    }
+  };
+
+  /* ── Handle Flinks WebView navigation ──────────────────────── */
+  const handleFlinksNavigation = async (url: string): Promise<boolean> => {
+    if (url.includes('loginId=') || url.includes('loginId%3D')) {
+      const loginId = extractParam(url, 'loginId');
+      const institution = extractParam(url, 'institution');
+
+      if (loginId) {
+        setFlinksWebViewVisible(false);
+        setFlinksConnectUrl(null);
+        setLinking(true);
+
+        try {
+          await api.post('/auth/flinks/connect', {
+            login_id: loginId,
+            institution: institution ?? '',
+          });
+          Alert.alert('Linked!', 'Bank account connected via Flinks. Data will sync shortly.');
+          loadAccounts();
+        } catch (e: any) {
+          console.error('Flinks connect error:', e);
+          Alert.alert('Error', 'Could not complete Flinks connection: ' + (e.message || String(e)));
+        } finally {
+          setLinking(false);
+        }
+        return false; // prevent WebView from loading this URL
+      }
+    }
+    return true;
+  };
+
+  /* ── Handle Connect button press ───────────────────────────── */
+  const handleConnectPress = () => {
+    if (selectedProvider === 'plaid') {
+      openPlaidBrowser();
+    } else if (selectedProvider === 'flinks') {
+      openFlinksConnect();
     }
   };
 
@@ -221,12 +350,196 @@ export default function LinkAccountScreen() {
     }
   };
 
+  /* ── Provider badge helper ──────────────────────────────────── */
+  const getProviderBadge = (provider?: string) => {
+    if (!provider) return null;
+    const label = provider.charAt(0).toUpperCase() + provider.slice(1);
+    const color = provider === 'flinks' ? '#34d399' : '#60a5fa';
+    return (
+      <View style={[styles.providerBadge, { backgroundColor: `${color}20` }]}>
+        <Text style={[styles.providerBadgeText, { color }]}>{label}</Text>
+      </View>
+    );
+  };
+
+  /* ── Provider selection cards ────────────────────────────────── */
+  const renderProviderSelection = () => {
+    const isFlinksAvailable = providers.some((p) => p.name === 'flinks');
+    if (!isFlinksAvailable) return null;
+
+    return (
+      <View style={styles.providerSection}>
+        <Text style={styles.providerSectionTitle}>Choose a provider</Text>
+
+        {/* Plaid Card */}
+        <TouchableOpacity
+          style={[
+            styles.providerCard,
+            selectedProvider === 'plaid' && styles.providerCardSelected,
+          ]}
+          onPress={() => setSelectedProvider('plaid')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.providerCardRow}>
+            <View style={[styles.providerIconWrap, { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
+              <Ionicons name="card-outline" size={24} color="#60a5fa" />
+            </View>
+            <View style={styles.providerCardText}>
+              <Text style={styles.providerName}>Plaid</Text>
+              <Text style={styles.providerDesc}>
+                Connect to 12,000+ US financial institutions
+              </Text>
+            </View>
+            {selectedProvider === 'plaid' && (
+              <View style={styles.providerCheck}>
+                <Ionicons name="checkmark-circle" size={24} color="#a855f7" />
+              </View>
+            )}
+          </View>
+          <View style={styles.featureRow}>
+            <View style={styles.featureItem}>
+              <Ionicons name="checkmark" size={14} color="#94a3b8" />
+              <Text style={styles.featureText}>Instant verification</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <Ionicons name="checkmark" size={14} color="#94a3b8" />
+              <Text style={styles.featureText}>Real-time updates</Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {/* Flinks Card */}
+        <TouchableOpacity
+          style={[
+            styles.providerCard,
+            selectedProvider === 'flinks' && styles.providerCardSelected,
+          ]}
+          onPress={() => setSelectedProvider('flinks')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.providerCardRow}>
+            <View style={[styles.providerIconWrap, { backgroundColor: 'rgba(52,211,153,0.12)' }]}>
+              <Ionicons name="globe-outline" size={24} color="#34d399" />
+            </View>
+            <View style={styles.providerCardText}>
+              <Text style={styles.providerName}>Flinks</Text>
+              <Text style={styles.providerDesc}>
+                Connect to 15,000+ North American institutions
+              </Text>
+            </View>
+            {selectedProvider === 'flinks' && (
+              <View style={styles.providerCheck}>
+                <Ionicons name="checkmark-circle" size={24} color="#a855f7" />
+              </View>
+            )}
+          </View>
+          <View style={styles.featureRow}>
+            <View style={styles.featureItem}>
+              <Ionicons name="checkmark" size={14} color="#94a3b8" />
+              <Text style={styles.featureText}>Strong Canadian coverage</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <Ionicons name="checkmark" size={14} color="#94a3b8" />
+              <Text style={styles.featureText}>OAuth + screen scraping</Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {/* Connect button */}
+        <TouchableOpacity
+          style={[
+            styles.button,
+            (!selectedProvider || linking || flinksLoading) && styles.buttonDisabled,
+          ]}
+          onPress={handleConnectPress}
+          disabled={!selectedProvider || linking || flinksLoading}
+          activeOpacity={0.8}
+        >
+          {(linking || flinksLoading) ? (
+            <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+          ) : (
+            <Ionicons
+              name={selectedProvider === 'flinks' ? 'globe-outline' : 'shield-checkmark-outline'}
+              size={20}
+              color="#fff"
+              style={{ marginRight: 8 }}
+            />
+          )}
+          <Text style={styles.buttonText}>
+            {linking || flinksLoading
+              ? `Connecting via ${selectedProvider === 'flinks' ? 'Flinks' : 'Plaid'}...`
+              : selectedProvider
+              ? `Connect with ${selectedProvider === 'flinks' ? 'Flinks' : 'Plaid'}`
+              : 'Select a provider'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  /* ── Flinks WebView Modal ───────────────────────────────────── */
+  const renderFlinksWebView = () => (
+    <Modal
+      visible={flinksWebViewVisible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={() => {
+        setFlinksWebViewVisible(false);
+        setFlinksConnectUrl(null);
+      }}
+    >
+      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
+        <SafeAreaView style={styles.webViewSafeArea}>
+          <View style={styles.webViewHeader}>
+            <TouchableOpacity
+              style={styles.webViewCloseBtn}
+              onPress={() => {
+                setFlinksWebViewVisible(false);
+                setFlinksConnectUrl(null);
+              }}
+            >
+              <Ionicons name="close" size={22} color="#c084fc" />
+            </TouchableOpacity>
+            <Text style={styles.webViewTitle}>Connect with Flinks</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          {flinksConnectUrl && (
+            <WebView
+              source={{ uri: flinksConnectUrl }}
+              style={styles.webView}
+              onNavigationStateChange={(navState) => {
+                handleFlinksNavigation(navState.url);
+              }}
+              onShouldStartLoadWithRequest={(request) => {
+                // Check if this is the success redirect
+                if (request.url.includes('loginId=')) {
+                  handleFlinksNavigation(request.url);
+                  return false;
+                }
+                return true;
+              }}
+              startInLoadingState
+              renderLoading={() => (
+                <View style={styles.webViewLoading}>
+                  <ActivityIndicator size="large" color="#c084fc" />
+                  <Text style={styles.webViewLoadingText}>Loading Flinks Connect...</Text>
+                </View>
+              )}
+              javaScriptEnabled
+              domStorageEnabled
+            />
+          )}
+        </SafeAreaView>
+      </LinearGradient>
+    </Modal>
+  );
+
   /* ── Render: loading state ──────────────────────────────────── */
-  if (loadingAccounts) {
+  if (loadingAccounts || loadingProviders) {
     return (
       <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
         <SafeAreaView style={styles.safeArea}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/settings')}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={22} color="#c084fc" />
           </TouchableOpacity>
           <View style={styles.centerContent}>
@@ -238,7 +551,7 @@ export default function LinkAccountScreen() {
   }
 
   /* ── Render: native SDK path (no linked accounts yet) ───────── */
-  if (nativeAvailable && linkToken && accounts.length === 0) {
+  if (nativeAvailable && linkToken && accounts.length === 0 && !showProviderSelection) {
     return <NativePlaidFlow linkToken={linkToken} exchangeToken={exchangeToken} />;
   }
 
@@ -249,11 +562,15 @@ export default function LinkAccountScreen() {
       style={styles.container}
     >
       <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/settings')}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={22} color="#c084fc" />
         </TouchableOpacity>
 
-        <View style={styles.centerContent}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.heroWrap}>
             <View style={styles.iconCircle}>
               <Ionicons name="link-outline" size={40} color="#c084fc" />
@@ -271,36 +588,32 @@ export default function LinkAccountScreen() {
           {error && <Text style={styles.error}>{error}</Text>}
 
           {/* ── Linked accounts list ── */}
-          {accounts.length > 0 && (
-            <FlatList
-              data={accounts}
-              keyExtractor={(item) => item.id}
-              style={styles.list}
-              contentContainerStyle={{ paddingBottom: 8 }}
-              renderItem={({ item }) => (
-                <View style={styles.accountCard}>
-                  <View style={styles.accountIcon}>
-                    <Ionicons name="business-outline" size={22} color="#c084fc" />
-                  </View>
-                  <View style={styles.accountInfo}>
+          {accounts.length > 0 &&
+            accounts.map((item) => (
+              <View key={item.id} style={styles.accountCard}>
+                <View style={styles.accountIcon}>
+                  <Ionicons name="business-outline" size={22} color="#c084fc" />
+                </View>
+                <View style={styles.accountInfo}>
+                  <View style={styles.accountNameRow}>
                     <Text style={styles.accountName}>
                       {item.institution_name || 'Bank Account'}
                     </Text>
-                    <Text style={styles.accountMeta}>
-                      Linked {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
-                    </Text>
+                    {getProviderBadge(item.provider)}
                   </View>
-                  <TouchableOpacity
-                    style={styles.unlinkBtn}
-                    onPress={() => handleUnlink(item)}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  >
-                    <Ionicons name="trash-outline" size={18} color="#f87171" />
-                  </TouchableOpacity>
+                  <Text style={styles.accountMeta}>
+                    Linked {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
+                  </Text>
                 </View>
-              )}
-            />
-          )}
+                <TouchableOpacity
+                  style={styles.unlinkBtn}
+                  onPress={() => handleUnlink(item)}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#f87171" />
+                </TouchableOpacity>
+              </View>
+            ))}
 
           {/* ── Sync button ── */}
           {accounts.length > 0 && (
@@ -316,13 +629,15 @@ export default function LinkAccountScreen() {
                 <Ionicons name="sync-outline" size={18} color="#c084fc" style={{ marginRight: 8 }} />
               )}
               <Text style={styles.syncButtonText}>
-                {syncing ? 'Syncing…' : 'Sync Now'}
+                {syncing ? 'Syncing...' : 'Sync Now'}
               </Text>
             </TouchableOpacity>
           )}
 
-          {/* ── Add account button ── */}
-          {loading || !linkToken ? (
+          {/* ── Provider selection or direct Plaid button ── */}
+          {showProviderSelection ? (
+            renderProviderSelection()
+          ) : loading || !linkToken ? (
             <ActivityIndicator size="large" color="#c084fc" style={{ marginTop: 24 }} />
           ) : (
             <TouchableOpacity
@@ -343,7 +658,7 @@ export default function LinkAccountScreen() {
               )}
               <Text style={styles.buttonText}>
                 {linking
-                  ? 'Opening Plaid…'
+                  ? 'Opening Plaid...'
                   : accounts.length > 0
                   ? 'Link Another Account'
                   : 'Connect with Plaid'}
@@ -357,8 +672,11 @@ export default function LinkAccountScreen() {
               Bank-level encryption · Read-only access
             </Text>
           </View>
-        </View>
+        </ScrollView>
       </SafeAreaView>
+
+      {/* ── Flinks WebView modal ── */}
+      {renderFlinksWebView()}
     </LinearGradient>
   );
 }
@@ -397,7 +715,7 @@ function NativePlaidFlow({
       style={styles.container}
     >
       <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/settings')}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={22} color="#c084fc" />
         </TouchableOpacity>
 
@@ -420,7 +738,7 @@ function NativePlaidFlow({
           >
             <Ionicons name="shield-checkmark-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
             <Text style={styles.buttonText}>
-              {ready ? 'Connect with Plaid' : 'Preparing…'}
+              {ready ? 'Connect with Plaid' : 'Preparing...'}
             </Text>
           </TouchableOpacity>
 
@@ -440,6 +758,8 @@ function NativePlaidFlow({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: 24 },
+  scrollView: { flex: 1 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingBottom: 40 },
   backBtn: {
     marginTop: 12,
     width: 40,
@@ -486,6 +806,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 16,
     marginBottom: 10,
+    marginHorizontal: 8,
     borderWidth: 1,
     borderColor: 'rgba(192,132,252,0.15)',
   },
@@ -499,6 +820,11 @@ const styles = StyleSheet.create({
     marginRight: 14,
   },
   accountInfo: { flex: 1 },
+  accountNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   accountName: {
     color: '#fff',
     fontSize: 16,
@@ -550,4 +876,136 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   trustText: { color: '#94a3b8', fontSize: 12 },
+
+  /* ── Provider selection styles ── */
+  providerSection: {
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  providerSectionTitle: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 12,
+    marginLeft: 20,
+  },
+  providerCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+  providerCardSelected: {
+    borderColor: '#a855f7',
+    borderWidth: 2,
+    backgroundColor: 'rgba(168,85,247,0.06)',
+  },
+  providerCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  providerIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  providerCardText: {
+    flex: 1,
+  },
+  providerName: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  providerDesc: {
+    color: '#94a3b8',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  providerCheck: {
+    marginLeft: 8,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+    paddingLeft: 62,
+    gap: 16,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  featureText: {
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+
+  /* ── Provider badge styles ── */
+  providerBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  providerBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  /* ── Flinks WebView modal styles ── */
+  webViewSafeArea: {
+    flex: 1,
+  },
+  webViewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  webViewCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  webViewTitle: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  webView: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  webViewLoading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0b1021',
+  },
+  webViewLoadingText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    marginTop: 12,
+  },
 });

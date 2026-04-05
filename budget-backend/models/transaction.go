@@ -18,4 +18,7 @@ type Transaction struct {
 	Category  *string   `json:"category_name"` // category name
 	Color     *string   `json:"color"`         // nullable category color
 	Source    *string   `json:"source,omitempty"` // manual or bank
+	MatchConfidence *string `json:"match_confidence,omitempty"`
+	MatchedRuleID   *string `json:"matched_rule_id,omitempty"`
+	UserVerified    bool    `json:"user_verified"`
 }

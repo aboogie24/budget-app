@@ -22,6 +22,7 @@ services:
       PG_USER: budget_user
       PG_PASS: budget_pass
       PG_DB: budget_db
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
   migrate:
     image: migrate/migrate

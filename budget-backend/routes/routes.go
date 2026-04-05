@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/aboogie/budget-backend/handlers"
+	"github.com/aboogie/budget-backend/internal/flinks"
 	plaidclient "github.com/aboogie/budget-backend/internal/plaid"
 	"github.com/aboogie/budget-backend/middleware"
 
@@ -16,6 +17,12 @@ func SetupRoutes(r *mux.Router) {
 
 	plaid := plaidclient.NewClient()
 
+	// Initialize Flinks client (logs availability)
+	flinksClient := flinks.NewClient()
+	if flinksClient.IsAvailable() {
+		log.Println("Flinks client initialized (env=" + flinksClient.Env() + ")")
+	}
+
 	r.Use(middleware.RecoveryMiddleware)
 	r.Use(middleware.Logging)
 
@@ -23,8 +30,13 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.Use(middleware.RequireAuth)
 
 	// Transactions
+	authRoutes.HandleFunc("/transactions/backfill-categories", handlers.BackfillTransactionCategories).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
+	authRoutes.HandleFunc("/transactions/{id}/split", handlers.SplitTransaction).Methods("POST")
+	authRoutes.HandleFunc("/transactions/{id}/split", handlers.GetTransactionSplits).Methods("GET")
+	authRoutes.HandleFunc("/transactions/{id}/split", handlers.UpdateTransactionSplits).Methods("PUT")
+	authRoutes.HandleFunc("/transactions/{id}/split", handlers.DeleteTransactionSplits).Methods("DELETE")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.UpdateTransaction).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
 	authRoutes.HandleFunc("/savings-goals", handlers.ListSavingsGoals).Methods("GET")
@@ -37,6 +49,8 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/debts", handlers.CreateDebt).Methods("POST")
 	authRoutes.HandleFunc("/debts/{id}", handlers.UpdateDebt).Methods("PUT")
 	authRoutes.HandleFunc("/debts/{id}/payment", handlers.ApplyDebtPayment).Methods("PATCH")
+	authRoutes.HandleFunc("/debts/{id}/category", handlers.UpdateDebtCategory).Methods("PUT")
+	authRoutes.HandleFunc("/debts/grouped", handlers.ListDebtsByCategory).Methods("GET")
 	authRoutes.HandleFunc("/priorities", handlers.ListFinancialPriorities).Methods("GET")
 	authRoutes.HandleFunc("/priorities", handlers.CreateFinancialPriority).Methods("POST")
 	authRoutes.HandleFunc("/priorities/{id}", handlers.UpdateFinancialPriority).Methods("PUT")
@@ -46,6 +60,12 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/trips", handlers.CreateTrip).Methods("POST")
 	authRoutes.HandleFunc("/sharing-preferences", handlers.GetSharingPreferences).Methods("GET")
 	authRoutes.HandleFunc("/sharing-preferences", handlers.UpsertSharingPreferences).Methods("POST")
+	authRoutes.HandleFunc("/bank/sync", handlers.SyncBankAccount).Methods("POST")
+	authRoutes.HandleFunc("/bank/providers", handlers.GetBankProviders).Methods("GET")
+
+	// Flinks (bank connection)
+	authRoutes.HandleFunc("/flinks/authorize-token", handlers.FlinksAuthorizeToken).Methods("POST")
+	authRoutes.HandleFunc("/flinks/connect", handlers.FlinksConnect).Methods("POST")
 	authRoutes.HandleFunc("/plaid/sync", handlers.SyncTransactions(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.SyncInvestments(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.GetInvestmentHoldings).Methods("GET")
@@ -68,9 +88,11 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/bills/{id}/pay", handlers.MarkBillPaid).Methods("POST")
 	authRoutes.HandleFunc("/bills/{id}/payments", handlers.ListBillPayments).Methods("GET")
 
-	// Auth (Login, Register)
+	// Auth (Login, Register, OAuth)
 	r.HandleFunc("/users/register", handlers.RegisterUser).Methods("POST")
 	r.HandleFunc("/users/login", handlers.LoginUser).Methods("POST")
+	r.HandleFunc("/users/oauth/google", handlers.GoogleOAuth).Methods("POST")
+	r.HandleFunc("/users/oauth/apple", handlers.AppleOAuth).Methods("POST")
 
 	// User (Logut)
 	r.HandleFunc("/user/logout", handlers.LogoutUser).Methods("POST")
@@ -82,10 +104,18 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/categories/{id}", handlers.UpdateCategory).Methods("PUT")
 	authRoutes.HandleFunc("/categories/{id}", handlers.DeleteCategory).Methods("DELETE")
 
+	// Category Mapping Rules (behind auth)
+	authRoutes.HandleFunc("/category-rules", handlers.ListCategoryRules).Methods("GET")
+	authRoutes.HandleFunc("/category-rules", handlers.CreateCategoryRule).Methods("POST")
+	authRoutes.HandleFunc("/category-rules/from-edit", handlers.CreateRuleFromEdit).Methods("POST")
+	authRoutes.HandleFunc("/category-rules/{id}", handlers.UpdateCategoryRule).Methods("PUT")
+	authRoutes.HandleFunc("/category-rules/{id}", handlers.DeleteCategoryRule).Methods("DELETE")
+
 	// Budgets (behind auth)
 	authRoutes.HandleFunc("/budgets", handlers.CreateBudget).Methods("POST")
 	authRoutes.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
 	authRoutes.HandleFunc("/budgets/user/{user_id}/summary", handlers.GetBudgetSummary).Methods("GET")
+	authRoutes.HandleFunc("/budgets/{id}", handlers.GetBudgetByID).Methods("GET")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
 
@@ -101,6 +131,9 @@ func SetupRoutes(r *mux.Router) {
 
 	// Plaid webhooks (public — receives real-time updates from Plaid)
 	r.HandleFunc("/webhooks/plaid", handlers.HandlePlaidWebhook(plaid)).Methods("POST")
+
+	// Flinks webhooks (public — no auth)
+	r.HandleFunc("/webhooks/flinks", handlers.FlinksWebhook).Methods("POST")
 
 	// Push Notifications (behind auth)
 	authRoutes.HandleFunc("/push-token", handlers.RegisterPushToken).Methods("POST")
@@ -136,5 +169,42 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/currencies", handlers.GetSupportedCurrencies).Methods("GET")
 	authRoutes.HandleFunc("/currencies/default", handlers.GetUserCurrency).Methods("GET")
 	authRoutes.HandleFunc("/currencies/default", handlers.SetUserCurrency).Methods("PUT")
+
+	// AI Chat (behind auth)
+	authRoutes.HandleFunc("/ai/conversations", handlers.CreateAIConversation).Methods("POST")
+	authRoutes.HandleFunc("/ai/conversations", handlers.ListAIConversations).Methods("GET")
+	authRoutes.HandleFunc("/ai/conversations/{id}", handlers.GetAIConversation).Methods("GET")
+	authRoutes.HandleFunc("/ai/conversations/{id}/messages", handlers.SendAIMessage).Methods("POST")
+	authRoutes.HandleFunc("/ai/conversations/{id}", handlers.DeleteAIConversation).Methods("DELETE")
+
+	// Financial Plans (behind auth)
+	authRoutes.HandleFunc("/plans", handlers.CreatePlan).Methods("POST")
+	authRoutes.HandleFunc("/plans", handlers.ListPlans).Methods("GET")
+	authRoutes.HandleFunc("/plans/{id}", handlers.GetPlan).Methods("GET")
+	authRoutes.HandleFunc("/plans/{id}", handlers.UpdatePlan).Methods("PUT")
+	authRoutes.HandleFunc("/plans/{id}", handlers.DeletePlan).Methods("DELETE")
+	authRoutes.HandleFunc("/plans/{id}/approve", handlers.ApprovePlan).Methods("POST")
+	authRoutes.HandleFunc("/plans/{id}/reject", handlers.RejectPlan).Methods("POST")
+	authRoutes.HandleFunc("/plans/{id}/approvals", handlers.GetPlanApprovals).Methods("GET")
+
+	// Milestones
+	authRoutes.HandleFunc("/plans/{id}/milestones", handlers.CreateMilestone).Methods("POST")
+	authRoutes.HandleFunc("/plans/{planId}/milestones/{milestoneId}", handlers.UpdateMilestone).Methods("PUT")
+
+	// Snapshots & Progress
+	authRoutes.HandleFunc("/plans/{id}/snapshots", handlers.CreateSnapshot).Methods("POST")
+	authRoutes.HandleFunc("/plans/{id}/progress", handlers.GetPlanProgress).Methods("GET")
+
+	// Framework Level
+	authRoutes.HandleFunc("/ai/framework-level", handlers.GetFrameworkLevel).Methods("GET")
+
+	// AI Nudges
+	authRoutes.HandleFunc("/ai/nudges", handlers.GetNudges).Methods("GET")
+	authRoutes.HandleFunc("/ai/nudges/generate", handlers.GenerateNudgesNow).Methods("POST")
+	authRoutes.HandleFunc("/ai/nudges/{id}/dismiss", handlers.DismissNudge).Methods("POST")
+
+	// What-if & Monthly Review
+	authRoutes.HandleFunc("/ai/what-if", handlers.SimulateWhatIf).Methods("POST")
+	authRoutes.HandleFunc("/ai/monthly-review", handlers.GetMonthlyReview).Methods("GET")
 
 }

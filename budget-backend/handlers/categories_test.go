@@ -16,7 +16,12 @@ import (
 
 func TestCreateCategory_ValidCreation(t *testing.T) {
 	categoryID := uuid.Must(uuid.NewV4())
-	userID := uuid.Must(uuid.NewV4())
+
+	withCategoriesMockDB(t, func(mock sqlmock.Sqlmock) {
+		// INSERT category
+		mock.ExpectExec(`INSERT INTO categories`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	})
 
 	body := map[string]interface{}{
 		"id":    categoryID.String(),
@@ -330,7 +335,12 @@ func withCategoriesMockDB(t *testing.T, setup func(sqlmock.Sqlmock)) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	t.Cleanup(func() { mockSQL.Close() })
+
+	cleanup := db.OverridePool(mockSQL)
+	t.Cleanup(func() {
+		cleanup()
+		mockSQL.Close()
+	})
 
 	setup(mock)
 }

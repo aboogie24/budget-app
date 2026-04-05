@@ -23,6 +23,7 @@ interface Transaction {
   amount: number;
   category_id?: string;
   category?: string;
+  category_name?: string;
   note?: string;
   type: 'income' | 'expense';
   frequency?: string;
@@ -58,7 +59,7 @@ export default function EditTransactionScreen() {
         }
 
         // Fetch all transactions and find the one matching the ID
-        const transactions = await api.get(`/auth/transactions`);
+        const transactions = await api.get(`/auth/transactions`, { user_id: currentUser.id });
         const transaction = transactions.find(
           (t: Transaction) => t.id === transactionId
         );
@@ -70,7 +71,7 @@ export default function EditTransactionScreen() {
 
         // Pre-fill the form with current values
         setAmount(String(transaction.amount || ''));
-        setCategory(transaction.category || '');
+        setCategory(transaction.category_name || transaction.category || '');
         setNote(transaction.note || '');
         setType(transaction.type || 'expense');
         setFrequency(transaction.frequency || 'one-time');
@@ -165,10 +166,13 @@ export default function EditTransactionScreen() {
 
       // Prepare update payload
       const updatePayload = {
+        user_id: currentUser?.id,
+        type,
         amount: parseFloat(amount),
         category_id: selectedCategory?.id,
-        category: selectedCategory?.name,
+        category_name: selectedCategory?.name,
         note,
+        date: new Date().toISOString(),
         frequency,
         due_day:
           frequency === 'monthly' && type === 'expense' ? parseInt(dueDay) : null,
@@ -229,23 +233,33 @@ export default function EditTransactionScreen() {
             <View style={{ width: 40 }} />
           </View>
 
-          <View style={styles.typePill}>
-            <Ionicons
-              name={type === 'income' ? 'trending-up' : 'card-outline'}
-              size={18}
-              color={type === 'income' ? '#34d399' : '#f472b6'}
-            />
-            <Text
-              style={[
-                styles.typePillText,
-                { color: type === 'income' ? '#34d399' : '#f472b6' },
-              ]}
+          {/* Type toggle */}
+          <View style={styles.typeToggle}>
+            <TouchableOpacity
+              style={[styles.typeToggleBtn, type === 'expense' && styles.typeToggleBtnActiveExpense]}
+              onPress={() => setType('expense')}
             >
-              {type === 'income' ? 'Income' : 'Expense'}
-            </Text>
+              <Ionicons name="card-outline" size={16} color={type === 'expense' ? '#f87171' : '#94a3b8'} />
+              <Text style={[styles.typeToggleText, type === 'expense' && { color: '#f87171', fontWeight: '700' }]}>Expense</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.typeToggleBtn, type === 'income' && styles.typeToggleBtnActiveIncome]}
+              onPress={() => setType('income')}
+            >
+              <Ionicons name="trending-up" size={16} color={type === 'income' ? '#34d399' : '#94a3b8'} />
+              <Text style={[styles.typeToggleText, type === 'income' && { color: '#34d399', fontWeight: '700' }]}>Income</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
+            <LabeledInput
+              label="Name"
+              icon="text-outline"
+              placeholder={type === 'income' ? 'e.g. Paycheck, Freelance gig' : 'e.g. Coffee, Uber, Amazon'}
+              value={note}
+              onChangeText={setNote}
+            />
+
             <LabeledInput
               label="Amount"
               icon="cash-outline"
@@ -280,14 +294,6 @@ export default function EditTransactionScreen() {
                   ))}
               </View>
             )}
-
-            <LabeledInput
-              label="Note (optional)"
-              icon="create-outline"
-              placeholder="Add a quick note"
-              value={note}
-              onChangeText={setNote}
-            />
 
             <Text style={styles.label}>Frequency</Text>
             <View style={styles.frequencyRow}>
@@ -499,22 +505,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
-  typePill: {
+  typeToggle: {
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
-    alignSelf: 'flex-start',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
     marginBottom: 14,
   },
-  typePillText: {
-    fontWeight: '700',
+  typeToggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  typeToggleBtnActiveExpense: {
+    backgroundColor: 'rgba(248,113,113,0.1)',
+    borderColor: 'rgba(248,113,113,0.3)',
+  },
+  typeToggleBtnActiveIncome: {
+    backgroundColor: 'rgba(52,211,153,0.1)',
+    borderColor: 'rgba(52,211,153,0.3)',
+  },
+  typeToggleText: {
     fontSize: 14,
+    color: '#94a3b8',
   },
   errorText: {
     color: '#f87171',

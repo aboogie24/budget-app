@@ -152,7 +152,7 @@ export async function fetchSpendingAlerts() {
 export async function checkBudgetThresholds() {
   const userId = await api.getUserId();
   if (!userId) throw new Error('User not found');
-  const response = await api.post<{ alerts: any[] }>('/auth/spending-alerts/check', { user_id: userId });
+  const response = await api.post<{ alerts: any[] }>(`/auth/spending-alerts/check?user_id=${userId}`);
   return response?.alerts ?? [];
 }
 

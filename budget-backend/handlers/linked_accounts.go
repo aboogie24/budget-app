@@ -28,13 +28,13 @@ func ListLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 	var rows *sql.Rows
 	if householdID != "" {
 		rows, err = client.Query(`
-			SELECT id, user_id, household_id, item_id, institution_name, created_at, updated_at
+			SELECT id, user_id, household_id, item_id, institution_name, created_at, updated_at, provider
 			FROM linked_accounts
 			WHERE user_id = $1 AND (household_id = $2 OR household_id IS NULL)
 		`, userID, householdID)
 	} else {
 		rows, err = client.Query(`
-			SELECT id, user_id, household_id, item_id, institution_name, created_at, updated_at
+			SELECT id, user_id, household_id, item_id, institution_name, created_at, updated_at, provider
 			FROM linked_accounts
 			WHERE user_id = $1
 		`, userID)
@@ -48,11 +48,11 @@ func ListLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 	var out []map[string]any
 	for rows.Next() {
 		var (
-			id, uid, itemID, inst string
-			hh                     *string
-			created, updated       any
+			id, uid, itemID, inst, provider string
+			hh                               *string
+			created, updated                 any
 		)
-		if err := rows.Scan(&id, &uid, &hh, &itemID, &inst, &created, &updated); err != nil {
+		if err := rows.Scan(&id, &uid, &hh, &itemID, &inst, &created, &updated, &provider); err != nil {
 			http.Error(w, "scan error", http.StatusInternalServerError)
 			return
 		}
@@ -64,6 +64,7 @@ func ListLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 			"institution_name": inst,
 			"created_at":       created,
 			"updated_at":       updated,
+			"provider":         provider,
 		})
 	}
 

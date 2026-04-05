@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,8 +17,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { v4 as uuidv4 } from 'uuid';
 import 'react-native-get-random-values';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Google from 'expo-auth-session/providers/google';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import Constants from 'expo-constants';
 import { api } from '@/utils/apiClient';
 import { successHaptic, errorHaptic } from '@/utils/haptics';
+
+const GOOGLE_CLIENT_IDS = {
+  iosClientId: Constants.expoConfig?.extra?.GOOGLE_IOS_CLIENT_ID ?? '',
+  androidClientId: Constants.expoConfig?.extra?.GOOGLE_ANDROID_CLIENT_ID ?? '',
+  webClientId: Constants.expoConfig?.extra?.GOOGLE_WEB_CLIENT_ID ?? '',
+};
 
 function getPasswordStrength(pw: string) {
   let score = 0;
@@ -46,6 +55,20 @@ export default function RegisterScreen() {
   const API_URL = api.getBaseUrl();
 
   const strength = useMemo(() => getPasswordStrength(password), [password]);
+
+  // Google Sign-In hook
+  const [googleRequest, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
+    ...GOOGLE_CLIENT_IDS,
+    selectAccount: true,
+  });
+
+  // Handle Google response when it arrives
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const idToken = googleResponse.params.id_token;
+      handleGoogleToken(idToken);
+    }
+  }, [googleResponse]);
 
   const handleRegister = async () => {
     if (submitting) return;
@@ -101,8 +124,7 @@ export default function RegisterScreen() {
       await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
 
       successHaptic();
-      // Go to setup wizard
-      router.replace('/setup');
+      router.replace('/onboarding');
     } catch (err) {
       console.error('Register error:', err);
       errorHaptic();
@@ -112,24 +134,99 @@ export default function RegisterScreen() {
     }
   };
 
-  const handleSSO = (provider: 'google' | 'apple') => {
-    Alert.alert(
-      `${provider === 'google' ? 'Google' : 'Apple'} Sign-In`,
-      'SSO is not configured in this build.',
-      [{ text: 'OK' }]
-    );
+  // Shared helper: save session and navigate after OAuth success
+  const completeOAuthLogin = async (data: any) => {
+    const user = data.user;
+    const session = { ...user, token: data.token };
+    await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
+    successHaptic();
+    router.replace(user.onboarding_complete ? '/(tabs)/dashboard' : '/onboarding');
+  };
+
+  // Google: send ID token to our backend
+  const handleGoogleToken = async (idToken: string) => {
+    if (submitting) return;
+    try {
+      setSubmitting(true);
+      const response = await fetch(`${API_URL}/users/oauth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: idToken }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        errorHaptic();
+        Alert.alert('Google Sign-In failed', errorText || 'Please try again.');
+        return;
+      }
+      const data = await response.json();
+      await completeOAuthLogin(data);
+    } catch (err) {
+      console.error('Google OAuth error:', err);
+      errorHaptic();
+      Alert.alert('Error', 'Could not sign in with Google.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Apple Sign-In handler
+  const handleAppleSignIn = async () => {
+    if (submitting) return;
+    try {
+      if (!(await AppleAuthentication.isAvailableAsync())) {
+        Alert.alert('Not Available', 'Apple Sign-In is not available on this device.');
+        return;
+      }
+      setSubmitting(true);
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      const appleFullName = [credential.fullName?.givenName, credential.fullName?.familyName]
+        .filter(Boolean)
+        .join(' ');
+
+      const response = await fetch(`${API_URL}/users/oauth/apple`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          identity_token: credential.identityToken,
+          email: credential.email ?? '',
+          full_name: appleFullName,
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        errorHaptic();
+        Alert.alert('Apple Sign-In failed', errorText || 'Please try again.');
+        return;
+      }
+      const data = await response.json();
+      await completeOAuthLogin(data);
+    } catch (err: any) {
+      if (err?.code === 'ERR_REQUEST_CANCELED') return; // user cancelled
+      console.error('Apple OAuth error:', err);
+      errorHaptic();
+      Alert.alert('Error', 'Could not sign in with Apple.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <LinearGradient colors={['#0f0a1e', '#1a1225', '#0f0a1e']} style={{ flex: 1 }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.formWrapper}>
+            {/* CoupleFlow logo */}
             <View style={styles.topRow}>
-              <View style={styles.logoBadge}>
-                <Ionicons name="heart-outline" size={18} color="#c084fc" />
-              </View>
-              <Text style={styles.logoText}>CoupleFlow</Text>
+              <Text style={{ color: '#a855f7', fontSize: 18, fontWeight: '700' }}>Couple</Text>
+              <Ionicons name="heart" size={16} color="#ec4899" />
+              <Text style={{ color: '#ec4899', fontSize: 18, fontWeight: '700' }}>Flow</Text>
             </View>
 
             <View style={styles.container}>
@@ -137,7 +234,7 @@ export default function RegisterScreen() {
               <Text style={styles.subtitle}>Start your financial journey together.</Text>
 
               <View style={styles.avatarCircle}>
-                <Ionicons name="person-outline" size={36} color="#c084fc" />
+                <Ionicons name="person-outline" size={32} color="#a855f7" />
               </View>
 
               {/* Full Name */}
@@ -251,14 +348,33 @@ export default function RegisterScreen() {
                 </LinearGradient>
               </TouchableOpacity>
 
-              <Text style={styles.ssoLabel}>Or sign up with</Text>
+              {/* Divider */}
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>Or sign up with</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              {/* OAuth buttons */}
               <View style={styles.ssoRow}>
-                <TouchableOpacity style={styles.ssoBtn} onPress={() => handleSSO('google')}>
-                  <Ionicons name="logo-google" size={20} color="#e5e7eb" />
+                <TouchableOpacity
+                  style={[styles.ssoBtn, !googleRequest && { opacity: 0.4 }]}
+                  onPress={() => promptGoogleAsync()}
+                  disabled={!googleRequest || submitting}
+                >
+                  <Ionicons name="logo-google" size={18} color="#e5e7eb" />
+                  <Text style={styles.ssoBtnText}>Google</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.ssoBtn} onPress={() => handleSSO('apple')}>
-                  <Ionicons name="logo-apple" size={20} color="#e5e7eb" />
-                </TouchableOpacity>
+                {Platform.OS === 'ios' && (
+                  <TouchableOpacity
+                    style={styles.ssoBtn}
+                    onPress={handleAppleSignIn}
+                    disabled={submitting}
+                  >
+                    <Ionicons name="logo-apple" size={18} color="#e5e7eb" />
+                    <Text style={styles.ssoBtnText}>Apple</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               <TouchableOpacity onPress={() => router.replace('/login')} style={styles.loginLink}>
@@ -284,15 +400,9 @@ const styles = StyleSheet.create({
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 16,
+    gap: 4,
+    marginBottom: 32,
   },
-  logoBadge: {
-    backgroundColor: 'rgba(192,132,252,0.15)',
-    padding: 8,
-    borderRadius: 12,
-  },
-  logoText: { color: '#e5e7eb', fontWeight: '700', fontSize: 15 },
   container: {
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: 20,
@@ -303,11 +413,12 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
   },
   title: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '800',
     textAlign: 'center',
-    marginBottom: 4,
-    color: '#f8fafc',
+    marginBottom: 8,
+    color: '#fff',
+    letterSpacing: -0.5,
   },
   subtitle: {
     textAlign: 'center',
@@ -319,13 +430,13 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: 'rgba(192,132,252,0.12)',
+    backgroundColor: 'rgba(168,85,247,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(192,132,252,0.25)',
+    marginBottom: 40,
+    borderWidth: 2,
+    borderColor: 'rgba(168,85,247,0.25)',
   },
   inputRow: {
     backgroundColor: 'rgba(255,255,255,0.06)',
@@ -352,23 +463,38 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   buttonText: { color: '#fff', fontWeight: '800', fontSize: 16 },
-  ssoLabel: {
-    textAlign: 'center',
-    color: '#64748b',
-    fontSize: 12,
-    marginTop: 16,
-    marginBottom: 10,
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 24,
   },
-  ssoRow: { flexDirection: 'row', justifyContent: 'center', gap: 12 },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(100,116,139,0.3)',
+  },
+  dividerText: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  ssoRow: { flexDirection: 'row', gap: 12 },
   ssoBtn: {
+    flex: 1,
+    flexDirection: 'row',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.08)',
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    paddingVertical: 14,
+    backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
+  },
+  ssoBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   loginLink: { marginTop: 16, alignItems: 'center', paddingBottom: 4 },
   loginLinkText: { color: '#94a3b8', fontSize: 14 },

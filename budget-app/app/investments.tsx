@@ -7,11 +7,13 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchInvestmentHoldings, syncPlaidInvestments } from '../utils/api';
+import GradientBackground from '@/components/GradientBackground';
+import { ErrorState } from '@/components/ErrorState';
+import { colors, spacing, glassEffects, typography } from '@/utils/design-system';
 
 type Holding = {
   id: string;
@@ -31,13 +33,16 @@ export default function InvestmentsScreen() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
+      setError(null);
       const data = await fetchInvestmentHoldings();
       setHoldings(data as Holding[]);
     } catch (e) {
       console.error('Failed to load holdings:', e);
+      setError('Failed to load investments');
     } finally {
       setLoading(false);
     }
@@ -54,6 +59,7 @@ export default function InvestmentsScreen() {
       await loadData();
     } catch (e) {
       console.error('Sync failed:', e);
+      setError('Failed to sync investments');
     } finally {
       setSyncing(false);
     }
@@ -68,68 +74,80 @@ export default function InvestmentsScreen() {
     v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple">
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
+            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
+              <Ionicons name="arrow-back" size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Investments</Text>
             <TouchableOpacity onPress={handleSync} disabled={syncing}>
               <Ionicons
                 name={syncing ? 'sync' : 'sync-outline'}
                 size={24}
-                color={syncing ? '#94a3b8' : '#c084fc'}
+                color={syncing ? colors.textMuted : colors.accent}
               />
             </TouchableOpacity>
           </View>
 
+          {/* Error state */}
+          {error && (
+            <ErrorState
+              title="Error"
+              message={error}
+              onRetry={loadData}
+              onDismiss={() => setError(null)}
+            />
+          )}
+
           {/* Summary card */}
-          <View style={styles.summaryCard}>
-            <View style={styles.summaryRow}>
-              <View>
-                <Text style={styles.summaryLabel}>Total Value</Text>
-                <Text style={styles.summaryValue}>{fmt(totalValue)}</Text>
+          {!error && (
+            <View style={styles.summaryCard}>
+              <View style={styles.summaryRow}>
+                <View>
+                  <Text style={styles.summaryLabel}>Total Value</Text>
+                  <Text style={styles.summaryValue}>{fmt(totalValue)}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.summaryLabel}>Gain / Loss</Text>
+                  <Text
+                    style={[
+                      styles.summaryValue,
+                      { color: totalGain >= 0 ? colors.success : colors.error },
+                    ]}
+                  >
+                    {totalGain >= 0 ? '+' : ''}
+                    {fmt(totalGain)}
+                  </Text>
+                </View>
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.summaryLabel}>Gain / Loss</Text>
+              {totalCostBasis > 0 && (
                 <Text
                   style={[
-                    styles.summaryValue,
-                    { color: totalGain >= 0 ? '#34d399' : '#f87171' },
+                    styles.summaryPct,
+                    { color: totalGain >= 0 ? colors.success : colors.error },
                   ]}
                 >
                   {totalGain >= 0 ? '+' : ''}
-                  {fmt(totalGain)}
+                  {gainPercent.toFixed(2)}% overall return
                 </Text>
-              </View>
+              )}
             </View>
-            {totalCostBasis > 0 && (
-              <Text
-                style={[
-                  styles.summaryPct,
-                  { color: totalGain >= 0 ? '#34d399' : '#f87171' },
-                ]}
-              >
-                {totalGain >= 0 ? '+' : ''}
-                {gainPercent.toFixed(2)}% overall return
-              </Text>
-            )}
-          </View>
+          )}
 
-          {loading ? (
-            <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : holdings.length === 0 ? (
+          {!error && loading ? (
+            <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
+          ) : !error && holdings.length === 0 && !loading ? (
             <View style={styles.emptyState}>
-              <Ionicons name="trending-up-outline" size={48} color="#475569" />
+              <Ionicons name="trending-up-outline" size={48} color={colors.textDark} />
               <Text style={styles.emptyText}>No investment holdings</Text>
               <Text style={styles.emptySubtext}>
                 Link a brokerage account to see your investments
               </Text>
             </View>
-          ) : (
+          ) : !error ? (
             holdings.map((h) => {
               const gain = h.cost_basis ? h.institution_value - h.cost_basis : null;
               const pct =
@@ -165,7 +183,7 @@ export default function InvestmentsScreen() {
                       <Text
                         style={[
                           styles.detailText,
-                          { color: gain >= 0 ? '#34d399' : '#f87171' },
+                          { color: gain >= 0 ? colors.success : colors.error },
                         ]}
                       >
                         {gain >= 0 ? '+' : ''}
@@ -176,71 +194,128 @@ export default function InvestmentsScreen() {
                 </View>
               );
             })
-          )}
+          ) : null}
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollContent: {
+    padding: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: 120,
+  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
-  headerTitle: { color: '#f8fafc', fontSize: 20, fontWeight: '800' },
+  headerTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+  },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: colors.borderGlass,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: colors.glassLight,
   },
   summaryCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 16,
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  summaryLabel: { color: '#cbd5e1', fontSize: 12 },
-  summaryValue: { color: '#f8fafc', fontSize: 18, fontWeight: '800', marginTop: 4 },
-  summaryPct: { fontSize: 12, fontWeight: '700', marginTop: 8, textAlign: 'right' },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  summaryLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+  },
+  summaryValue: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: spacing.xs,
+  },
+  summaryPct: {
+    ...typography.caption,
+    fontWeight: '700',
+    marginTop: spacing.sm,
+    textAlign: 'right',
+  },
   card: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 10,
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
-  cardTitle: { color: '#f8fafc', fontWeight: '700', fontSize: 15, flexShrink: 1 },
-  cardValue: { color: '#f8fafc', fontWeight: '800', fontSize: 16, marginLeft: 12 },
-  cardDetails: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
-  detailText: { color: '#94a3b8', fontSize: 12 },
+  cardTitle: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 15,
+    flexShrink: 1,
+  },
+  cardValue: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 16,
+    marginLeft: spacing.md,
+  },
+  cardDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+  },
+  detailText: {
+    color: colors.textMuted,
+    ...typography.caption,
+  },
   tickerBadge: {
     backgroundColor: 'rgba(168,85,247,0.18)',
-    paddingHorizontal: 8,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: 'rgba(168,85,247,0.4)',
   },
-  tickerText: { color: '#c084fc', fontWeight: '800', fontSize: 12 },
-  typeText: { color: '#94a3b8', fontSize: 11, marginTop: 4, textTransform: 'capitalize' },
-  emptyState: { alignItems: 'center', marginTop: 60, gap: 8 },
-  emptyText: { color: '#e5e7eb', fontWeight: '700', fontSize: 16 },
-  emptySubtext: { color: '#94a3b8', fontSize: 13, textAlign: 'center' },
+  tickerText: {
+    color: colors.accent,
+    fontWeight: '800',
+    ...typography.caption,
+  },
+  typeText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: spacing.xs,
+    textTransform: 'capitalize',
+  },
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 60,
+    gap: spacing.sm,
+  },
+  emptyText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  emptySubtext: {
+    color: colors.textMuted,
+    fontSize: 13,
+    textAlign: 'center',
+  },
 });

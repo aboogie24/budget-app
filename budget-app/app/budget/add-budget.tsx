@@ -10,21 +10,27 @@ import {
   Platform,
   SafeAreaView,
   FlatList,
+  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import DropDownPicker from 'react-native-dropdown-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { successHaptic, errorHaptic } from '@/utils/haptics';
+import CategoryPicker from '@/components/CategoryPicker';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export default function AddBudgetScreen() {
   const router = useRouter();
-  const [name, setName] = useState('');
+  const params = useLocalSearchParams<{ prefill_category_id?: string; prefill_name?: string }>();
+  const [name, setName] = useState(params.prefill_name ?? '');
   const [amount, setAmount] = useState('');
   const [type, setType] = useState('expense');
-  const [categoryId, setCategoryId] = useState('');
+  const [categoryId, setCategoryId] = useState(params.prefill_category_id ?? '');
+  const [categoryLabel, setCategoryLabel] = useState(params.prefill_name ?? '');
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [categories, setCategories] = useState([]);
   const [typeOpen, setTypeOpen] = useState(false);
   const [categoryOpen, setCategoryOpen] = useState(false);
@@ -33,11 +39,13 @@ export default function AddBudgetScreen() {
   const [date, setDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [budgets, setBudgets] = useState([]);
+  const [userId, setUserId] = useState('');
 
   useEffect(() => {
     const fetchCategories = async () => {
       try {
         const user = await getCurrentUser();
+        if (user?.id) setUserId(user.id);
         const [defaults, userCats] = await Promise.all([
           api.get(`/auth/categories`, { type }).catch(() => []),
           user?.id ? api.get(`/auth/categories/user/${user.id}`).catch(() => []) : Promise.resolve([]),
@@ -101,22 +109,13 @@ export default function AddBudgetScreen() {
     };
 
     try {
-      const res = await fetch(`${API_URL}/auth/budgets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        successHaptic();
-        router.back();
-      } else {
-        errorHaptic();
-        Alert.alert('Error', 'Failed to save budget.');
-      }
+      await api.post('/auth/budgets', body);
+      successHaptic();
+      router.back();
     } catch (err) {
       console.error('Save error', err);
       errorHaptic();
-      Alert.alert('Error', 'Something went wrong.');
+      Alert.alert('Error', 'Failed to save budget.');
     }
   };
 
@@ -247,25 +246,35 @@ export default function AddBudgetScreen() {
         />
 
         <Text style={styles.label}>Category</Text>
-        <DropDownPicker
-          open={categoryOpen}
-          value={categoryId}
-          items={categories}
-          setOpen={setCategoryOpen}
-          setValue={setCategoryId}
-          setItems={setCategories}
-          style={styles.dropdown}
-          dropDownContainerStyle={styles.dropdownContainer}
-          listMode="MODAL"
-          searchable
-          placeholder="Select category"
-          onOpen={() => {
-            setTypeOpen(false);
-            setFrequencyOpen(false);
-          }}
-          zIndex={2000}
-          zIndexInverse={2000}
-        />
+        <TouchableOpacity
+          style={styles.categorySelector}
+          onPress={() => setShowCategoryPicker(true)}
+        >
+          <Text style={categoryId ? styles.categorySelectorText : styles.categorySelectorPlaceholder}>
+            {categoryLabel || 'Select category'}
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color="#999" />
+        </TouchableOpacity>
+
+        {userId !== '' && (
+          <CategoryPicker
+            visible={showCategoryPicker}
+            onClose={() => setShowCategoryPicker(false)}
+            onSelect={(selected) => {
+              setCategoryId(selected.id);
+              const label = selected.parent_name
+                ? `${selected.parent_name} > ${selected.name}`
+                : selected.name;
+              setCategoryLabel(label);
+              if (!name.trim()) {
+                setName(selected.name);
+              }
+              setShowCategoryPicker(false);
+            }}
+            type={type as 'income' | 'expense'}
+            userId={userId}
+          />
+        )}
 
         <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
           <Text style={styles.saveButtonText}>Save Budget</Text>
@@ -330,6 +339,24 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
   },
   dropdownContainer: { borderColor: '#ccc' },
+  categorySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  categorySelectorText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  categorySelectorPlaceholder: {
+    fontSize: 16,
+    color: '#999',
+  },
   label: {
     fontSize: 16,
     fontWeight: 'bold',

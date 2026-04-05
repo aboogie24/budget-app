@@ -154,7 +154,7 @@ export default function SharingPreferencesScreen() {
 
       await AsyncStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
       Alert.alert('Saved', 'Sharing preferences updated.');
-      router.replace('/(tabs)/settings');
+      router.back();
     } catch (e) {
       Alert.alert('Error', 'Could not save preferences.');
     } finally {
@@ -180,7 +180,7 @@ export default function SharingPreferencesScreen() {
     <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/settings')}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={20} color="#c084fc" />
           </TouchableOpacity>
           <Text style={styles.headerText}>Sharing Preferences</Text>

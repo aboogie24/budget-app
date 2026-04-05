@@ -304,9 +304,8 @@ func TestCheckBudgetThresholds_ReturnsOverThresholdBudgets(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"name", "amount"}).
 				AddRow("Groceries", 500.0))
 
-		// Get spending for budget
-		mock.ExpectQuery(`SELECT COALESCE.SUM.amount`).
-			WithArgs("b1").
+		// Get spending for budget (budget_id + start_date + end_date)
+		mock.ExpectQuery(`SELECT COALESCE`).
 			WillReturnRows(sqlmock.NewRows([]string{"amount"}).
 				AddRow(450.0))
 	})

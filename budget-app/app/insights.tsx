@@ -8,11 +8,13 @@ import {
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import GradientBackground from '@/components/GradientBackground';
+import { ErrorState } from '@/components/ErrorState';
+import { colors, spacing, glassEffects, typography } from '@/utils/design-system';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -50,10 +52,12 @@ export default function InsightsScreen() {
   const [year, setYear] = useState(now.getFullYear());
   const [data, setData] = useState<InsightsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadInsights = useCallback(async () => {
     setLoading(true);
     try {
+      setError(null);
       const userId = await api.getUserId();
       if (!userId) return;
       const result = await api.get<InsightsData>('/auth/insights', {
@@ -64,6 +68,7 @@ export default function InsightsScreen() {
       setData(result);
     } catch (e) {
       console.error('Failed to load insights:', e);
+      setError('Failed to load insights');
     } finally {
       setLoading(false);
     }
@@ -96,10 +101,9 @@ export default function InsightsScreen() {
 
   const changeArrow = (pct: number) => (pct > 0 ? 'trending-up' : pct < 0 ? 'trending-down' : 'remove');
   const changeColor = (pct: number, isExpense: boolean) => {
-    if (pct === 0) return '#94a3b8';
-    // For expenses, up is bad (red), down is good (green). For income, opposite.
-    if (isExpense) return pct > 0 ? '#f87171' : '#34d399';
-    return pct > 0 ? '#34d399' : '#f87171';
+    if (pct === 0) return colors.textMuted;
+    if (isExpense) return pct > 0 ? colors.error : colors.success;
+    return pct > 0 ? colors.success : colors.error;
   };
 
   // Simple bar chart: find max daily spend to scale bars.
@@ -107,16 +111,16 @@ export default function InsightsScreen() {
   const chartBarWidth = data ? Math.max((SCREEN_WIDTH - 64) / Math.max(data.daily_spending.length, 1) - 2, 2) : 4;
 
   // Default colors for categories if the backend doesn't supply one.
-  const defaultColors = ['#c084fc', '#f472b6', '#34d399', '#fbbf24', '#60a5fa', '#fb923c', '#a78bfa', '#f87171'];
+  const defaultColors = [colors.accent, '#f472b6', colors.success, '#fbbf24', colors.info, '#fb923c', colors.primary2, colors.error];
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple">
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Header */}
           <View style={styles.headerRow}>
             <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
+              <Ionicons name="arrow-back" size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Spending Insights</Text>
             <View style={{ width: 40 }} />
@@ -125,27 +129,37 @@ export default function InsightsScreen() {
           {/* Month selector */}
           <View style={styles.monthSelector}>
             <TouchableOpacity onPress={prevMonth}>
-              <Ionicons name="chevron-back" size={22} color="#cbd5e1" />
+              <Ionicons name="chevron-back" size={22} color={colors.textMuted} />
             </TouchableOpacity>
             <Text style={styles.monthText}>
               {MONTHS[month - 1]} {year}
             </Text>
             <TouchableOpacity onPress={nextMonth}>
-              <Ionicons name="chevron-forward" size={22} color="#cbd5e1" />
+              <Ionicons name="chevron-forward" size={22} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 
-          {loading ? (
-            <ActivityIndicator color="#c084fc" style={{ marginTop: 60 }} />
-          ) : !data ? (
+          {/* Error state */}
+          {error && (
+            <ErrorState
+              title="Error"
+              message={error}
+              onRetry={loadInsights}
+              onDismiss={() => setError(null)}
+            />
+          )}
+
+          {!error && loading ? (
+            <ActivityIndicator color={colors.accent} style={{ marginTop: 60 }} />
+          ) : !error && !data ? (
             <Text style={styles.emptyText}>No data available</Text>
-          ) : (
+          ) : !error && data ? (
             <>
               {/* Summary cards */}
               <View style={styles.summaryRow}>
                 <View style={[styles.summaryCard, { flex: 1 }]}>
                   <Text style={styles.summaryLabel}>Income</Text>
-                  <Text style={[styles.summaryValue, { color: '#34d399' }]}>{fmt(data.income)}</Text>
+                  <Text style={[styles.summaryValue, { color: colors.success }]}>{fmt(data.income)}</Text>
                   <View style={styles.changeRow}>
                     <Ionicons
                       name={changeArrow(data.income_change) as any}
@@ -177,7 +191,7 @@ export default function InsightsScreen() {
               <View style={styles.netCard}>
                 <Text style={styles.summaryLabel}>Net</Text>
                 <Text
-                  style={[styles.netValue, { color: data.net >= 0 ? '#34d399' : '#f87171' }]}
+                  style={[styles.netValue, { color: data.net >= 0 ? colors.success : colors.error }]}
                 >
                   {data.net >= 0 ? '+' : ''}{fmt(data.net)}
                 </Text>
@@ -197,7 +211,7 @@ export default function InsightsScreen() {
                             {
                               height: `${Math.max(h, 2)}%`,
                               width: chartBarWidth,
-                              backgroundColor: d.amount > 0 ? '#c084fc' : 'rgba(255,255,255,0.06)',
+                              backgroundColor: d.amount > 0 ? colors.accent : colors.glassLight,
                             },
                           ]}
                         />
@@ -242,93 +256,171 @@ export default function InsightsScreen() {
                 )}
               </View>
             </>
-          )}
+          ) : null}
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollContent: {
+    padding: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: 120,
+  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
-  headerTitle: { color: '#f8fafc', fontSize: 20, fontWeight: '800' },
+  headerTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+  },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: colors.borderGlass,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: colors.glassLight,
   },
   monthSelector: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 20,
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
-  monthText: { color: '#f8fafc', fontSize: 16, fontWeight: '700' },
-  summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  monthText: {
+    color: colors.text,
+    ...typography.bodyBold,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
   summaryCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    ...glassEffects.glass,
+    padding: spacing.lg,
   },
-  summaryLabel: { color: '#cbd5e1', fontSize: 12 },
-  summaryValue: { fontSize: 20, fontWeight: '800', marginTop: 4 },
-  changeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 },
-  changeText: { fontSize: 12, fontWeight: '700' },
+  summaryLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+  },
+  summaryValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: spacing.xs,
+  },
+  changeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 6,
+  },
+  changeText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
   netCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 16,
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
     alignItems: 'center',
   },
-  netValue: { fontSize: 24, fontWeight: '800', marginTop: 4 },
-  card: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 12,
+  netValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    marginTop: spacing.xs,
   },
-  sectionTitle: { color: '#e5e7eb', fontWeight: '700', fontSize: 14, marginBottom: 12 },
+  card: {
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
+    marginBottom: spacing.md,
+  },
   chartContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     height: 120,
     gap: 1,
   },
-  barWrapper: { alignItems: 'center', flex: 1 },
-  bar: { borderRadius: 2, minHeight: 2 },
-  barLabel: { color: '#94a3b8', fontSize: 9, marginTop: 4 },
-  catRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, gap: 10 },
-  catDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4 },
-  catHeader: { flexDirection: 'row', justifyContent: 'space-between' },
-  catName: { color: '#f8fafc', fontWeight: '700', fontSize: 14 },
-  catAmount: { color: '#f8fafc', fontWeight: '700', fontSize: 14 },
+  barWrapper: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  bar: {
+    borderRadius: 2,
+    minHeight: 2,
+  },
+  barLabel: {
+    color: colors.textMuted,
+    fontSize: 9,
+    marginTop: spacing.xs,
+  },
+  catRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+    gap: 10,
+  },
+  catDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 4,
+  },
+  catHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  catName: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  catAmount: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
+  },
   catBarTrack: {
     height: 6,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: colors.borderGlass,
     borderRadius: 3,
     marginTop: 6,
     overflow: 'hidden',
   },
-  catBarFill: { height: '100%', borderRadius: 3 },
-  catPercent: { color: '#94a3b8', fontSize: 11, marginTop: 4 },
-  emptyText: { color: '#e5e7eb', textAlign: 'center', marginTop: 60, fontSize: 16, fontWeight: '700' },
-  emptySubtext: { color: '#94a3b8', fontSize: 13 },
+  catBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  catPercent: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: spacing.xs,
+  },
+  emptyText: {
+    color: colors.text,
+    textAlign: 'center',
+    marginTop: 60,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  emptySubtext: {
+    color: colors.textMuted,
+    fontSize: 13,
+  },
 });

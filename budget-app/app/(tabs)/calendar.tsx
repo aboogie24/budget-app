@@ -1,5 +1,5 @@
 // app/(tabs)/calendar.tsx
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,13 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
-import { Calendar } from 'react-native-calendars';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import { api } from '@/utils/apiClient';
+
+// ── Types ──
 
 type EventItem = {
   id: string;
@@ -24,18 +26,34 @@ type EventItem = {
   note?: string;
   category?: string;
   billStatus?: string;
+  isAutoPay?: boolean;
 };
 
 type DayEvents = Record<string, EventItem[]>;
 
+// ── Constants ──
+
 const INCOME_COLOR = '#34d399';
 const EXPENSE_COLOR = '#f87171';
 const BILL_COLOR = '#60a5fa';
-const ACCENT = '#c084fc';
+const ACCENT = '#a855f7';
+const PINK = '#ec4899';
+const TEXT_PRIMARY = '#f8fafc';
+const TEXT_MUTED = '#94a3b8';
+const TEXT_DIM = 'rgba(255,255,255,0.3)';
+const SURFACE = 'rgba(255,255,255,0.06)';
+const BORDER = 'rgba(255,255,255,0.08)';
+
 const DAY_NAMES = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const MONTHS = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December',
+];
+
+// ── Helpers ──
 
 const formatCurrency = (v: number) =>
-  v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
+  '$' + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const toKey = (d: Date) => {
   const y = d.getFullYear();
@@ -44,7 +62,9 @@ const toKey = (d: Date) => {
   return `${y}-${m}-${day}`;
 };
 
-// Parse a backend ISO timestamp as a local-time date (avoids UTC midnight rolling to previous day)
+const toKeyYMD = (y: number, m: number, d: number) =>
+  `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
 const parseCalDate = (raw: string): Date => new Date(raw.slice(0, 10) + 'T12:00:00');
 
 const dateLabel = (s: string) => {
@@ -54,7 +74,7 @@ const dateLabel = (s: string) => {
 
 const shortDate = (s: string) => {
   const d = new Date(s + 'T12:00:00');
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
 };
 
 const getWeekDates = (date: Date): Date[] => {
@@ -67,78 +87,132 @@ const getWeekDates = (date: Date): Date[] => {
   });
 };
 
-/* ── Event row (extracted to avoid re-mount) ── */
+// ── Icon helper ──
+
+const getEventIcon = (item: EventItem): string => {
+  if (item.source === 'bill') return 'receipt-outline';
+  if (item.type === 'income') return 'trending-up-outline';
+  if (item.source === 'budget') return 'wallet-outline';
+  return 'cart-outline';
+};
+
+const getEventIconColor = (item: EventItem): string => {
+  if (item.source === 'bill') return BILL_COLOR;
+  if (item.type === 'income') return INCOME_COLOR;
+  return ACCENT;
+};
+
+const getEventAmountColor = (item: EventItem): string => {
+  if (item.source === 'bill') return BILL_COLOR;
+  if (item.type === 'income') return INCOME_COLOR;
+  return EXPENSE_COLOR;
+};
+
+// ── Dot colors for calendar indicators ──
+
+const getDotsForDay = (events: EventItem[]): string[] => {
+  if (!events || events.length === 0) return [];
+  const dots: string[] = [];
+  const hasBill = events.some(e => e.source === 'bill');
+  const hasIncome = events.some(e => e.type === 'income');
+  const hasExpense = events.some(e => e.type === 'expense' && e.source !== 'bill');
+  if (hasBill) dots.push(BILL_COLOR);
+  if (hasIncome) dots.push(INCOME_COLOR);
+  if (hasExpense && !hasBill) dots.push(ACCENT);
+  if (dots.length === 0 && events.length > 0) dots.push(ACCENT);
+  return dots;
+};
+
+// ── Status Chip ──
+
+const StatusChip = ({ status, isAutoPay }: { status?: string; isAutoPay?: boolean }) => {
+  if (!status) return null;
+  const colorMap: Record<string, { bg: string; text: string; label: string }> = {
+    paid: { bg: 'rgba(52,211,153,0.12)', text: INCOME_COLOR, label: 'Paid' },
+    overdue: { bg: 'rgba(248,113,113,0.12)', text: EXPENSE_COLOR, label: 'Overdue' },
+    due: { bg: 'rgba(251,191,36,0.12)', text: '#fbbf24', label: 'Due' },
+  };
+  const c = colorMap[status] || colorMap.due;
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      <View style={{ backgroundColor: c.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+        <Text style={{ fontSize: 9, fontWeight: '700', color: c.text }}>{c.label}</Text>
+      </View>
+      {isAutoPay && (
+        <View style={{
+          backgroundColor: 'rgba(168,85,247,0.12)',
+          paddingHorizontal: 5,
+          paddingVertical: 2,
+          borderRadius: 4,
+        }}>
+          <Text style={{ fontSize: 8, fontWeight: '700', color: ACCENT, letterSpacing: 0.3 }}>AUTO</Text>
+        </View>
+      )}
+    </View>
+  );
+};
+
+// ── Event Row ──
+
 const EventRow = ({ item, dateBadge }: { item: EventItem; dateBadge?: string }) => {
-  const isInc = item.type === 'income';
+  const isIncome = item.type === 'income';
   const isBill = item.source === 'bill';
-  const bg = isBill ? 'rgba(96,165,250,0.12)' : isInc ? 'rgba(52,211,153,0.12)' : 'rgba(255,255,255,0.08)';
-  const icon = isBill ? 'receipt-outline' : item.source === 'budget' ? 'wallet-outline' : isInc ? 'trending-up-outline' : 'cart-outline';
-  const ic = isBill ? BILL_COLOR : isInc ? INCOME_COLOR : ACCENT;
-  const ac = isBill ? BILL_COLOR : isInc ? INCOME_COLOR : EXPENSE_COLOR;
+  const iconColor = getEventIconColor(item);
+  const amountColor = getEventAmountColor(item);
+  const iconName = getEventIcon(item);
+  const sourceLabel = isBill ? 'Bill' : item.source === 'budget' ? 'Budget' : 'Transaction';
 
   return (
     <View style={styles.eventRow}>
-      <View style={[styles.eventIcon, { backgroundColor: bg }]}>
-        <Ionicons name={icon as any} size={16} color={ic} />
+      <View style={[styles.eventIcon, { backgroundColor: `${iconColor}18` }]}>
+        <Ionicons name={iconName as any} size={14} color={iconColor} />
       </View>
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={styles.eventName} numberOfLines={1}>{item.name}</Text>
-          {isBill && item.billStatus && (
-            <View style={[styles.statusChip, {
-              backgroundColor: item.billStatus === 'paid' ? 'rgba(52,211,153,0.12)'
-                : item.billStatus === 'overdue' ? 'rgba(248,113,113,0.12)' : 'rgba(251,191,36,0.12)',
-            }]}>
-              <Text style={{
-                fontSize: 9, fontWeight: '700',
-                color: item.billStatus === 'paid' ? '#34d399' : item.billStatus === 'overdue' ? '#f87171' : '#fbbf24',
-              }}>
-                {item.billStatus === 'paid' ? 'Paid' : item.billStatus === 'overdue' ? 'Overdue' : 'Due'}
-              </Text>
-            </View>
-          )}
+          {isBill && <StatusChip status={item.billStatus} isAutoPay={item.isAutoPay} />}
         </View>
-        <Text style={styles.eventMeta} numberOfLines={1}>
-          {isBill ? 'Bill' : item.source === 'budget' ? 'Budget' : 'Transaction'}
-          {item.frequency ? ` · ${item.frequency}` : ''}
-          {dateBadge ? ` · ${dateBadge}` : item.note ? ` · ${item.note}` : ''}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+          <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: ACCENT }} />
+          <Text style={{ fontSize: 10, color: TEXT_MUTED }}>
+            {sourceLabel}
+            {item.frequency ? ` \u00B7 ${item.frequency}` : ''}
+            {dateBadge ? ` \u00B7 ${dateBadge}` : item.note ? ` \u00B7 ${item.note}` : ''}
+          </Text>
+        </View>
       </View>
-      <Text style={[styles.eventAmt, { color: ac }]}>
-        {isInc ? '+' : '-'}{formatCurrency(item.amount)}
+      <Text style={{ fontSize: 13, fontWeight: '700', color: amountColor, flexShrink: 0 }}>
+        {isIncome ? '+' : '-'}{formatCurrency(item.amount)}
       </Text>
     </View>
   );
 };
 
+// ── Main Screen ──
+
 export default function CalendarScreen() {
   const today = useMemo(() => toKey(new Date()), []);
 
-  const [marks, setMarks] = useState<any>({});
   const [dayEvents, setDayEvents] = useState<DayEvents>({});
   const [loading, setLoading] = useState(false);
-  const [month, setMonth] = useState(new Date());
-  const [selected, setSelected] = useState(today); // auto-select today
+  const [month, setMonth] = useState(() => ({ year: new Date().getFullYear(), month: new Date().getMonth() }));
+  const [selected, setSelected] = useState(today);
   const [expanded, setExpanded] = useState(false);
-  const [calKey, setCalKey] = useState(0);
 
-  /* ── Data loading (logic preserved from original) ── */
+  // ── Data loading ──
+
   const loadData = useCallback(async () => {
     const userId = await api.getUserId();
     if (!userId) return;
     setLoading(true);
 
-    const monthStart = new Date(month.getFullYear(), month.getMonth(), 1);
-    const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-    const m: any = {};
+    const monthStart = new Date(month.year, month.month, 1);
+    const monthEnd = new Date(month.year, month.month + 1, 0);
     const ev: DayEvents = {};
 
     const addEntry = (date: Date, item: EventItem) => {
       const key = toKey(date);
-      const color = item.source === 'bill' ? BILL_COLOR : item.type === 'income' ? INCOME_COLOR : EXPENSE_COLOR;
-      const dot = { key: `${item.id}-${key}`, color };
-      if (m[key]) { m[key].dots.push(dot); }
-      else { m[key] = { dots: [dot], marked: true }; }
       if (!ev[key]) ev[key] = [];
       ev[key].push(item);
     };
@@ -169,16 +243,10 @@ export default function CalendarScreen() {
         api.get<any[]>('/auth/bills', { user_id: userId }).catch(() => []),
       ]);
 
-      (Array.isArray(budgets) ? budgets : []).forEach((b) => {
-        if (!b.start_date) return;
-        const date = parseCalDate(b.start_date);
-        if (isNaN(date.getTime())) return;
-        expandFrequency(date, b.frequency || '', {
-          id: b.id || b.name, name: b.name || 'Budget', amount: b.amount || 0,
-          type: (b.type || '').toLowerCase() === 'income' ? 'income' : 'expense',
-          source: 'budget', frequency: b.frequency,
-        });
-      });
+      // Note: Budgets represent expected amounts, not calendar events.
+      // Transactions and bills are the actual events shown on the calendar.
+      // Income budgets (like "Cisco weekly") would create duplicate entries
+      // alongside real income transactions, so we skip them.
 
       (Array.isArray(transactions) ? transactions : []).forEach((t) => {
         if (!t.date) return;
@@ -201,21 +269,27 @@ export default function CalendarScreen() {
         expandFrequency(billDate, bill.frequency || 'monthly', {
           id: bill.id || bill.name, name: bill.name || 'Bill', amount: bill.amount_due || 0,
           type: 'expense', source: 'bill', frequency: bill.frequency,
-          note: bill.payee || undefined, category: bill.category_name, billStatus: bill.status,
+          note: bill.payee || undefined, category: bill.category_name,
+          billStatus: bill.status, isAutoPay: !!bill.is_autopay,
         });
       });
     } catch (e) {
       console.error('Failed to load calendar data:', e);
     }
 
-    setMarks(m);
     setDayEvents(ev);
     setLoading(false);
   }, [month]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // Reload on tab focus and when month changes
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
 
-  /* ── Derived state ── */
+  // ── Derived state ──
+
   const weekDates = useMemo(() => getWeekDates(new Date(selected + 'T12:00:00')), [selected]);
 
   const selEvents = dayEvents[selected] || [];
@@ -224,42 +298,46 @@ export default function CalendarScreen() {
 
   const monthTotals = useMemo(() => {
     let inc = 0, exp = 0;
-    Object.values(dayEvents).forEach(evs => evs.forEach(e => {
-      if (e.type === 'income') inc += e.amount; else exp += e.amount;
-    }));
+    // Only sum events that belong to the current month
+    const prefix = `${month.year}-${String(month.month + 1).padStart(2, '0')}`;
+    Object.entries(dayEvents).forEach(([key, evs]) => {
+      if (key.startsWith(prefix)) {
+        evs.forEach(e => {
+          if (e.type === 'income') inc += e.amount; else exp += e.amount;
+        });
+      }
+    });
     return { inc, exp, net: inc - exp };
-  }, [dayEvents]);
+  }, [dayEvents, month]);
 
   const upcoming = useMemo(() => {
     const items: { date: string; event: EventItem }[] = [];
     for (const date of Object.keys(dayEvents).sort()) {
       if (date <= today) continue;
       for (const event of dayEvents[date]) items.push({ date, event });
-      if (items.length >= 7) break;
+      if (items.length >= 6) break;
     }
-    return items.slice(0, 7);
+    return items.slice(0, 6);
   }, [dayEvents, today]);
 
-  const displayMarks = useMemo(() => {
-    const copy = { ...marks };
-    if (selected) {
-      copy[selected] = {
-        ...(copy[selected] || {}),
-        selected: true,
-        selectedColor: 'rgba(192,132,252,0.3)',
-        dots: copy[selected]?.dots || [],
-        marked: copy[selected]?.marked || false,
-      };
-    }
-    return copy;
-  }, [marks, selected]);
+  // ── Full month grid cells ──
 
-  /* ── Navigation ── */
+  const calendarCells = useMemo(() => {
+    const daysInMonth = new Date(month.year, month.month + 1, 0).getDate();
+    const firstDayOfWeek = new Date(month.year, month.month, 1).getDay();
+    const cells: (number | null)[] = [];
+    for (let i = 0; i < firstDayOfWeek; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    return cells;
+  }, [month]);
+
+  // ── Navigation ──
+
   const pick = (dateStr: string) => {
     setSelected(dateStr);
     const d = new Date(dateStr + 'T12:00:00');
-    if (d.getMonth() !== month.getMonth() || d.getFullYear() !== month.getFullYear()) {
-      setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    if (d.getMonth() !== month.month || d.getFullYear() !== month.year) {
+      setMonth({ year: d.getFullYear(), month: d.getMonth() });
     }
   };
 
@@ -269,29 +347,35 @@ export default function CalendarScreen() {
     pick(toKey(d));
   };
 
-  const toggleExpand = () => {
-    if (!expanded) setCalKey(k => k + 1);
-    setExpanded(!expanded);
+  const shiftMonth = (dir: number) => {
+    let m = month.month + dir;
+    let y = month.year;
+    if (m < 0) { m = 11; y--; }
+    if (m > 11) { m = 0; y++; }
+    setMonth({ year: y, month: m });
   };
 
   const goToday = () => {
-    setSelected(today);
     const t = new Date();
-    if (t.getMonth() !== month.getMonth() || t.getFullYear() !== month.getFullYear()) {
-      setMonth(new Date(t.getFullYear(), t.getMonth(), 1));
-      if (expanded) setCalKey(k => k + 1);
+    setSelected(today);
+    if (t.getMonth() !== month.month || t.getFullYear() !== month.year) {
+      setMonth({ year: t.getFullYear(), month: t.getMonth() });
     }
   };
 
-  const monthLabel = month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const toggleExpand = () => setExpanded(!expanded);
+
+  const monthLabel = `${MONTHS[month.month]} ${month.year}`;
+
+  // ── Render ──
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Calendar</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {loading && <ActivityIndicator color={ACCENT} size="small" />}
             {selected !== today && (
               <TouchableOpacity style={styles.todayBtn} onPress={goToday}>
@@ -299,49 +383,109 @@ export default function CalendarScreen() {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.expandBtn} onPress={toggleExpand}>
-              <Ionicons name={expanded ? 'contract-outline' : 'expand-outline'} size={18} color={ACCENT} />
+              <Ionicons
+                name={expanded ? 'contract-outline' : 'expand-outline'}
+                size={16}
+                color={ACCENT}
+              />
             </TouchableOpacity>
           </View>
         </View>
 
         <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+
           {/* ── Calendar View ── */}
           {expanded ? (
-            <Calendar
-              key={calKey}
-              style={styles.fullCal}
-              current={toKey(month)}
-              onMonthChange={(m) => setMonth(new Date(m.year, m.month - 1, 1))}
-              onDayPress={(d) => pick(d.dateString)}
-              markedDates={displayMarks}
-              markingType="multi-dot"
-              theme={{
-                calendarBackground: 'rgba(255,255,255,0.06)',
-                dayTextColor: '#f8fafc',
-                textDisabledColor: 'rgba(255,255,255,0.2)',
-                monthTextColor: '#f8fafc',
-                textMonthFontWeight: '700',
-                textMonthFontSize: 18,
-                arrowColor: ACCENT,
-                todayTextColor: ACCENT,
-                textDayFontSize: 15,
-                textDayFontWeight: '500',
-                textDayHeaderFontSize: 12,
-                textDayHeaderFontWeight: '600',
-                textSectionTitleColor: '#94a3b8',
-              }}
-            />
-          ) : (
-            <View style={styles.weekCard}>
-              <View style={styles.weekNav}>
-                <TouchableOpacity onPress={() => shiftWeek(-1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+            /* Full Month Grid */
+            <View style={styles.calCard}>
+              {/* Month nav */}
+              <View style={styles.monthNav}>
+                <TouchableOpacity onPress={() => shiftMonth(-1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
                   <Ionicons name="chevron-back" size={18} color={ACCENT} />
                 </TouchableOpacity>
+                <Text style={{ fontSize: 17, fontWeight: '700', color: TEXT_PRIMARY }}>{monthLabel}</Text>
+                <TouchableOpacity onPress={() => shiftMonth(1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+                  <Ionicons name="chevron-forward" size={18} color={ACCENT} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Day headers */}
+              <View style={styles.gridRow}>
+                {DAY_NAMES.map((d, i) => (
+                  <View key={i} style={styles.gridHeaderCell}>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: TEXT_MUTED }}>{d}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Calendar grid */}
+              <View style={styles.gridContainer}>
+                {calendarCells.map((day, i) => {
+                  if (day === null) {
+                    return <View key={`empty-${i}`} style={styles.gridCell} />;
+                  }
+                  const key = toKeyYMD(month.year, month.month, day);
+                  const isToday = key === today;
+                  const isSelected = key === selected;
+                  const dots = getDotsForDay(dayEvents[key] || []);
+
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      style={[
+                        styles.gridCell,
+                        isSelected && { backgroundColor: 'rgba(168,85,247,0.2)', borderRadius: 10 },
+                      ]}
+                      onPress={() => pick(key)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[
+                        styles.gridDayCircle,
+                        isSelected && { backgroundColor: ACCENT },
+                        isToday && !isSelected && { borderWidth: 1.5, borderColor: ACCENT },
+                      ]}>
+                        <Text style={{
+                          fontSize: 14,
+                          fontWeight: isSelected || isToday ? '700' : '500',
+                          color: isSelected ? '#fff' : isToday ? ACCENT : TEXT_PRIMARY,
+                        }}>{day}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 2, marginTop: 3, height: 5 }}>
+                        {dots.slice(0, 3).map((c, j) => (
+                          <View key={j} style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: c }} />
+                        ))}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Legend */}
+              <View style={styles.legend}>
+                {[
+                  { color: BILL_COLOR, label: 'Bills' },
+                  { color: INCOME_COLOR, label: 'Income' },
+                  { color: PINK, label: 'Partner' },
+                ].map((l, i) => (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: l.color }} />
+                    <Text style={{ fontSize: 10, color: TEXT_MUTED }}>{l.label}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : (
+            /* Compact Week Strip */
+            <View style={styles.calCard}>
+              <View style={styles.weekNav}>
+                <TouchableOpacity onPress={() => shiftWeek(-1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+                  <Ionicons name="chevron-back" size={16} color={ACCENT} />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={toggleExpand}>
-                  <Text style={styles.monthLabel}>{monthLabel}</Text>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: TEXT_PRIMARY }}>{monthLabel}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => shiftWeek(1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
-                  <Ionicons name="chevron-forward" size={18} color={ACCENT} />
+                  <Ionicons name="chevron-forward" size={16} color={ACCENT} />
                 </TouchableOpacity>
               </View>
               <View style={styles.weekRow}>
@@ -349,18 +493,27 @@ export default function CalendarScreen() {
                   const k = toKey(d);
                   const isSel = k === selected;
                   const isTod = k === today;
-                  const dots = marks[k]?.dots || [];
+                  const dots = getDotsForDay(dayEvents[k] || []);
                   return (
                     <TouchableOpacity key={k} style={styles.dayCell} onPress={() => pick(k)} activeOpacity={0.7}>
-                      <Text style={[styles.dayName, isTod && !isSel && { color: ACCENT }]}>{DAY_NAMES[i]}</Text>
-                      <View style={[styles.dayCircle, isSel && styles.dayCircleSel, isTod && !isSel && styles.dayCircleToday]}>
-                        <Text style={[styles.dayNum, isSel && { color: '#fff' }, isTod && !isSel && { color: ACCENT }]}>
-                          {d.getDate()}
-                        </Text>
+                      <Text style={[
+                        styles.dayName,
+                        isTod && !isSel && { color: ACCENT },
+                      ]}>{DAY_NAMES[i]}</Text>
+                      <View style={[
+                        styles.dayCircle,
+                        isSel && styles.dayCircleSel,
+                        isTod && !isSel && styles.dayCircleToday,
+                      ]}>
+                        <Text style={[
+                          styles.dayNum,
+                          isSel && { color: '#fff' },
+                          isTod && !isSel && { color: ACCENT },
+                        ]}>{d.getDate()}</Text>
                       </View>
                       <View style={styles.dotRow}>
-                        {dots.slice(0, 3).map((dot: any, j: number) => (
-                          <View key={j} style={[styles.dot, { backgroundColor: dot.color }]} />
+                        {dots.slice(0, 3).map((c, j) => (
+                          <View key={j} style={[styles.dot, { backgroundColor: c }]} />
                         ))}
                       </View>
                     </TouchableOpacity>
@@ -390,27 +543,35 @@ export default function CalendarScreen() {
             </View>
           </View>
 
-          {/* ── Day Detail (inline — no modal) ── */}
+          {/* ── Day Detail Section ── */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{dateLabel(selected)}</Text>
+
             {selEvents.length === 0 ? (
               <View style={styles.emptyDay}>
-                <Ionicons name="sunny-outline" size={24} color="rgba(255,255,255,0.15)" />
+                <Ionicons name="sunny-outline" size={18} color={TEXT_DIM} />
                 <Text style={styles.emptyText}>Nothing scheduled</Text>
               </View>
             ) : (
               <>
+                {/* Day income/expense chips */}
                 {(selIncome > 0 || selExpense > 0) && (
                   <View style={styles.dayChips}>
                     {selIncome > 0 && (
-                      <View style={styles.chip}>
-                        <Ionicons name="trending-up-outline" size={12} color={INCOME_COLOR} />
+                      <View style={[styles.chip, {
+                        backgroundColor: 'rgba(52,211,153,0.1)',
+                        borderColor: 'rgba(52,211,153,0.15)',
+                      }]}>
+                        <Ionicons name="trending-up-outline" size={11} color={INCOME_COLOR} />
                         <Text style={[styles.chipText, { color: INCOME_COLOR }]}>+{formatCurrency(selIncome)}</Text>
                       </View>
                     )}
                     {selExpense > 0 && (
-                      <View style={styles.chip}>
-                        <Ionicons name="trending-down-outline" size={12} color={EXPENSE_COLOR} />
+                      <View style={[styles.chip, {
+                        backgroundColor: 'rgba(248,113,113,0.1)',
+                        borderColor: 'rgba(248,113,113,0.15)',
+                      }]}>
+                        <Ionicons name="trending-down-outline" size={11} color={EXPENSE_COLOR} />
                         <Text style={[styles.chipText, { color: EXPENSE_COLOR }]}>-{formatCurrency(selExpense)}</Text>
                       </View>
                     )}
@@ -423,11 +584,11 @@ export default function CalendarScreen() {
             )}
           </View>
 
-          {/* ── Upcoming ── */}
+          {/* ── Upcoming Section ── */}
           {upcoming.length > 0 && (
             <View style={styles.section}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <Ionicons name="time-outline" size={16} color={ACCENT} />
+                <Ionicons name="time-outline" size={14} color={ACCENT} />
                 <Text style={styles.sectionTitle}>Upcoming</Text>
               </View>
               {upcoming.map(({ date, event }, idx) => (
@@ -441,17 +602,19 @@ export default function CalendarScreen() {
   );
 }
 
+// ── Styles ──
+
 const styles = StyleSheet.create({
-  /* Header */
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 8,
-    paddingBottom: 8,
+    paddingBottom: 12,
   },
-  title: { color: '#f8fafc', fontSize: 22, fontWeight: '800' },
+  title: { color: TEXT_PRIMARY, fontSize: 22, fontWeight: '800' },
   todayBtn: {
     backgroundColor: 'rgba(192,132,252,0.15)',
     paddingHorizontal: 12,
@@ -465,30 +628,63 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: SURFACE,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  /* Full calendar (expanded) */
-  fullCal: {
-    borderRadius: 16,
+  // Shared calendar card
+  calCard: {
     marginHorizontal: 16,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: SURFACE,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: BORDER,
   },
 
-  /* Week strip (compact default) */
-  weekCard: {
-    marginHorizontal: 16,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+  // Full month grid
+  monthNav: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
   },
+  gridRow: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  gridHeaderCell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  gridCell: {
+    width: '14.28%' as any,
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  gridDayCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  legend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 16,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+  },
+
+  // Week strip (compact)
   weekNav: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -496,10 +692,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingHorizontal: 4,
   },
-  monthLabel: { color: '#f8fafc', fontSize: 16, fontWeight: '700' },
   weekRow: { flexDirection: 'row' },
   dayCell: { flex: 1, alignItems: 'center', gap: 4 },
-  dayName: { color: '#94a3b8', fontSize: 11, fontWeight: '600' },
+  dayName: { color: TEXT_MUTED, fontSize: 11, fontWeight: '600' },
   dayCircle: {
     width: 36,
     height: 36,
@@ -509,43 +704,43 @@ const styles = StyleSheet.create({
   },
   dayCircleSel: { backgroundColor: ACCENT },
   dayCircleToday: { borderWidth: 1.5, borderColor: ACCENT },
-  dayNum: { color: '#f8fafc', fontSize: 15, fontWeight: '700' },
-  dotRow: { flexDirection: 'row', gap: 3, height: 6, alignItems: 'center' },
+  dayNum: { color: TEXT_PRIMARY, fontSize: 15, fontWeight: '700' },
+  dotRow: { flexDirection: 'row', gap: 3, height: 5, alignItems: 'center' },
   dot: { width: 5, height: 5, borderRadius: 2.5 },
 
-  /* Monthly summary bar */
+  // Monthly summary bar
   summaryBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
     marginHorizontal: 16,
     marginTop: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: SURFACE,
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: BORDER,
   },
   summaryCol: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  summaryAmt: { fontSize: 13, fontWeight: '700' },
+  summaryAmt: { fontSize: 12, fontWeight: '700' },
   summaryDiv: { width: 1, height: 16, backgroundColor: 'rgba(255,255,255,0.1)' },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
-  netLabel: { color: '#94a3b8', fontSize: 11, fontWeight: '600' },
+  legendDot: { width: 7, height: 7, borderRadius: 4 },
+  netLabel: { color: TEXT_MUTED, fontSize: 10, fontWeight: '600' },
 
-  /* Sections */
+  // Sections
   section: {
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: SURFACE,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: BORDER,
   },
-  sectionTitle: { color: '#f8fafc', fontSize: 16, fontWeight: '800', marginBottom: 0 },
+  sectionTitle: { color: TEXT_PRIMARY, fontSize: 15, fontWeight: '800', marginBottom: 2 },
 
-  /* Day detail */
+  // Day detail
   emptyDay: {
     alignItems: 'center',
     paddingVertical: 20,
@@ -553,29 +748,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
   },
-  emptyText: { color: 'rgba(255,255,255,0.3)', fontSize: 14, fontWeight: '600' },
-  dayChips: { flexDirection: 'row', gap: 10, marginBottom: 12, marginTop: 12 },
+  emptyText: { color: TEXT_DIM, fontSize: 13, fontWeight: '600' },
+  dayChips: { flexDirection: 'row', gap: 8, marginBottom: 12, marginTop: 10 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    gap: 4,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
   },
-  chipText: { fontSize: 12, fontWeight: '700' },
+  chipText: { fontSize: 11, fontWeight: '700' },
 
-  /* Event row */
+  // Event row
   eventRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: 12,
-    padding: 12,
+    padding: 11,
+    paddingHorizontal: 12,
     marginBottom: 6,
   },
   eventIcon: {
@@ -584,9 +778,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
-  eventName: { color: '#f8fafc', fontSize: 14, fontWeight: '700', flexShrink: 1 },
-  eventMeta: { color: '#94a3b8', fontSize: 11, marginTop: 1 },
-  eventAmt: { fontSize: 14, fontWeight: '800' },
-  statusChip: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 },
+  eventName: { color: TEXT_PRIMARY, fontSize: 13, fontWeight: '600', flexShrink: 1 },
 });

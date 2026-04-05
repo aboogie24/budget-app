@@ -1,162 +1,432 @@
 // components/BudgetAppLogin.tsx
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard,
+  ScrollView,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Google from 'expo-auth-session/providers/google';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import Constants from 'expo-constants';
 import { api } from '@/utils/apiClient';
 import { successHaptic, errorHaptic } from '@/utils/haptics';
 
-export default function BudgetAppLogin() {
-  const colors = {
-    primary: '#7c3aed',
-    secondary: '#b26ef8',
-    background: '#0b1021',
-    surface: 'rgba(255,255,255,0.08)',
-    text: '#f8fafc',
-    muted: '#cbd5e1',
-    border: 'rgba(255,255,255,0.15)',
-  };
+const GOOGLE_CLIENT_IDS = {
+  iosClientId: Constants.expoConfig?.extra?.GOOGLE_IOS_CLIENT_ID ?? '',
+  androidClientId: Constants.expoConfig?.extra?.GOOGLE_ANDROID_CLIENT_ID ?? '',
+  webClientId: Constants.expoConfig?.extra?.GOOGLE_WEB_CLIENT_ID ?? '',
+};
 
+export default function BudgetAppLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
   const API_URL = api.getBaseUrl();
 
+  // Google Sign-In
+  const [googleRequest, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
+    ...GOOGLE_CLIENT_IDS,
+    selectAccount: true,
+  });
+
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      handleGoogleToken(googleResponse.params.id_token);
+    }
+  }, [googleResponse]);
+
+  const completeOAuthLogin = async (data: any) => {
+    const user = data.user;
+    const session = { ...user, token: data.token };
+    await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
+    successHaptic();
+    router.replace(user.onboarding_complete ? '/(tabs)/dashboard' : '/onboarding');
+  };
+
   const handleLogin = async () => {
-		try {
-			const response = await fetch(`${API_URL}/users/login`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-        // credentials allow the backend session cookie to be stored for /auth routes
-				credentials: 'include',
-				body: JSON.stringify({ email, password }),
-			});
+    if (submitting) return;
+    try {
+      setSubmitting(true);
+      const response = await fetch(`${API_URL}/users/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
 
-			if (!response.ok) {
-			errorHaptic();
-				alert('Login failed');
-				return;
-			}
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        errorHaptic();
+        alert(errorText || 'Login failed. Check your email and password.');
+        return;
+      }
 
-			const data = await response.json();
-			const user = data.user;
-			console.log('User logging in:', user)
+      const data = await response.json();
+      const user = data.user;
+      const session = { ...user, token: data.token };
+      await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
+      successHaptic();
+      router.replace(user.onboarding_complete ? '/(tabs)/dashboard' : '/onboarding');
+    } catch (err) {
+      console.error('Login error:', err);
+      errorHaptic();
+      alert('Unable to connect to server. Check your connection.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-			const session = { ...user, token: data.token };
-			await AsyncStorage.setItem('budgetAppSession', JSON.stringify(session));
+  const handleGoogleToken = async (idToken: string) => {
+    if (submitting) return;
+    try {
+      setSubmitting(true);
+      const response = await fetch(`${API_URL}/users/oauth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: idToken }),
+      });
+      if (!response.ok) {
+        errorHaptic();
+        alert('Google Sign-In failed. Please try again.');
+        return;
+      }
+      await completeOAuthLogin(await response.json());
+    } catch (err) {
+      console.error('Google OAuth error:', err);
+      errorHaptic();
+      alert('Could not sign in with Google.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-		successHaptic();
-
-			router.replace(user.onboarding_complete ? '/(tabs)/dashboard' : '/setup');
-		} catch (err) {
-			console.error('Login error:', err);
-			errorHaptic();
-			alert('Unable to login. Check your connection.');
-		}
-	};
-
-
-  const handleRegister = () => {
-    // Navigate to registration screen
-    router.push('/register');
+  const handleAppleSignIn = async () => {
+    if (submitting) return;
+    try {
+      if (!(await AppleAuthentication.isAvailableAsync())) {
+        alert('Apple Sign-In is not available on this device.');
+        return;
+      }
+      setSubmitting(true);
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      const fullName = [credential.fullName?.givenName, credential.fullName?.familyName].filter(Boolean).join(' ');
+      const response = await fetch(`${API_URL}/users/oauth/apple`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identity_token: credential.identityToken, email: credential.email ?? '', full_name: fullName }),
+      });
+      if (!response.ok) {
+        errorHaptic();
+        alert('Apple Sign-In failed.');
+        return;
+      }
+      await completeOAuthLogin(await response.json());
+    } catch (err: any) {
+      if (err?.code === 'ERR_REQUEST_CANCELED') return;
+      console.error('Apple OAuth error:', err);
+      errorHaptic();
+      alert('Could not sign in with Apple.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
-    <LinearGradient
-      colors={['#0b1021', '#371160', '#2b0f50']}
-      style={styles.screen}
-    >
-      <View style={styles.loginContainer}>
-        <Text style={[styles.tagline, { color: colors.secondary }]}>For couples & shared goals</Text>
-        <Text style={[styles.title, { color: colors.text }]}>Welcome back</Text>
-        <Text style={[styles.subtitle, { color: colors.muted }]}>
-          Log in to track budgets, debts, and savings together.
-        </Text>
+    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+            {/* Logo Section */}
+            <View style={styles.logoContainer}>
+              {/* Overlapping circles */}
+              <View style={styles.circlesRow}>
+                <View style={[styles.logoCircle, { backgroundColor: 'rgba(168,85,247,0.9)', left: 0 }]} />
+                <View style={[styles.logoCircle, { backgroundColor: 'rgba(236,72,153,0.9)', left: 28 }]} />
+              </View>
 
-        <TextInput
-          placeholder="Email"
-          placeholderTextColor={colors.muted}
-          value={email}
-          onChangeText={setEmail}
-          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
+              <View style={styles.brandingRow}>
+                <Text style={styles.coupleText}>Couple</Text>
+                <Ionicons name="heart" size={28} color="#ec4899" />
+                <Text style={styles.flowText}>Flow</Text>
+              </View>
 
-        <TextInput
-          placeholder="Password"
-          placeholderTextColor={colors.muted}
-          value={password}
-          onChangeText={setPassword}
-          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
-          secureTextEntry
-        />
+              <Text style={styles.tagline}>For couples & shared goals</Text>
+            </View>
 
-        <TouchableOpacity onPress={handleLogin} style={[styles.button, { backgroundColor: colors.primary }]}>
-          <Text style={styles.buttonText}>Log In</Text>
-        </TouchableOpacity>
+            {/* Welcome Section */}
+            <View style={styles.welcomeSection}>
+              <Text style={styles.welcomeTitle}>Welcome back</Text>
+              <Text style={styles.welcomeSubtitle}>Log in to your financial journey.</Text>
+            </View>
 
-        <TouchableOpacity onPress={handleRegister} style={[styles.buttonGhost, { borderColor: colors.secondary }]}>
-          <Text style={[styles.buttonGhostText, { color: colors.secondary }]}>Create an account</Text>
-        </TouchableOpacity>
-      </View>
+            {/* Form */}
+            <View style={styles.form}>
+              {/* Email */}
+              <View style={styles.inputRow}>
+                <Ionicons name="mail-outline" size={20} color="#94a3b8" />
+                <TextInput
+                  placeholder="Email"
+                  placeholderTextColor="#6b7280"
+                  value={email}
+                  onChangeText={setEmail}
+                  style={styles.inputBare}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  textContentType="emailAddress"
+                />
+              </View>
+
+              {/* Password */}
+              <View style={styles.inputRow}>
+                <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" />
+                <TextInput
+                  placeholder="Password"
+                  placeholderTextColor="#6b7280"
+                  value={password}
+                  onChangeText={setPassword}
+                  style={styles.inputBare}
+                  secureTextEntry={!showPassword}
+                  autoComplete="password"
+                  textContentType="password"
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={showPassword ? '#a855f7' : '#94a3b8'} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Forgot Password */}
+              <TouchableOpacity style={styles.forgotRow}>
+                <Text style={styles.forgotText}>Forgot password?</Text>
+              </TouchableOpacity>
+
+              {/* Log In Button */}
+              <TouchableOpacity onPress={handleLogin} disabled={submitting} style={{ borderRadius: 14, overflow: 'hidden' }}>
+                <LinearGradient
+                  colors={['#a855f7', '#7c3aed']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.loginBtn}
+                >
+                  <Text style={styles.loginBtnText}>{submitting ? 'Logging in...' : 'Log In'}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+
+            {/* Divider */}
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>Or continue with</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* OAuth Buttons */}
+            <View style={styles.oauthRow}>
+              <TouchableOpacity
+                style={[styles.oauthBtn, !googleRequest && { opacity: 0.4 }]}
+                onPress={() => promptGoogleAsync()}
+                disabled={!googleRequest || submitting}
+              >
+                <Ionicons name="logo-google" size={20} color="#e5e7eb" />
+                <Text style={styles.oauthBtnText}>Google</Text>
+              </TouchableOpacity>
+              {Platform.OS === 'ios' && (
+                <TouchableOpacity
+                  style={styles.oauthBtn}
+                  onPress={handleAppleSignIn}
+                  disabled={submitting}
+                >
+                  <Ionicons name="logo-apple" size={20} color="#e5e7eb" />
+                  <Text style={styles.oauthBtnText}>Apple</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Sign Up Link */}
+            <TouchableOpacity onPress={() => router.push('/register')} style={styles.signupLink}>
+              <Text style={styles.signupText}>
+                Don't have an account? <Text style={{ color: '#c084fc', fontWeight: '700' }}>Sign up</Text>
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, justifyContent: 'center', padding: 24 },
-  loginContainer: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 24,
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
     padding: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+  },
+
+  // Logo
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 48,
+  },
+  circlesRow: {
+    width: 80,
+    height: 48,
+    position: 'relative',
+    marginBottom: 16,
+  },
+  logoCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    position: 'absolute',
+    top: 0,
+  },
+  brandingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  coupleText: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#a855f7',
+  },
+  flowText: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#ec4899',
   },
   tagline: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    marginBottom: 6,
+    color: '#a855f7',
+    letterSpacing: 0.5,
   },
-  title: {
-    fontSize: 28,
+
+  // Welcome
+  welcomeSection: {
+    marginBottom: 32,
+  },
+  welcomeTitle: {
+    fontSize: 26,
     fontWeight: '700',
-    marginBottom: 6,
-    color: '#1a1a1a',
+    color: '#ffffff',
+    marginBottom: 8,
+    letterSpacing: -0.5,
   },
-  subtitle: {
-    fontSize: 15,
-    color: '#6b7280',
-    marginBottom: 20,
+  welcomeSubtitle: {
+    fontSize: 14,
+    color: '#9ca3af',
+    fontWeight: '500',
   },
-  input: {
-    borderWidth: 1.5,
+
+  // Form
+  form: {
+    gap: 16,
+    marginBottom: 24,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 14,
-    marginBottom: 12,
-    color: '#1a1a1a',
   },
-  button: {
-    paddingVertical: 14,
-    borderRadius: 14,
+  inputBare: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 15,
+  },
+  forgotRow: {
+    alignSelf: 'flex-end',
+  },
+  forgotText: {
+    fontSize: 12,
+    color: '#a855f7',
+    fontWeight: '600',
+  },
+  loginBtn: {
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: 10,
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  buttonGhost: {
-    paddingVertical: 14,
+    justifyContent: 'center',
     borderRadius: 14,
-    alignItems: 'center',
-    borderWidth: 2,
   },
-  buttonGhostText: {
-    fontWeight: '700',
+  loginBtnText: {
+    color: '#fff',
     fontSize: 16,
+    fontWeight: '800',
+  },
+
+  // Divider
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(100,116,139,0.3)',
+  },
+  dividerText: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+
+  // OAuth
+  oauthRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+  },
+  oauthBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+  },
+  oauthBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // Sign up
+  signupLink: {
+    alignItems: 'center',
+    paddingBottom: 24,
+  },
+  signupText: {
+    fontSize: 14,
+    color: '#9ca3af',
   },
 });
