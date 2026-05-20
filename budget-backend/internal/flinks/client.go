@@ -68,9 +68,9 @@ func (c *Client) IsAvailable() bool {
 }
 
 // GenerateAuthorizeToken creates a single-use token for Flinks Connect.
-// POST /GenerateAuthorizeToken
+// POST /{instanceId}/BankingServices/GenerateAuthorizeToken
 func (c *Client) GenerateAuthorizeToken() (string, error) {
-	url := fmt.Sprintf("%s/GenerateAuthorizeToken", c.baseURL)
+	url := fmt.Sprintf("%s/%s/BankingServices/GenerateAuthorizeToken", c.baseURL, c.instanceID)
 
 	payload := GenerateTokenRequest{
 		Product: "GetAccountsDetail",
