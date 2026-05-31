@@ -31,6 +31,14 @@ export async function syncPlaidTransactions() {
   return api.post(`/auth/plaid/sync?user_id=${userId}`, undefined);
 }
 
+export async function syncAllBankAccounts() {
+  return api.post<{
+    synced: number;
+    per_provider: Record<string, number>;
+    accounts: Array<{ account_id: string; provider: string; synced: number; error?: string }>;
+  }>(`/auth/bank/sync-all`, undefined);
+}
+
 export async function processRecurring() {
   return api.post(`/auth/recurring/process`);
 }

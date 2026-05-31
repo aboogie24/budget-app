@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 func CreateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +78,15 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		tx.ID, tx.UserID, tx.HouseholdID, tx.BudgetID, tx.CategoryID, tx.Type, tx.Amount, tx.Currency, tx.Category, tx.Note, tx.Date, tx.Frequency, tx.DueDay, tx.Source)
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			// Unique-violation from the manual-dedupe index: a near-simultaneous
+			// retry of the same entry. Treat as success — the original insert won.
+			log.Printf("CreateTransaction dedupe skip: user=%s amount=%.2f note=%q", tx.UserID, tx.Amount, tx.Note)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"status": "duplicate"})
+			return
+		}
 		log.Printf("CreateTransaction insert error: %v", err)
 		http.Error(w, "Failed to insert transaction", http.StatusInternalServerError)
 		return
@@ -226,7 +237,7 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 			&t.DueDay,          // 12
 			&t.Category,        // 13
 			&t.Color,           // 14
-			&t.Source,           // 15
+			&t.Source,          // 15
 			&t.MatchConfidence, // 16
 			&t.MatchedRuleID,   // 17
 			&t.UserVerified,    // 18
@@ -584,4 +595,270 @@ func checkBudgetThresholdAfterTransaction(dbClient db.DBTX, budgetID, householdI
 		"screen":    "/(tabs)/budget",
 		"budget_id": budgetID,
 	})
+}
+
+// setTransactionCategoryRequest is the body for PATCH /auth/transactions/{id}/category.
+type setTransactionCategoryRequest struct {
+	UserID     string `json:"user_id"`
+	CategoryID string `json:"category_id"`
+}
+
+// SetTransactionCategory assigns a category to a single transaction and marks
+// it verified. It is a lightweight alternative to UpdateTransaction (which
+// requires the full transaction body) for the common "pick a category" action.
+// PATCH /auth/transactions/{id}/category
+func SetTransactionCategory(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "Missing transaction ID", http.StatusBadRequest)
+		return
+	}
+
+	var req setTransactionCategoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+	if req.CategoryID == "" {
+		validationError(w, "Category ID is required")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "transactions", id, req.UserID) {
+		return
+	}
+
+	// Assign the category and mark verified — same semantics as
+	// UpdateTransaction when a category is set. The join to categories both
+	// resolves the name and validates the category exists. RETURNING also
+	// yields the normalized merchant, which drives the learning step below.
+	var categoryName string
+	var merchantNorm sql.NullString
+	err = dbClient.QueryRow(`
+		UPDATE transactions t
+		SET category_id = $1,
+		    category_name = c.name,
+		    user_verified = true,
+		    match_confidence = 'exact',
+		    updated_at = NOW()
+		FROM categories c
+		WHERE t.id = $2 AND c.id = $1
+		RETURNING c.name, t.merchant_normalized
+	`, req.CategoryID, id).Scan(&categoryName, &merchantNorm)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Transaction or category not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("SetTransactionCategory update error: %v", err)
+		http.Error(w, "Failed to update transaction category", http.StatusInternalServerError)
+		return
+	}
+
+	// Learn from the edit: turn this choice into a merchant rule (shared with
+	// the household), then re-apply it to the user's other unverified
+	// transactions from the same merchant. Verified transactions are left
+	// untouched — the user already decided those.
+	learned := false
+	retroCount := 0
+	if merchantNorm.Valid && merchantNorm.String != "" {
+		var householdID *string
+		if hh := db.ResolveHouseholdID(dbClient.Conn, req.UserID); hh != "" {
+			householdID = &hh
+		}
+		upsertMerchantRule(dbClient, req.UserID, householdID, merchantNorm.String, req.CategoryID, false)
+		learned = true
+
+		res, rerr := dbClient.Exec(`
+			UPDATE transactions
+			SET category_id = $1, category_name = $2, match_confidence = 'exact',
+			    user_verified = true, updated_at = NOW()
+			WHERE user_id = $3 AND merchant_normalized = $4
+			  AND COALESCE(user_verified, false) = false
+		`, req.CategoryID, categoryName, req.UserID, merchantNorm.String)
+		if rerr != nil {
+			log.Printf("SetTransactionCategory retroactive update: %v", rerr)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			retroCount = int(n)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                id,
+		"category_id":       req.CategoryID,
+		"category_name":     categoryName,
+		"user_verified":     true,
+		"learned":           learned,
+		"retroactive_count": retroCount,
+	})
+}
+
+// RecategorizeTransactions re-runs merchant normalization and the category
+// resolver over the caller's existing bank-synced transactions. It is the
+// one-time backfill for the categorization rework: merchant_normalized is
+// (re)written for every bank transaction, and the category is re-resolved only
+// for transactions the user has not verified — user choices are never
+// overwritten.
+// POST /auth/transactions/recategorize
+func RecategorizeTransactions(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID, _ = getUserIDFromRequest(r)
+	}
+	if userID == "" {
+		http.Error(w, "Missing user ID", http.StatusUnauthorized)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	hhID := db.ResolveHouseholdID(dbClient.Conn, userID)
+
+	rows, err := dbClient.Query(`
+		SELECT id, COALESCE(note, ''), COALESCE(user_verified, false)
+		FROM transactions
+		WHERE user_id = $1 AND source IN ('bank', 'flinks', 'teller')
+	`, userID)
+	if err != nil {
+		log.Printf("recategorize: query error: %v", err)
+		http.Error(w, "Failed to load transactions", http.StatusInternalServerError)
+		return
+	}
+
+	type txRow struct {
+		id       string
+		note     string
+		verified bool
+	}
+	var txs []txRow
+	for rows.Next() {
+		var t txRow
+		if err := rows.Scan(&t.id, &t.note, &t.verified); err == nil {
+			txs = append(txs, t)
+		}
+	}
+	rows.Close()
+
+	normalized, recategorized := 0, 0
+	for _, t := range txs {
+		merchant := categories.NormalizeMerchant(t.note, "")
+
+		var merchantArg interface{}
+		if merchant != "" {
+			merchantArg = merchant
+		}
+		if _, err := dbClient.Exec(
+			`UPDATE transactions SET merchant_normalized = $1 WHERE id = $2`,
+			merchantArg, t.id); err != nil {
+			log.Printf("recategorize: set merchant for %s: %v", t.id, err)
+			continue
+		}
+		normalized++
+
+		// Never overwrite a category the user verified.
+		if t.verified || merchant == "" {
+			continue
+		}
+		catID, conf, ruleID, resolveErr := categories.ResolveCategory(dbClient.Conn, userID, hhID, merchant, nil)
+		if resolveErr != nil || catID == "" {
+			continue
+		}
+		var confArg, ruleArg interface{}
+		if conf != "" {
+			confArg = conf
+		}
+		if ruleID != nil {
+			ruleArg = *ruleID
+		}
+		// An exact match is a user-created/confirmed rule — mark it verified.
+		verified := conf == "exact"
+		if _, err := dbClient.Exec(`
+			UPDATE transactions
+			SET category_id = $1, match_confidence = $2, matched_rule_id = $3,
+			    user_verified = $4, updated_at = NOW()
+			WHERE id = $5 AND COALESCE(user_verified, false) = false
+		`, catID, confArg, ruleArg, verified, t.id); err != nil {
+			log.Printf("recategorize: update category for %s: %v", t.id, err)
+			continue
+		}
+		recategorized++
+	}
+
+	log.Printf("recategorize: user=%s normalized=%d recategorized=%d", userID, normalized, recategorized)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{
+		"normalized":    normalized,
+		"recategorized": recategorized,
+	})
+}
+
+// verifyTransactionRequest is the body for PATCH /auth/transactions/{id}/verify.
+type verifyTransactionRequest struct {
+	UserID string `json:"user_id"`
+}
+
+// VerifyTransaction marks a transaction's category as user-confirmed. It backs
+// the review screen's confirm / confirm-all actions — a lightweight alternative
+// to UpdateTransaction, which requires the full transaction body.
+// PATCH /auth/transactions/{id}/verify
+func VerifyTransaction(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "Missing transaction ID", http.StatusBadRequest)
+		return
+	}
+
+	var req verifyTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "transactions", id, req.UserID) {
+		return
+	}
+
+	res, err := dbClient.Exec(`
+		UPDATE transactions SET user_verified = true, updated_at = NOW() WHERE id = $1
+	`, id)
+	if err != nil {
+		log.Printf("VerifyTransaction error: %v", err)
+		http.Error(w, "Failed to verify transaction", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "Transaction not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "user_verified": true})
 }

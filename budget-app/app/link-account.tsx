@@ -18,7 +18,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { WebView } from 'react-native-webview';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
-import { fetchLinkedAccounts, deleteLinkedAccount, syncPlaidTransactions, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
+import { fetchLinkedAccounts, deleteLinkedAccount, syncAllBankAccounts, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
 
 /* Try to load native Plaid SDK — will be undefined in Expo Go */
 let PlaidLink: any = null;
@@ -36,6 +36,8 @@ type LinkedAccount = {
   item_id: string;
   provider?: string;
   created_at: string;
+  item_status?: string | null;
+  error_code?: string | null;
 };
 
 type ProviderInfo = {
@@ -44,7 +46,7 @@ type ProviderInfo = {
   description?: string;
 };
 
-type SelectedProvider = 'plaid' | 'flinks' | null;
+type SelectedProvider = 'plaid' | 'flinks' | 'teller' | null;
 
 export default function LinkAccountScreen() {
   const router = useRouter();
@@ -68,6 +70,11 @@ export default function LinkAccountScreen() {
   const [flinksConnectUrl, setFlinksConnectUrl] = useState<string | null>(null);
   const [flinksLoading, setFlinksLoading] = useState(false);
 
+  /* ── Teller state ────────────────────────────────────────────── */
+  const [tellerWebViewVisible, setTellerWebViewVisible] = useState(false);
+  const [tellerConnectUrl, setTellerConnectUrl] = useState<string | null>(null);
+  const [tellerLoading, setTellerLoading] = useState(false);
+
   /* ── Check native SDK availability ────────────────────────── */
   const plaidModule: any = PlaidLink;
   const nativeHook =
@@ -85,12 +92,8 @@ export default function LinkAccountScreen() {
       setProviders(list);
 
       // If only Plaid is available, skip provider selection
-      const flinksAvailable = list.some((p) => p.name === 'flinks');
-      if (!flinksAvailable) {
-        setShowProviderSelection(false);
-      } else {
-        setShowProviderSelection(true);
-      }
+      const hasChoice = list.some((p) => p.name !== 'plaid');
+      setShowProviderSelection(hasChoice);
     } catch {
       // If providers endpoint fails, fall back to Plaid-only
       setProviders([{ name: 'plaid' }]);
@@ -291,12 +294,77 @@ export default function LinkAccountScreen() {
     return true;
   };
 
+  /* ── Teller Connect flow ────────────────────────────────────── */
+  // enrollmentId is set when re-authenticating a disconnected enrollment —
+  // Teller Connect skips the institution picker and goes straight to login.
+  const openTellerConnect = (enrollmentId?: string) => {
+    setTellerLoading(true);
+    try {
+      // The backend serves the Teller Connect widget; it posts the enrollment
+      // back to this WebView via window.ReactNativeWebView.postMessage.
+      const base = `${api.getBaseUrl()}/teller/connect-page`;
+      setTellerConnectUrl(enrollmentId ? `${base}?enrollment_id=${encodeURIComponent(enrollmentId)}` : base);
+      setTellerWebViewVisible(true);
+    } catch (e: any) {
+      console.error('Teller connect error:', e);
+      Alert.alert('Error', 'Failed to start Teller connection: ' + (e.message || String(e)));
+    } finally {
+      setTellerLoading(false);
+    }
+  };
+
+  /* ── Handle messages posted from the Teller Connect WebView ──── */
+  const handleTellerMessage = async (raw: string) => {
+    let payload: any;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return; // ignore non-JSON messages
+    }
+
+    if (payload.event === 'exit') {
+      setTellerWebViewVisible(false);
+      setTellerConnectUrl(null);
+      return;
+    }
+    if (payload.event === 'failure') {
+      setTellerWebViewVisible(false);
+      setTellerConnectUrl(null);
+      Alert.alert('Connection failed', payload.message || 'Teller could not connect your bank.');
+      return;
+    }
+    if (payload.event !== 'success' || !payload.access_token) {
+      return;
+    }
+
+    setTellerWebViewVisible(false);
+    setTellerConnectUrl(null);
+    setLinking(true);
+    try {
+      await api.post('/auth/teller/connect', {
+        access_token: payload.access_token,
+        enrollment_id: payload.enrollment_id,
+        user_id: payload.user_id,
+        institution: payload.institution ?? '',
+      });
+      Alert.alert('Linked!', 'Bank account connected via Teller. Data will sync shortly.');
+      loadAccounts();
+    } catch (e: any) {
+      console.error('Teller connect error:', e);
+      Alert.alert('Error', 'Could not complete Teller connection: ' + (e.message || String(e)));
+    } finally {
+      setLinking(false);
+    }
+  };
+
   /* ── Handle Connect button press ───────────────────────────── */
   const handleConnectPress = () => {
     if (selectedProvider === 'plaid') {
       openPlaidBrowser();
     } else if (selectedProvider === 'flinks') {
       openFlinksConnect();
+    } else if (selectedProvider === 'teller') {
+      openTellerConnect();
     }
   };
 
@@ -327,26 +395,51 @@ export default function LinkAccountScreen() {
   const handleSync = async () => {
     setSyncing(true);
     try {
+      // Transactions: unified across providers (Plaid, Flinks, Teller).
+      // Investments / liabilities / balances are still Plaid-only.
       const [txSync, invSync, liabSync, balSync] = await Promise.allSettled([
-        syncPlaidTransactions(),
+        syncAllBankAccounts(),
         syncPlaidInvestments(),
         syncPlaidLiabilities(),
         syncPlaidBalances(),
       ]);
-      const txCount = txSync.status === 'fulfilled' ? (txSync.value as any)?.synced ?? 0 : 0;
+      const txTotal = txSync.status === 'fulfilled' ? (txSync.value as any)?.synced ?? 0 : 0;
+      const perProvider: Record<string, number> =
+        txSync.status === 'fulfilled' ? (txSync.value as any)?.per_provider ?? {} : {};
+      const txAccounts: Array<{ provider: string; error?: string }> =
+        txSync.status === 'fulfilled' ? (txSync.value as any)?.accounts ?? [] : [];
+      const reauthNeeded = txAccounts.filter(
+        (a) => a.error && a.error.includes('enrollment.disconnected'),
+      ).length;
       const invCount = invSync.status === 'fulfilled' ? (invSync.value as any)?.synced ?? 0 : 0;
       const liabCount = liabSync.status === 'fulfilled' ? (liabSync.value as any)?.synced ?? 0 : 0;
       const balCount = balSync.status === 'fulfilled' ? (balSync.value as any)?.synced ?? 0 : 0;
+
       const parts: string[] = [];
-      if (txCount > 0) parts.push(`${txCount} transaction${txCount !== 1 ? 's' : ''}`);
+      if (txTotal > 0) {
+        const breakdown = Object.entries(perProvider)
+          .filter(([, n]) => n > 0)
+          .map(([p, n]) => `${n} ${p.charAt(0).toUpperCase() + p.slice(1)}`)
+          .join(', ');
+        parts.push(
+          `${txTotal} transaction${txTotal !== 1 ? 's' : ''}${breakdown ? ` (${breakdown})` : ''}`,
+        );
+      }
       if (invCount > 0) parts.push(`${invCount} holding${invCount !== 1 ? 's' : ''}`);
       if (liabCount > 0) parts.push(`${liabCount} liabilit${liabCount !== 1 ? 'ies' : 'y'}`);
       if (balCount > 0) parts.push(`${balCount} account balance${balCount !== 1 ? 's' : ''}`);
-      Alert.alert('Sync Complete', parts.length > 0 ? parts.join(', ') + ' synced.' : 'Everything is up to date.');
+
+      const summary = parts.length > 0 ? parts.join(', ') + ' synced.' : 'Everything is up to date.';
+      const reauthLine = reauthNeeded > 0
+        ? `\n\n${reauthNeeded} account${reauthNeeded !== 1 ? 's' : ''} need${reauthNeeded === 1 ? 's' : ''} to be reconnected — tap Reconnect below.`
+        : '';
+      Alert.alert('Sync Complete', summary + reauthLine);
     } catch {
       Alert.alert('Error', 'Sync failed. Please try again.');
     } finally {
       setSyncing(false);
+      // Refetch so item_status changes (e.g. login_required) show immediately.
+      loadAccounts();
     }
   };
 
@@ -354,7 +447,8 @@ export default function LinkAccountScreen() {
   const getProviderBadge = (provider?: string) => {
     if (!provider) return null;
     const label = provider.charAt(0).toUpperCase() + provider.slice(1);
-    const color = provider === 'flinks' ? '#34d399' : '#60a5fa';
+    const color =
+      provider === 'flinks' ? '#34d399' : provider === 'teller' ? '#f59e0b' : '#60a5fa';
     return (
       <View style={[styles.providerBadge, { backgroundColor: `${color}20` }]}>
         <Text style={[styles.providerBadgeText, { color }]}>{label}</Text>
@@ -365,7 +459,15 @@ export default function LinkAccountScreen() {
   /* ── Provider selection cards ────────────────────────────────── */
   const renderProviderSelection = () => {
     const isFlinksAvailable = providers.some((p) => p.name === 'flinks');
-    if (!isFlinksAvailable) return null;
+    const isTellerAvailable = providers.some((p) => p.name === 'teller');
+    // Only worth showing a picker when there's a choice beyond Plaid.
+    if (!isFlinksAvailable && !isTellerAvailable) return null;
+
+    const busy = linking || flinksLoading || tellerLoading;
+    const labelFor = (p: SelectedProvider) =>
+      p === 'flinks' ? 'Flinks' : p === 'teller' ? 'Teller' : 'Plaid';
+    const iconFor = (p: SelectedProvider) =>
+      p === 'flinks' ? 'globe-outline' : p === 'teller' ? 'business-outline' : 'shield-checkmark-outline';
 
     return (
       <View style={styles.providerSection}>
@@ -409,67 +511,108 @@ export default function LinkAccountScreen() {
         </TouchableOpacity>
 
         {/* Flinks Card */}
-        <TouchableOpacity
-          style={[
-            styles.providerCard,
-            selectedProvider === 'flinks' && styles.providerCardSelected,
-          ]}
-          onPress={() => setSelectedProvider('flinks')}
-          activeOpacity={0.7}
-        >
-          <View style={styles.providerCardRow}>
-            <View style={[styles.providerIconWrap, { backgroundColor: 'rgba(52,211,153,0.12)' }]}>
-              <Ionicons name="globe-outline" size={24} color="#34d399" />
-            </View>
-            <View style={styles.providerCardText}>
-              <Text style={styles.providerName}>Flinks</Text>
-              <Text style={styles.providerDesc}>
-                Connect to 15,000+ North American institutions
-              </Text>
-            </View>
-            {selectedProvider === 'flinks' && (
-              <View style={styles.providerCheck}>
-                <Ionicons name="checkmark-circle" size={24} color="#a855f7" />
+        {isFlinksAvailable && (
+          <TouchableOpacity
+            style={[
+              styles.providerCard,
+              selectedProvider === 'flinks' && styles.providerCardSelected,
+            ]}
+            onPress={() => setSelectedProvider('flinks')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.providerCardRow}>
+              <View style={[styles.providerIconWrap, { backgroundColor: 'rgba(52,211,153,0.12)' }]}>
+                <Ionicons name="globe-outline" size={24} color="#34d399" />
               </View>
-            )}
-          </View>
-          <View style={styles.featureRow}>
-            <View style={styles.featureItem}>
-              <Ionicons name="checkmark" size={14} color="#94a3b8" />
-              <Text style={styles.featureText}>Strong Canadian coverage</Text>
+              <View style={styles.providerCardText}>
+                <Text style={styles.providerName}>Flinks</Text>
+                <Text style={styles.providerDesc}>
+                  Connect to 15,000+ North American institutions
+                </Text>
+              </View>
+              {selectedProvider === 'flinks' && (
+                <View style={styles.providerCheck}>
+                  <Ionicons name="checkmark-circle" size={24} color="#a855f7" />
+                </View>
+              )}
             </View>
-            <View style={styles.featureItem}>
-              <Ionicons name="checkmark" size={14} color="#94a3b8" />
-              <Text style={styles.featureText}>OAuth + screen scraping</Text>
+            <View style={styles.featureRow}>
+              <View style={styles.featureItem}>
+                <Ionicons name="checkmark" size={14} color="#94a3b8" />
+                <Text style={styles.featureText}>Strong Canadian coverage</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Ionicons name="checkmark" size={14} color="#94a3b8" />
+                <Text style={styles.featureText}>OAuth + screen scraping</Text>
+              </View>
             </View>
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        )}
+
+        {/* Teller Card */}
+        {isTellerAvailable && (
+          <TouchableOpacity
+            style={[
+              styles.providerCard,
+              selectedProvider === 'teller' && styles.providerCardSelected,
+            ]}
+            onPress={() => setSelectedProvider('teller')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.providerCardRow}>
+              <View style={[styles.providerIconWrap, { backgroundColor: 'rgba(245,158,11,0.12)' }]}>
+                <Ionicons name="business-outline" size={24} color="#f59e0b" />
+              </View>
+              <View style={styles.providerCardText}>
+                <Text style={styles.providerName}>Teller</Text>
+                <Text style={styles.providerDesc}>
+                  Connect to US banks and credit unions
+                </Text>
+              </View>
+              {selectedProvider === 'teller' && (
+                <View style={styles.providerCheck}>
+                  <Ionicons name="checkmark-circle" size={24} color="#a855f7" />
+                </View>
+              )}
+            </View>
+            <View style={styles.featureRow}>
+              <View style={styles.featureItem}>
+                <Ionicons name="checkmark" size={14} color="#94a3b8" />
+                <Text style={styles.featureText}>Fast US coverage</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Ionicons name="checkmark" size={14} color="#94a3b8" />
+                <Text style={styles.featureText}>Read-only access</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        )}
 
         {/* Connect button */}
         <TouchableOpacity
           style={[
             styles.button,
-            (!selectedProvider || linking || flinksLoading) && styles.buttonDisabled,
+            (!selectedProvider || busy) && styles.buttonDisabled,
           ]}
           onPress={handleConnectPress}
-          disabled={!selectedProvider || linking || flinksLoading}
+          disabled={!selectedProvider || busy}
           activeOpacity={0.8}
         >
-          {(linking || flinksLoading) ? (
+          {busy ? (
             <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
           ) : (
             <Ionicons
-              name={selectedProvider === 'flinks' ? 'globe-outline' : 'shield-checkmark-outline'}
+              name={iconFor(selectedProvider)}
               size={20}
               color="#fff"
               style={{ marginRight: 8 }}
             />
           )}
           <Text style={styles.buttonText}>
-            {linking || flinksLoading
-              ? `Connecting via ${selectedProvider === 'flinks' ? 'Flinks' : 'Plaid'}...`
+            {busy
+              ? `Connecting via ${labelFor(selectedProvider)}...`
               : selectedProvider
-              ? `Connect with ${selectedProvider === 'flinks' ? 'Flinks' : 'Plaid'}`
+              ? `Connect with ${labelFor(selectedProvider)}`
               : 'Select a provider'}
           </Text>
         </TouchableOpacity>
@@ -523,6 +666,55 @@ export default function LinkAccountScreen() {
                 <View style={styles.webViewLoading}>
                   <ActivityIndicator size="large" color="#c084fc" />
                   <Text style={styles.webViewLoadingText}>Loading Flinks Connect...</Text>
+                </View>
+              )}
+              javaScriptEnabled
+              domStorageEnabled
+            />
+          )}
+        </SafeAreaView>
+      </LinearGradient>
+    </Modal>
+  );
+
+  /* ── Teller WebView Modal ───────────────────────────────────── */
+  const renderTellerWebView = () => (
+    <Modal
+      visible={tellerWebViewVisible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={() => {
+        setTellerWebViewVisible(false);
+        setTellerConnectUrl(null);
+      }}
+    >
+      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
+        <SafeAreaView style={styles.webViewSafeArea}>
+          <View style={styles.webViewHeader}>
+            <TouchableOpacity
+              style={styles.webViewCloseBtn}
+              onPress={() => {
+                setTellerWebViewVisible(false);
+                setTellerConnectUrl(null);
+              }}
+            >
+              <Ionicons name="close" size={22} color="#c084fc" />
+            </TouchableOpacity>
+            <Text style={styles.webViewTitle}>Connect with Teller</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          {tellerConnectUrl && (
+            <WebView
+              source={{ uri: tellerConnectUrl }}
+              style={styles.webView}
+              onMessage={(event) => {
+                handleTellerMessage(event.nativeEvent.data);
+              }}
+              startInLoadingState
+              renderLoading={() => (
+                <View style={styles.webViewLoading}>
+                  <ActivityIndicator size="large" color="#c084fc" />
+                  <Text style={styles.webViewLoadingText}>Loading Teller Connect...</Text>
                 </View>
               )}
               javaScriptEnabled
@@ -589,31 +781,53 @@ export default function LinkAccountScreen() {
 
           {/* ── Linked accounts list ── */}
           {accounts.length > 0 &&
-            accounts.map((item) => (
-              <View key={item.id} style={styles.accountCard}>
-                <View style={styles.accountIcon}>
-                  <Ionicons name="business-outline" size={22} color="#c084fc" />
-                </View>
-                <View style={styles.accountInfo}>
-                  <View style={styles.accountNameRow}>
-                    <Text style={styles.accountName}>
-                      {item.institution_name || 'Bank Account'}
-                    </Text>
-                    {getProviderBadge(item.provider)}
+            accounts.map((item) => {
+              const needsReauth = item.item_status === 'login_required';
+              const canReconnect = needsReauth && item.provider === 'teller';
+              return (
+                <View key={item.id} style={styles.accountCard}>
+                  <View style={styles.accountIcon}>
+                    <Ionicons
+                      name={needsReauth ? 'warning-outline' : 'business-outline'}
+                      size={22}
+                      color={needsReauth ? '#f59e0b' : '#c084fc'}
+                    />
                   </View>
-                  <Text style={styles.accountMeta}>
-                    Linked {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
-                  </Text>
+                  <View style={styles.accountInfo}>
+                    <View style={styles.accountNameRow}>
+                      <Text style={styles.accountName}>
+                        {item.institution_name || 'Bank Account'}
+                      </Text>
+                      {getProviderBadge(item.provider)}
+                    </View>
+                    {needsReauth ? (
+                      <Text style={styles.accountReauth}>Reconnect needed — login expired</Text>
+                    ) : (
+                      <Text style={styles.accountMeta}>
+                        Linked {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
+                      </Text>
+                    )}
+                  </View>
+                  {canReconnect && (
+                    <TouchableOpacity
+                      style={styles.reconnectBtn}
+                      onPress={() => openTellerConnect(item.item_id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="refresh" size={14} color="#f59e0b" />
+                      <Text style={styles.reconnectBtnText}>Reconnect</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={styles.unlinkBtn}
+                    onPress={() => handleUnlink(item)}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#f87171" />
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  style={styles.unlinkBtn}
-                  onPress={() => handleUnlink(item)}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                >
-                  <Ionicons name="trash-outline" size={18} color="#f87171" />
-                </TouchableOpacity>
-              </View>
-            ))}
+              );
+            })}
 
           {/* ── Sync button ── */}
           {accounts.length > 0 && (
@@ -677,6 +891,9 @@ export default function LinkAccountScreen() {
 
       {/* ── Flinks WebView modal ── */}
       {renderFlinksWebView()}
+
+      {/* ── Teller WebView modal ── */}
+      {renderTellerWebView()}
     </LinearGradient>
   );
 }
@@ -834,6 +1051,29 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     fontSize: 12,
     marginTop: 2,
+  },
+  accountReauth: {
+    color: '#f59e0b',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  reconnectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245,158,11,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.4)',
+    marginRight: 8,
+  },
+  reconnectBtnText: {
+    color: '#f59e0b',
+    fontSize: 12,
+    fontWeight: '700',
   },
   unlinkBtn: {
     width: 36,

@@ -252,7 +252,13 @@ export default function CalendarScreen() {
         if (!t.date) return;
         const date = parseCalDate(t.date);
         if (isNaN(date.getTime())) return;
-        expandFrequency(date, t.frequency || '', {
+        // Only manual templates (source is null/'manual') should be projected
+        // forward by frequency. Recurring children already exist as real dated
+        // rows, and bank-synced transactions are real one-off events — both
+        // would double-count if expanded.
+        const isTemplate = !t.source || t.source === 'manual';
+        const freq = isTemplate ? (t.frequency || '') : '';
+        expandFrequency(date, freq, {
           id: t.id || t.note || 'tx',
           name: t.category_name || t.category || t.note || 'Transaction',
           amount: t.amount || 0,

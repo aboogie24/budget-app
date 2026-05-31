@@ -41,6 +41,8 @@ func GetProvider(name string) Provider {
 	switch name {
 	case "flinks":
 		return NewFlinksProvider()
+	case "teller":
+		return NewTellerProvider()
 	default:
 		return NewPlaidProvider()
 	}

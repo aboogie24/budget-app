@@ -32,6 +32,7 @@ export default function AddTransactionScreen() {
   const [note, setNote] = useState('');
   const [frequency, setFrequency] = useState('one-time');
   const [dueDay, setDueDay] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // Load user ID on mount and reset category when type changes
   useEffect(() => {
@@ -52,6 +53,8 @@ export default function AddTransactionScreen() {
   };
 
   const handleSave = async () => {
+    if (saving) return;
+
     const currentUser = await getCurrentUser();
     if (!currentUser || !currentUser.id) {
       Alert.alert('User error', 'No user session found.');
@@ -90,6 +93,7 @@ export default function AddTransactionScreen() {
         frequency === 'monthly' && type === 'expense' ? parseInt(dueDay) : null,
     };
 
+    setSaving(true);
     try {
       await api.post(`/auth/transactions`, transaction);
       successHaptic();
@@ -99,6 +103,8 @@ export default function AddTransactionScreen() {
       console.error('Error saving:', err);
       errorHaptic();
       Alert.alert('Error', 'Could not save transaction.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -210,14 +216,19 @@ export default function AddTransactionScreen() {
             )}
           </View>
 
-          <TouchableOpacity onPress={handleSave} style={styles.button}>
+          <TouchableOpacity
+            onPress={handleSave}
+            style={[styles.button, saving && { opacity: 0.6 }]}
+            disabled={saving}
+            activeOpacity={0.8}
+          >
             <LinearGradient
               colors={['#a855f7', '#7c3aed']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.buttonInner}
             >
-              <Text style={styles.buttonText}>Save</Text>
+              <Text style={styles.buttonText}>{saving ? 'Saving…' : 'Save'}</Text>
               <Ionicons name="arrow-forward" size={18} color="#fff" />
             </LinearGradient>
           </TouchableOpacity>

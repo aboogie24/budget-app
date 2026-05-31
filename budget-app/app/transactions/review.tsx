@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import CategoryPicker from '@/components/CategoryPicker';
@@ -38,6 +38,8 @@ function getConfidenceBadge(confidence?: string) {
     case 'exact':
     case 'high':
       return { label: confidence === 'exact' ? 'Exact' : 'High', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
+    case 'ai':
+      return { label: 'AI', color: '#c084fc', bg: 'rgba(168,85,247,0.15)' };
     case 'medium':
       return { label: 'Medium', color: '#eab308', bg: 'rgba(234,179,8,0.15)' };
     case 'low':
@@ -142,6 +144,8 @@ const swipeStyles = StyleSheet.create({
 
 export default function TransactionReviewScreen() {
   const router = useRouter();
+  // Optional filter — when navigated to from a budget category's "unverified" badge.
+  const params = useLocalSearchParams<{ category_id?: string; category_name?: string }>();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState<Set<string>>(new Set());
@@ -149,10 +153,12 @@ export default function TransactionReviewScreen() {
   const [userId, setUserId] = useState('');
   const [pickerVisible, setPickerVisible] = useState(false);
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
-  const [editingMerchant, setEditingMerchant] = useState<string>('');
 
   const unverifiedTransactions = transactions.filter(
-    (t) => !t.user_verified && t.match_confidence !== 'exact'
+    (t) =>
+      !t.user_verified &&
+      t.match_confidence !== 'exact' &&
+      (!params.category_id || t.category_id === params.category_id)
   );
 
   const load = useCallback(async () => {
@@ -184,7 +190,7 @@ export default function TransactionReviewScreen() {
   const confirmTransaction = async (txId: string) => {
     setConfirming((prev) => new Set(prev).add(txId));
     try {
-      await api.put(`/auth/transactions/${txId}`, { user_verified: true });
+      await api.patch(`/auth/transactions/${txId}/verify`, { user_id: userId });
       successHaptic();
       setTransactions((prev) =>
         prev.map((t) => (t.id === txId ? { ...t, user_verified: true } : t))
@@ -205,7 +211,7 @@ export default function TransactionReviewScreen() {
     setConfirmingAll(true);
     try {
       const promises = unverifiedTransactions.map((t) =>
-        api.put(`/auth/transactions/${t.id}`, { user_verified: true })
+        api.patch(`/auth/transactions/${t.id}/verify`, { user_id: userId })
       );
       await Promise.all(promises);
       successHaptic();
@@ -226,58 +232,38 @@ export default function TransactionReviewScreen() {
 
   const openCategoryPicker = (tx: Transaction) => {
     setEditingTxId(tx.id);
-    setEditingMerchant(tx.note ?? '');
     setPickerVisible(true);
   };
 
   const handleCategorySelect = async (category: { id: string; name: string; parent_name?: string }) => {
     setPickerVisible(false);
-    if (!editingTxId) return;
+    const txId = editingTxId;
+    setEditingTxId(null);
+    if (!txId) return;
 
     try {
-      await api.put(`/auth/transactions/${editingTxId}`, {
-        category_id: category.id,
-        user_verified: true,
-      });
-      successHaptic();
-      setTransactions((prev) =>
-        prev.map((t) =>
-          t.id === editingTxId
-            ? { ...t, category_id: category.id, category_name: category.name, user_verified: true }
-            : t
-        )
+      // Setting the category also learns a merchant rule and retroactively
+      // re-categorizes the user's other unverified transactions from the
+      // same merchant — all server-side.
+      const res = await api.patch<{ retroactive_count?: number }>(
+        `/auth/transactions/${txId}/category`,
+        { user_id: userId, category_id: category.id }
       );
-
-      // Prompt to create auto-match rule
-      if (editingMerchant.trim()) {
+      successHaptic();
+      const extra = res?.retroactive_count ?? 0;
+      if (extra > 0) {
         Alert.alert(
-          'Create Rule',
-          `Always categorize "${editingMerchant}" as "${category.name}"?`,
-          [
-            { text: 'No', style: 'cancel' },
-            {
-              text: 'Yes',
-              onPress: async () => {
-                try {
-                  await api.post('/auth/category-rules/from-edit', {
-                    merchant_name: editingMerchant,
-                    category_id: category.id,
-                  });
-                } catch (e) {
-                  console.error('Failed to create category rule:', e);
-                }
-              },
-            },
-          ]
+          'Categorized',
+          `Also auto-categorized ${extra} more ${extra === 1 ? 'transaction' : 'transactions'} from this merchant.`
         );
       }
+      // Refetch so the edited + retroactively-verified transactions drop off
+      // the review queue.
+      load();
     } catch (e) {
       console.error('Failed to update transaction category:', e);
       Alert.alert('Error', 'Could not update category.');
     }
-
-    setEditingTxId(null);
-    setEditingMerchant('');
   };
 
   // Group transactions by date
@@ -318,13 +304,17 @@ export default function TransactionReviewScreen() {
         {/* Header */}
         <View style={styles.headerRow}>
           <TouchableOpacity
-            onPress={() => router.navigate('/(tabs)/goals' as any)}
+            onPress={() =>
+              params.category_id ? router.back() : router.navigate('/(tabs)/goals' as any)
+            }
             style={styles.iconBtn}
           >
             <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={styles.headerTitle}>Review Transactions</Text>
+            <Text style={styles.headerTitle}>
+              {params.category_name ? `Review · ${params.category_name}` : 'Review Transactions'}
+            </Text>
             {unverifiedTransactions.length > 0 && (
               <View style={styles.countBadge}>
                 <Text style={styles.countBadgeText}>{unverifiedTransactions.length}</Text>

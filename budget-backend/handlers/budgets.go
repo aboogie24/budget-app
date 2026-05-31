@@ -651,12 +651,13 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		TransactionCount int                  `json:"transaction_count"`
 		HasUnverified    bool                 `json:"has_unverified"`
 		UnverifiedCount  int                  `json:"unverified_count"`
-		Subcategories    []subcategorySummary  `json:"subcategories"`
+		Subcategories    []subcategorySummary `json:"subcategories"`
 	}
 	type budgetSummary struct {
 		ID              string            `json:"id"`
 		Name            string            `json:"name"`
 		Type            string            `json:"type"`
+		CategoryID      *string           `json:"category_id,omitempty"`
 		Amount          float64           `json:"budgeted"`
 		Spent           float64           `json:"spent"`
 		Remaining       float64           `json:"remaining"`
@@ -925,6 +926,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 			ID:              b.ID,
 			Name:            b.Name,
 			Type:            b.Type,
+			CategoryID:      b.CategoryID,
 			Amount:          effective,
 			Spent:           spent,
 			Remaining:       remaining,
@@ -1043,4 +1045,67 @@ func DeleteBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateBudgetAmountRequest is the body for PATCH /auth/budgets/{id}/amount.
+type updateBudgetAmountRequest struct {
+	UserID string  `json:"user_id"`
+	Amount float64 `json:"amount"`
+}
+
+// UpdateBudgetAmount updates only a budget's amount — a lightweight alternative
+// to UpdateBudget (which requires the full budget body) for the inline amount
+// edit on the budget screen. It does not touch the budget's category link.
+// PATCH /auth/budgets/{id}/amount
+func UpdateBudgetAmount(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "Missing budget ID", http.StatusBadRequest)
+		return
+	}
+
+	var req updateBudgetAmountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
+	if req.Amount <= 0 {
+		validationError(w, "Amount must be greater than zero")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	if !householdAccessCheck(w, dbClient.Conn, "budgets", id, req.UserID) {
+		return
+	}
+
+	res, err := dbClient.Exec(`
+		UPDATE budgets SET amount = $1, updated_at = NOW(), updated_by = $3
+		WHERE id = $2
+	`, req.Amount, id, req.UserID)
+	if err != nil {
+		log.Printf("UpdateBudgetAmount error: %v", err)
+		http.Error(w, "Failed to update budget", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "Budget not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":     id,
+		"amount": req.Amount,
+	})
 }

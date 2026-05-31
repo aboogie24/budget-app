@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gorilla/mux"
 )
@@ -284,7 +284,9 @@ func CreateRuleFromEdit(w http.ResponseWriter, r *http.Request) {
 		householdID = &hh
 	}
 
-	lowerMerchant := strings.ToLower(strings.TrimSpace(req.MerchantName))
+	// Normalize so the learned rule matches future transactions from the same
+	// merchant despite varying store numbers / prefixes in the raw description.
+	lowerMerchant := categories.NormalizeMerchant(req.MerchantName, "")
 
 	// Upsert: if user already has a merchant rule for this value, update category
 	var rule models.CategoryMappingRule
@@ -336,4 +338,32 @@ func CreateRuleFromEdit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(rule)
+}
+
+// upsertMerchantRule creates or updates a user-scoped merchant rule keyed on a
+// normalized merchant name. It is the learning hook: a categorization becomes a
+// rule that auto-categorizes that merchant going forward (for the whole
+// household). autoCreated distinguishes a user's explicit choice (false) from
+// an AI classification (true) — the resolver flags AI-rule matches for review.
+// A user edit on an AI-created rule flips it to user-owned. Safe to call
+// repeatedly — relies on the partial unique index from 20260521130000.
+func upsertMerchantRule(conn *db.DB, userID string, householdID *string, normalizedMerchant, categoryID string, autoCreated bool) {
+	if normalizedMerchant == "" || categoryID == "" {
+		return
+	}
+	_, err := conn.Exec(`
+		INSERT INTO category_mapping_rules
+			(user_id, household_id, rule_type, match_value, category_id, auto_created, priority)
+		VALUES ($1, $2, 'merchant', $3, $4, $5, 10)
+		ON CONFLICT (user_id, rule_type, match_value) WHERE user_id IS NOT NULL
+		DO UPDATE SET
+			category_id = EXCLUDED.category_id,
+			household_id = EXCLUDED.household_id,
+			auto_created = EXCLUDED.auto_created,
+			usage_count = category_mapping_rules.usage_count + 1,
+			updated_at = NOW()
+	`, userID, householdID, normalizedMerchant, categoryID, autoCreated)
+	if err != nil {
+		log.Printf("upsertMerchantRule (%s -> %s): %v", normalizedMerchant, categoryID, err)
+	}
 }

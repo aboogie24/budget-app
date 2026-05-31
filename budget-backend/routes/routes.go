@@ -6,6 +6,7 @@ import (
 	"github.com/aboogie/budget-backend/handlers"
 	"github.com/aboogie/budget-backend/internal/flinks"
 	plaidclient "github.com/aboogie/budget-backend/internal/plaid"
+	"github.com/aboogie/budget-backend/internal/teller"
 	"github.com/aboogie/budget-backend/middleware"
 
 	"github.com/gorilla/mux"
@@ -23,6 +24,12 @@ func SetupRoutes(r *mux.Router) {
 		log.Println("Flinks client initialized (env=" + flinksClient.Env() + ")")
 	}
 
+	// Initialize Teller client (logs availability)
+	tellerClient := teller.NewClient()
+	if tellerClient.IsAvailable() {
+		log.Println("Teller client initialized (env=" + tellerClient.Env() + ")")
+	}
+
 	r.Use(middleware.RecoveryMiddleware)
 	r.Use(middleware.Logging)
 
@@ -31,12 +38,16 @@ func SetupRoutes(r *mux.Router) {
 
 	// Transactions
 	authRoutes.HandleFunc("/transactions/backfill-categories", handlers.BackfillTransactionCategories).Methods("POST")
+	authRoutes.HandleFunc("/transactions/recategorize", handlers.RecategorizeTransactions).Methods("POST")
+	authRoutes.HandleFunc("/transactions/ai-categorize", handlers.AICategorizeTransactions).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.SplitTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.GetTransactionSplits).Methods("GET")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.UpdateTransactionSplits).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.DeleteTransactionSplits).Methods("DELETE")
+	authRoutes.HandleFunc("/transactions/{id}/category", handlers.SetTransactionCategory).Methods("PATCH")
+	authRoutes.HandleFunc("/transactions/{id}/verify", handlers.VerifyTransaction).Methods("PATCH")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.UpdateTransaction).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
 	authRoutes.HandleFunc("/savings-goals", handlers.ListSavingsGoals).Methods("GET")
@@ -61,11 +72,15 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/sharing-preferences", handlers.GetSharingPreferences).Methods("GET")
 	authRoutes.HandleFunc("/sharing-preferences", handlers.UpsertSharingPreferences).Methods("POST")
 	authRoutes.HandleFunc("/bank/sync", handlers.SyncBankAccount).Methods("POST")
+	authRoutes.HandleFunc("/bank/sync-all", handlers.SyncAllBankAccounts).Methods("POST")
 	authRoutes.HandleFunc("/bank/providers", handlers.GetBankProviders).Methods("GET")
 
 	// Flinks (bank connection)
 	authRoutes.HandleFunc("/flinks/authorize-token", handlers.FlinksAuthorizeToken).Methods("POST")
 	authRoutes.HandleFunc("/flinks/connect", handlers.FlinksConnect).Methods("POST")
+
+	// Teller (bank connection)
+	authRoutes.HandleFunc("/teller/connect", handlers.TellerConnect).Methods("POST")
 	authRoutes.HandleFunc("/plaid/sync", handlers.SyncTransactions(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.SyncInvestments(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.GetInvestmentHoldings).Methods("GET")
@@ -116,6 +131,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
 	authRoutes.HandleFunc("/budgets/user/{user_id}/summary", handlers.GetBudgetSummary).Methods("GET")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.GetBudgetByID).Methods("GET")
+	authRoutes.HandleFunc("/budgets/{id}/amount", handlers.UpdateBudgetAmount).Methods("PATCH")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
 
@@ -128,6 +144,9 @@ func SetupRoutes(r *mux.Router) {
 
 	// Plaid link page (public — serves HTML for WebView)
 	r.HandleFunc("/plaid/link-page", handlers.PlaidLinkPage).Methods("GET")
+
+	// Teller Connect page (public — serves HTML for WebView)
+	r.HandleFunc("/teller/connect-page", handlers.TellerConnectPage).Methods("GET")
 
 	// Plaid webhooks (public — receives real-time updates from Plaid)
 	r.HandleFunc("/webhooks/plaid", handlers.HandlePlaidWebhook(plaid)).Methods("POST")

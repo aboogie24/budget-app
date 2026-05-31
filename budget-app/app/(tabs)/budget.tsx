@@ -229,6 +229,22 @@ const CategoryBudgetRow = ({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const inputRef = useRef<TextInput>(null);
+  const router = useRouter();
+
+  // Drill into this category's transactions.
+  const openTransactions = () => {
+    router.push({
+      pathname: '/transaction/list',
+      params: { category_id: category.id, category_name: category.name },
+    });
+  };
+  // Jump to the review screen filtered to this category's unverified transactions.
+  const openReview = () => {
+    router.push({
+      pathname: '/transactions/review',
+      params: { category_id: category.id, category_name: category.name },
+    });
+  };
 
   const hasBudget = category.budget_amount != null && category.budget_amount > 0;
   const spent = category.spent || 0;
@@ -288,8 +304,12 @@ const CategoryBudgetRow = ({
         />
       </View>
 
-      {/* Name + Progress */}
-      <View style={{ flex: 1, minWidth: 0 }}>
+      {/* Name + Progress — tap to drill into this category's transactions */}
+      <TouchableOpacity
+        style={{ flex: 1, minWidth: 0 }}
+        activeOpacity={0.6}
+        onPress={openTransactions}
+      >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <Text
             style={{
@@ -318,8 +338,13 @@ const CategoryBudgetRow = ({
             </View>
           )}
           {(category.unverified_count || 0) > 0 && (
-            <View
+            <TouchableOpacity
+              onPress={openReview}
+              activeOpacity={0.7}
               style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 2,
                 backgroundColor: 'rgba(251,191,36,0.12)',
                 paddingHorizontal: 5,
                 paddingVertical: 2,
@@ -327,9 +352,10 @@ const CategoryBudgetRow = ({
               }}
             >
               <Text style={{ fontSize: 9, color: '#fbbf24' }}>
-                {category.unverified_count} unverified
+                {category.unverified_count} to review
               </Text>
-            </View>
+              <Ionicons name="chevron-forward" size={8} color="#fbbf24" />
+            </TouchableOpacity>
           )}
         </View>
         {hasBudget ? (
@@ -354,7 +380,7 @@ const CategoryBudgetRow = ({
             {spent > 0 ? `${fmt(spent)} spent \u00B7 No budget set` : 'Tap amount to set budget'}
           </Text>
         )}
-      </View>
+      </TouchableOpacity>
 
       {/* Budget Amount — tap to edit */}
       {editing ? (
@@ -805,6 +831,7 @@ export default function BudgetScreen() {
         { budget_id: string; budgeted: number; spent: number }
       > = {};
       const spentByCategoryId: Record<string, number> = {};
+      const unverifiedByCategoryId: Record<string, number> = {};
 
       if (summary?.budgets) {
         for (const b of summary.budgets) {
@@ -816,11 +843,20 @@ export default function BudgetScreen() {
               spent: b.spent,
             };
           }
-          // Also accumulate spending from the categories array inside each budget
+          // Also accumulate spending + unverified counts from the categories
+          // array inside each budget.
           for (const cat of b.categories || []) {
             spentByCategoryId[cat.id] = (spentByCategoryId[cat.id] || 0) + cat.spent;
+            if (cat.unverified_count) {
+              unverifiedByCategoryId[cat.id] =
+                (unverifiedByCategoryId[cat.id] || 0) + cat.unverified_count;
+            }
             for (const sub of cat.subcategories || []) {
               spentByCategoryId[sub.id] = (spentByCategoryId[sub.id] || 0) + sub.spent;
+              if (sub.unverified_count) {
+                unverifiedByCategoryId[sub.id] =
+                  (unverifiedByCategoryId[sub.id] || 0) + sub.unverified_count;
+              }
             }
           }
         }
@@ -844,7 +880,7 @@ export default function BudgetScreen() {
             budget_id: sub.budget_id || subBudgetInfo?.budget_id || null,
             budget_amount: subBudgetInfo?.budgeted ?? null,
             spent: subSpent,
-            unverified_count: 0,
+            unverified_count: unverifiedByCategoryId[sub.id] || 0,
           };
         });
 
@@ -858,7 +894,7 @@ export default function BudgetScreen() {
           budget_id: cat.budget_id || budgetInfo?.budget_id || null,
           budget_amount: budgetInfo?.budgeted ?? null,
           spent: catSpent,
-          unverified_count: 0,
+          unverified_count: unverifiedByCategoryId[cat.id] || 0,
           subcategories,
         };
       });
@@ -983,8 +1019,12 @@ export default function BudgetScreen() {
     async (categoryId: string, budgetId: string | null | undefined, amount: number) => {
       try {
         if (budgetId) {
-          // Update existing budget
-          await api.put(`/auth/budgets/${budgetId}`, { amount });
+          // Update just the amount of an existing budget — leaves the
+          // category link intact.
+          await api.patch(`/auth/budgets/${budgetId}/amount`, {
+            user_id: userId,
+            amount,
+          });
         } else {
           // Find category name for the new budget
           let catName = 'Budget';
@@ -1353,7 +1393,7 @@ export default function BudgetScreen() {
                       }}
                     >
                       <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>
-                        No budgeted categories yet. Tap "+ Set" on a category to get started.
+                        {'No budgeted categories yet. Tap "+ Set" on a category to get started.'}
                       </Text>
                     </View>
                   )}

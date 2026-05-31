@@ -20,25 +20,27 @@ func ResolveCategory(
 ) (categoryID string, confidence string, ruleID *string, err error) {
 	lowerMerchant := strings.ToLower(strings.TrimSpace(merchantName))
 
-	// 1. User merchant rule — exact match on lowercased merchant name
+	// 1. User merchant rule — exact match on the normalized merchant name.
+	//    A user-created rule resolves as "exact" (trusted); an AI-created rule
+	//    resolves as "ai" so its results stay flagged for review.
 	if userID != "" && lowerMerchant != "" {
-		cid, rid, found, e := matchMerchantRule(db, &userID, nil, lowerMerchant)
+		cid, rid, autoCreated, found, e := matchMerchantRule(db, &userID, nil, lowerMerchant)
 		if e != nil {
 			return "", "", nil, e
 		}
 		if found {
-			return cid, "exact", &rid, nil
+			return cid, merchantRuleConfidence(autoCreated), &rid, nil
 		}
 	}
 
-	// 2. Household merchant rule — exact match
+	// 2. Household merchant rule
 	if householdID != "" && lowerMerchant != "" {
-		cid, rid, found, e := matchMerchantRule(db, nil, &householdID, lowerMerchant)
+		cid, rid, autoCreated, found, e := matchMerchantRule(db, nil, &householdID, lowerMerchant)
 		if e != nil {
 			return "", "", nil, e
 		}
 		if found {
-			return cid, "exact", &rid, nil
+			return cid, merchantRuleConfidence(autoCreated), &rid, nil
 		}
 	}
 
@@ -101,34 +103,43 @@ func ResolveCategory(
 	return "", "low", nil, nil
 }
 
+// merchantRuleConfidence maps a merchant rule's origin to a confidence level:
+// user-created rules are trusted ("exact"); AI-created rules stay flagged ("ai").
+func merchantRuleConfidence(autoCreated bool) string {
+	if autoCreated {
+		return "ai"
+	}
+	return "exact"
+}
+
 // matchMerchantRule finds a merchant-type rule scoped to a user or household.
-func matchMerchantRule(db *sql.DB, userID *string, householdID *string, lowerMerchant string) (categoryID string, ruleID string, found bool, err error) {
+func matchMerchantRule(db *sql.DB, userID *string, householdID *string, lowerMerchant string) (categoryID string, ruleID string, autoCreated bool, found bool, err error) {
 	var query string
 	var arg interface{}
 
 	if userID != nil {
-		query = `SELECT id, category_id FROM category_mapping_rules
+		query = `SELECT id, category_id, auto_created FROM category_mapping_rules
 			WHERE rule_type = 'merchant' AND LOWER(match_value) = $1 AND user_id = $2
 			ORDER BY priority DESC LIMIT 1`
 		arg = *userID
 	} else {
-		query = `SELECT id, category_id FROM category_mapping_rules
+		query = `SELECT id, category_id, auto_created FROM category_mapping_rules
 			WHERE rule_type = 'merchant' AND LOWER(match_value) = $1 AND household_id = $2
 			ORDER BY priority DESC LIMIT 1`
 		arg = *householdID
 	}
 
-	err = db.QueryRow(query, lowerMerchant, arg).Scan(&ruleID, &categoryID)
+	err = db.QueryRow(query, lowerMerchant, arg).Scan(&ruleID, &categoryID, &autoCreated)
 	if err == sql.ErrNoRows {
-		return "", "", false, nil
+		return "", "", false, false, nil
 	}
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, false, err
 	}
 
 	// Increment usage_count asynchronously (fire-and-forget)
 	go incrementUsage(db, ruleID)
-	return categoryID, ruleID, true, nil
+	return categoryID, ruleID, autoCreated, true, nil
 }
 
 // matchKeywordRule finds a keyword-type rule where the merchant name contains the keyword.
