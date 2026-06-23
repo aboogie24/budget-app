@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { BackButton } from '@/components/BackButton';
 
 export default function TransactionDetail() {
   const router = useRouter();
@@ -39,9 +40,7 @@ export default function TransactionDetail() {
     <LinearGradient colors={['#0b1021', '#1b0d30', '#2d0c53']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1, padding: 20 }}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/budget" size={20} />
           {(source === 'manual' || source !== 'bank') && (
             <TouchableOpacity onPress={handleEdit} style={styles.iconBtn}>
               <Ionicons name="pencil" size={20} color="#a855f7" />

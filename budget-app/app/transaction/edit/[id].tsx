@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getCurrentUser } from '../../../utils/storage';
 import { api } from '../../../utils/apiClient';
 import { successHaptic, errorHaptic } from '../../../utils/haptics';
+import { BackButton } from '@/components/BackButton';
 
 const frequencyOptions = ['one-time', 'weekly', 'biweekly', 'monthly'];
 
@@ -223,9 +224,7 @@ export default function EditTransactionScreen() {
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={styles.container}>
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/budget" />
             <View style={styles.headerCenter}>
               <Text style={styles.headerTitle}>Edit Transaction</Text>
               <Text style={styles.headerSubtitle}>Update your transaction details</Text>

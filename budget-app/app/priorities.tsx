@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
 
 type Priority = {
   id: string;
@@ -159,9 +160,7 @@ export default function PrioritiesScreen() {
         <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/goals" />
             <Text style={styles.headerTitle}>Financial Priorities</Text>
             <TouchableOpacity
               onPress={() => {

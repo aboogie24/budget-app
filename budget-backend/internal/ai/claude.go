@@ -16,7 +16,16 @@ import (
 
 const (
 	claudeAPIURL = "https://api.anthropic.com/v1/messages"
-	claudeModel  = "claude-opus-4-6"
+
+	// ChatModel powers the conversational advisor — the product's differentiator,
+	// so it runs on the top-tier model. It is the default when a request omits Model.
+	ChatModel = "claude-opus-4-8"
+	// ClassifyModel powers bulk merchant categorization — a commodity
+	// classification task that runs cheaper and faster on Haiku.
+	ClassifyModel = "claude-haiku-4-5"
+
+	// claudeModel is the fallback model for any request that doesn't set one.
+	claudeModel = ChatModel
 )
 
 // Client wraps communication with the Anthropic Messages API.

@@ -15,9 +15,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/utils/apiClient';
+import { aiCategorizeTransactions } from '@/utils/api';
 import { getCurrentUser } from '@/utils/storage';
 import CategoryPicker from '@/components/CategoryPicker';
 import { successHaptic } from '@/utils/haptics';
+import { BackButton } from '@/components/BackButton';
 
 type Transaction = {
   id: string;
@@ -150,6 +152,7 @@ export default function TransactionReviewScreen() {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState<Set<string>>(new Set());
   const [confirmingAll, setConfirmingAll] = useState(false);
+  const [aiCategorizing, setAiCategorizing] = useState(false);
   const [userId, setUserId] = useState('');
   const [pickerVisible, setPickerVisible] = useState(false);
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
@@ -230,6 +233,31 @@ export default function TransactionReviewScreen() {
     }
   };
 
+  const runAICategorize = async () => {
+    if (aiCategorizing) return;
+    setAiCategorizing(true);
+    try {
+      const res = await aiCategorizeTransactions();
+      const applied = res?.applied ?? 0;
+      const classified = res?.classified ?? 0;
+      if (applied > 0) {
+        successHaptic();
+        Alert.alert(
+          'AI Categorize',
+          `Classified ${classified} merchant${classified !== 1 ? 's' : ''}, applied to ${applied} transaction${applied !== 1 ? 's' : ''}.`,
+        );
+        load();
+      } else {
+        Alert.alert('AI Categorize', 'No uncategorized transactions to classify.');
+      }
+    } catch (e) {
+      console.error('AI categorize error:', e);
+      Alert.alert('Error', 'AI categorization failed. Please try again.');
+    } finally {
+      setAiCategorizing(false);
+    }
+  };
+
   const openCategoryPicker = (tx: Transaction) => {
     setEditingTxId(tx.id);
     setPickerVisible(true);
@@ -303,14 +331,12 @@ export default function TransactionReviewScreen() {
       <SafeAreaView style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.headerRow}>
-          <TouchableOpacity
+          <BackButton
+            size={20}
             onPress={() =>
-              params.category_id ? router.back() : router.navigate('/(tabs)/goals' as any)
+              params.category_id ? router.back() : router.replace('/(tabs)/goals')
             }
-            style={styles.iconBtn}
-          >
-            <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
-          </TouchableOpacity>
+          />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={styles.headerTitle}>
               {params.category_name ? `Review · ${params.category_name}` : 'Review Transactions'}
@@ -321,21 +347,36 @@ export default function TransactionReviewScreen() {
               </View>
             )}
           </View>
-          {unverifiedTransactions.length > 0 ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <TouchableOpacity
-              onPress={confirmAll}
-              disabled={confirmingAll}
-              style={styles.confirmAllBtn}
+              onPress={runAICategorize}
+              disabled={aiCategorizing}
+              style={styles.aiCategorizeBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              {confirmingAll ? (
-                <ActivityIndicator size="small" color="#22c55e" />
+              {aiCategorizing ? (
+                <ActivityIndicator size="small" color="#c084fc" />
               ) : (
-                <Text style={styles.confirmAllText}>Confirm All</Text>
+                <>
+                  <Ionicons name="sparkles" size={12} color="#c084fc" />
+                  <Text style={styles.aiCategorizeText}>AI</Text>
+                </>
               )}
             </TouchableOpacity>
-          ) : (
-            <View style={{ width: 80 }} />
-          )}
+            {unverifiedTransactions.length > 0 ? (
+              <TouchableOpacity
+                onPress={confirmAll}
+                disabled={confirmingAll}
+                style={styles.confirmAllBtn}
+              >
+                {confirmingAll ? (
+                  <ActivityIndicator size="small" color="#22c55e" />
+                ) : (
+                  <Text style={styles.confirmAllText}>Confirm All</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
 
         {unverifiedTransactions.length === 0 ? (
@@ -496,6 +537,22 @@ const styles = StyleSheet.create({
     color: '#22c55e',
     fontSize: 13,
     fontWeight: '700',
+  },
+  aiCategorizeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(192,132,252,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(192,132,252,0.3)',
+  },
+  aiCategorizeText: {
+    color: '#c084fc',
+    fontSize: 12,
+    fontWeight: '800',
   },
   dateHeader: {
     color: '#94a3b8',

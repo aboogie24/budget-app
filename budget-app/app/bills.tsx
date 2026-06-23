@@ -19,6 +19,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
 
 type Bill = {
   id: string;
@@ -41,6 +42,21 @@ type Bill = {
 
 type Category = { id: string; name: string; type?: string };
 type Debt = { id: string; name: string; balance: number };
+
+type BillSuggestion = {
+  merchant_normalized: string;
+  display_name: string;
+  frequency: string;
+  amount: number;
+  amount_variance: 'fixed' | 'approximate';
+  due_day: number;
+  category_id: string | null;
+  category_name: string | null;
+  occurrence_count: number;
+  first_seen: string;
+  last_seen: string;
+  sample_transaction_ids: string[];
+};
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: string; label: string }> = {
   paid: { color: '#34d399', bg: 'rgba(52,211,153,0.12)', icon: 'checkmark', label: 'Paid' },
@@ -209,6 +225,8 @@ export default function BillsScreen() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [suggestions, setSuggestions] = useState<BillSuggestion[]>([]);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
 
@@ -261,10 +279,75 @@ export default function BillsScreen() {
     }
   }, []);
 
+  const loadSuggestions = useCallback(async () => {
+    try {
+      const userId = await api.getUserId();
+      if (!userId) return;
+      const data = await api.get<{ suggestions: BillSuggestion[] }>(
+        '/auth/bills/suggestions',
+        { user_id: userId },
+      );
+      setSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+    } catch (e) {
+      console.error('Failed to load suggestions:', e);
+      // Non-fatal: hide section silently if it fails.
+    }
+  }, []);
+
   useEffect(() => {
     loadBills();
     loadDropdownData();
-  }, [loadBills, loadDropdownData]);
+    loadSuggestions();
+  }, [loadBills, loadDropdownData, loadSuggestions]);
+
+  const handleAcceptSuggestion = async (s: BillSuggestion) => {
+    const userId = await api.getUserId();
+    if (!userId) return;
+    setAcceptingId(s.merchant_normalized);
+    try {
+      const result = await api.post<{ bill_id: string; backfilled: number }>(
+        `/auth/bills/suggestions/accept?user_id=${userId}`,
+        {
+          merchant_normalized: s.merchant_normalized,
+          name: s.display_name,
+          amount_due: s.amount,
+          due_day: s.due_day,
+          frequency: s.frequency,
+          category_id: s.category_id,
+          payee: s.display_name,
+          is_shared: true,
+        },
+      );
+      const back = result?.backfilled ?? 0;
+      Alert.alert(
+        'Bill added',
+        back > 0
+          ? `Created "${s.display_name}" and marked ${back} past period${back !== 1 ? 's' : ''} as paid.`
+          : `Created "${s.display_name}".`,
+      );
+      setSuggestions((prev) => prev.filter((x) => x.merchant_normalized !== s.merchant_normalized));
+      loadBills();
+    } catch (e) {
+      console.error('Accept suggestion error:', e);
+      Alert.alert('Error', 'Could not add bill from suggestion.');
+    } finally {
+      setAcceptingId(null);
+    }
+  };
+
+  const handleDismissSuggestion = async (s: BillSuggestion) => {
+    const userId = await api.getUserId();
+    if (!userId) return;
+    // Optimistic: drop immediately, fire-and-forget the request.
+    setSuggestions((prev) => prev.filter((x) => x.merchant_normalized !== s.merchant_normalized));
+    try {
+      await api.post(`/auth/bills/suggestions/dismiss?user_id=${userId}`, {
+        merchant_normalized: s.merchant_normalized,
+      });
+    } catch (e) {
+      console.error('Dismiss suggestion error:', e);
+    }
+  };
 
   const resetForm = () => {
     setName('');
@@ -350,7 +433,12 @@ export default function BillsScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await api.delete(`/auth/bills/${billId}`);
+            const userId = await api.getUserId();
+            if (!userId) {
+              Alert.alert('Error', 'No user session found.');
+              return;
+            }
+            await api.delete(`/auth/bills/${billId}`, { user_id: userId });
             loadBills();
           } catch (e) {
             console.error('Delete bill error:', e);
@@ -390,6 +478,8 @@ export default function BillsScreen() {
       } else {
         Alert.alert('Auto-Detect', 'No matching bank transactions found for unpaid bills.');
       }
+      // Refresh suggestions — newly-paid transactions are now dedupe sources.
+      loadSuggestions();
     } catch (e) {
       console.error('Auto-detect error:', e);
       Alert.alert('Error', 'Failed to auto-detect payments.');
@@ -441,12 +531,7 @@ export default function BillsScreen() {
         {/* Header */}
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
-            <TouchableOpacity
-              onPress={() => router.navigate('/(tabs)/goals' as any)}
-              style={styles.iconButton}
-            >
-              <Ionicons name="arrow-back" size={18} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/goals" />
             <Text style={styles.headerTitle}>Bills</Text>
           </View>
           <TouchableOpacity
@@ -527,6 +612,55 @@ export default function BillsScreen() {
               {detecting ? 'Scanning...' : 'Auto-detect from bank'}
             </Text>
           </TouchableOpacity>
+
+          {/* Suggested Bills (from recurring bank transactions) */}
+          {suggestions.length > 0 && (
+            <View style={styles.suggestionsSection}>
+              <View style={styles.suggestionsHeader}>
+                <Ionicons name="sparkles-outline" size={14} color="#f59e0b" />
+                <Text style={styles.suggestionsTitle}>
+                  Suggested bills ({suggestions.length})
+                </Text>
+              </View>
+              {suggestions.map((s) => {
+                const isAccepting = acceptingId === s.merchant_normalized;
+                const amtLabel = `$${s.amount.toFixed(2)}${s.amount_variance === 'approximate' ? ' (avg)' : ''}`;
+                return (
+                  <View key={s.merchant_normalized} style={styles.suggestionCard}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.suggestionName} numberOfLines={1}>
+                        {s.display_name}
+                      </Text>
+                      <Text style={styles.suggestionMeta}>
+                        {amtLabel} · {s.frequency} · {s.occurrence_count} past charges
+                        {s.category_name ? ` · ${s.category_name}` : ''}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.suggestionAddBtn, isAccepting && { opacity: 0.5 }]}
+                      onPress={() => handleAcceptSuggestion(s)}
+                      disabled={isAccepting}
+                    >
+                      {isAccepting ? (
+                        <ActivityIndicator size="small" color="#34d399" />
+                      ) : (
+                        <Ionicons name="add" size={16} color="#34d399" />
+                      )}
+                      <Text style={styles.suggestionAddText}>Add</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.suggestionDismissBtn}
+                      onPress={() => handleDismissSuggestion(s)}
+                      disabled={isAccepting}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="close" size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
 
           {/* Filter Tabs */}
           <ScrollView
@@ -1187,6 +1321,68 @@ const styles = StyleSheet.create({
     color: '#60a5fa',
     fontWeight: '700',
     fontSize: 13,
+  },
+
+  /* ---- Suggested Bills ---- */
+  suggestionsSection: {
+    marginBottom: 18,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: 'rgba(245,158,11,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.18)',
+  },
+  suggestionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  suggestionsTitle: {
+    color: '#f59e0b',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  suggestionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    marginBottom: 6,
+  },
+  suggestionName: {
+    color: '#f8fafc',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  suggestionMeta: {
+    color: '#94a3b8',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  suggestionAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(52,211,153,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(52,211,153,0.3)',
+  },
+  suggestionAddText: {
+    color: '#34d399',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  suggestionDismissBtn: {
+    padding: 4,
   },
 
   /* ---- Filter Tabs ---- */

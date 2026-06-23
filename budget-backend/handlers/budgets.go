@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -77,6 +78,12 @@ func CreateBudget(w http.ResponseWriter, r *http.Request) {
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, budget.ID, budget.UserID, budget.HouseholdID, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.CreatedAt, budget.UpdatedAt, budget.StartDate, budget.Frequency, budget.IsShared)
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" && pqErr.Constraint == "idx_budgets_user_category_type_unique" {
+			validationError(w, "You already have a budget for this category. Edit the existing one instead.")
+			return
+		}
+		log.Printf("CreateBudget insert error: %v", err)
 		http.Error(w, "Failed to create budget", http.StatusInternalServerError)
 		return
 	}

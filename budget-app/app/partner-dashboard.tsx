@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { BackButton } from '@/components/BackButton';
 
 type HouseholdSummary = {
   household_id: string;
@@ -81,9 +82,7 @@ export default function PartnerDashboardScreen() {
         <SafeAreaView style={styles.safe}>
           <ScrollView contentContainerStyle={styles.scroll}>
             <View style={styles.header}>
-              <TouchableOpacity onPress={() => router.back()}>
-                <Ionicons name="arrow-back" size={24} color="#f8fafc" />
-              </TouchableOpacity>
+              <BackButton fallback="/(tabs)/dashboard" />
               <Text style={styles.title}>Partner Dashboard</Text>
               <View style={{ width: 24 }} />
             </View>
@@ -114,9 +113,7 @@ export default function PartnerDashboardScreen() {
         <ScrollView contentContainerStyle={styles.scroll}>
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Ionicons name="arrow-back" size={24} color="#f8fafc" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/dashboard" />
             <Text style={styles.title}>Partner Dashboard</Text>
             <TouchableOpacity onPress={() => router.push('/settings')}>
               <Ionicons name="settings-outline" size={24} color="#f8fafc" />

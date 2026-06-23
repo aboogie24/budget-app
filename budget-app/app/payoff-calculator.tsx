@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import { BackButton } from '@/components/BackButton';
 
 const EXTRA_PRESETS = [0, 100, 250, 500, 1000, 2000];
 
@@ -195,9 +196,7 @@ export default function PayoffCalculatorScreen() {
         <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/goals" />
             <Text style={styles.headerTitle}>Payoff Calculator</Text>
             <View style={{ width: 40 }} />
           </View>

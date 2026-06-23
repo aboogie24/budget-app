@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 import { checkBudgetThresholds, fetchSpendingAlerts, upsertSpendingAlert } from '@/utils/api';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
 
 type Alert = {
   budget_id: string;
@@ -126,9 +127,7 @@ export default function SpendingAlertsScreen() {
         >
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Ionicons name="chevron-back" size={24} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/dashboard" iconName="chevron-back" size={24} />
             <Text style={styles.headerTitle}>Spending Alerts</Text>
             <View style={{ width: 24 }} />
           </View>

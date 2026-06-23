@@ -377,12 +377,17 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 		systemPrompt += "\n\n" + contextBlock
 	}
 
-	// Build Claude request
+	// Build Claude request. Model defaults to ai.ChatModel (Opus 4.8) in the
+	// client. Adaptive thinking + high effort buys the deeper, couple-aware
+	// reasoning the advisor is for; "summarized" display keeps the raw chain of
+	// thought private while still letting us surface progress later.
 	claudeReq := models.ClaudeRequest{
-		MaxTokens: 4096,
-		System:    systemPrompt,
-		Messages:  messages,
-		Tools:     ai.GetToolDefinitions(),
+		MaxTokens:    4096,
+		System:       systemPrompt,
+		Messages:     messages,
+		Tools:        ai.GetToolDefinitions(),
+		Thinking:     &models.ClaudeThinking{Type: "adaptive", Display: "summarized"},
+		OutputConfig: &models.ClaudeOutputConfig{Effort: "high"},
 	}
 
 	// Set up SSE streaming

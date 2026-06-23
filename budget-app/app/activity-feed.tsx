@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { fetchActivityFeed } from '@/utils/api';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
 
 type ActivityEvent = {
   id: string;
@@ -225,9 +226,7 @@ export default function ActivityFeedScreen() {
       <LinearGradient colors={['#0f172a', '#1a1040', '#0f172a']} style={{ flex: 1 }}>
         <SafeAreaView style={styles.container}>
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Ionicons name="chevron-back" size={24} color="#f8fafc" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/dashboard" iconName="chevron-back" size={24} />
             <Text style={styles.headerTitle}>Activity</Text>
             <View style={{ width: 24 }} />
           </View>
@@ -255,9 +254,7 @@ export default function ActivityFeedScreen() {
     <LinearGradient colors={['#0f172a', '#1a1040', '#0f172a']} style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="chevron-back" size={24} color="#f8fafc" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/dashboard" iconName="chevron-back" size={24} />
           <Text style={styles.headerTitle}>Activity</Text>
           <View style={{ width: 24 }} />
         </View>

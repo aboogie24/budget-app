@@ -11,12 +11,14 @@ import {
   Modal,
   RefreshControl,
   Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Keyboard,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@/utils/apiClient';
+import { aiCategorizeTransactions } from '@/utils/api';
 import { getCurrentUser } from '@/utils/storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +26,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { SkeletonCard } from '@/components/SkeletonLoader';
+import { BackButton } from '@/components/BackButton';
 
 /* ====================================================================
    TYPES
@@ -799,6 +802,7 @@ export default function BudgetScreen() {
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [addingSaving, setAddingSaving] = useState(false);
+  const [aiCategorizing, setAiCategorizing] = useState(false);
   const [budgetedExpanded, setBudgetedExpanded] = useState(true);
   const [unbudgetedExpanded, setUnbudgetedExpanded] = useState(false);
   const [monthYear, setMonthYear] = useState(() => {
@@ -936,6 +940,30 @@ export default function BudgetScreen() {
     await loadData();
     setRefreshing(false);
   }, [loadData]);
+
+  const runAICategorize = useCallback(async () => {
+    if (aiCategorizing) return;
+    setAiCategorizing(true);
+    try {
+      const res = await aiCategorizeTransactions();
+      const applied = res?.applied ?? 0;
+      const classified = res?.classified ?? 0;
+      if (applied > 0) {
+        Alert.alert(
+          'AI Categorize',
+          `Classified ${classified} merchant${classified !== 1 ? 's' : ''}, applied to ${applied} transaction${applied !== 1 ? 's' : ''}.`,
+        );
+        loadData();
+      } else {
+        Alert.alert('AI Categorize', 'No uncategorized transactions to classify.');
+      }
+    } catch (e) {
+      console.error('AI categorize error:', e);
+      Alert.alert('Error', 'AI categorization failed. Please try again.');
+    } finally {
+      setAiCategorizing(false);
+    }
+  }, [aiCategorizing, loadData]);
 
   useEffect(() => {
     loadData();
@@ -1155,8 +1183,22 @@ export default function BudgetScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Budget</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <BackButton iconName="chevron-back" color="rgba(255,255,255,0.7)" fallback="/(tabs)/goals" />
+            <Text style={styles.headerTitle}>Budget</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              onPress={runAICategorize}
+              disabled={aiCategorizing}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              {aiCategorizing ? (
+                <ActivityIndicator size="small" color="#c084fc" />
+              ) : (
+                <Ionicons name="sparkles-outline" size={18} color="rgba(192,132,252,0.7)" />
+              )}
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => router.push('/settings/budget-settings' as any)}>
               <Ionicons name="settings-outline" size={18} color="rgba(255,255,255,0.35)" />
             </TouchableOpacity>

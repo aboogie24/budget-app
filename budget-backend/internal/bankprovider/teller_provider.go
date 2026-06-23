@@ -65,17 +65,26 @@ func (t *TellerProvider) SyncTransactions(conn *sql.DB, account LinkedAccount) (
 			continue
 		}
 
+		isCreditAccount := strings.EqualFold(acct.Type, "credit")
+
 		for _, tx := range txns {
-			// Teller returns the amount as a signed string. Negative = money
-			// out (expense), positive = money in (income).
-			// NOTE: credit-card sign convention to be confirmed in sandbox.
 			amt, perr := strconv.ParseFloat(tx.Amount, 64)
 			if perr != nil {
 				log.Printf("teller: skipping transaction %s — bad amount %q: %v", tx.ID, tx.Amount, perr)
 				continue
 			}
+			// Sign convention by account type:
+			//   depository (checking/savings): positive = income, negative = expense
+			//   credit: negative = purchase (expense), positive = payment landing on
+			//     the card — that's a transfer from another account, NOT income.
+			//     We mark it type='transfer' so it stays visible but is excluded
+			//     from income/expense aggregates. The cross-account pair detector
+			//     will link it to the matching outbound row when both sides exist.
 			txType := "expense"
-			if amt > 0 {
+			switch {
+			case isCreditAccount && amt > 0:
+				txType = "transfer"
+			case !isCreditAccount && amt > 0:
 				txType = "income"
 			}
 			amount := math.Abs(amt)

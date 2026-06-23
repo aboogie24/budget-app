@@ -20,6 +20,7 @@ import { getLinkedAccountStatus, createUpdateLinkToken, resetLinkedAccountError 
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { SkeletonCard } from '@/components/SkeletonLoader';
+import { BackButton } from '@/components/BackButton';
 
 const APP_SCHEME = 'budgetapp';
 
@@ -133,9 +134,7 @@ export default function LinkedAccountsScreen() {
     return (
       <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
         <SafeAreaView style={styles.safeArea}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={22} color="#c084fc" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/settings" color="#c084fc" style={{ marginHorizontal: 20, marginTop: 12 }} />
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <View style={styles.headerSection}>
               <View style={styles.headerIcon}>
@@ -160,9 +159,7 @@ export default function LinkedAccountsScreen() {
   return (
     <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#c084fc" />
-        </TouchableOpacity>
+        <BackButton fallback="/(tabs)/settings" color="#c084fc" style={{ marginHorizontal: 20, marginTop: 12 }} />
 
         <ScrollView
           contentContainerStyle={styles.scrollContent}

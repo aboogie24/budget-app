@@ -18,7 +18,8 @@ import * as WebBrowser from 'expo-web-browser';
 import { WebView } from 'react-native-webview';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
-import { fetchLinkedAccounts, deleteLinkedAccount, syncAllBankAccounts, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
+import { fetchLinkedAccounts, deleteLinkedAccount, syncAllBankAccounts, syncPlaidTransactions, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
+import { BackButton } from '@/components/BackButton';
 
 /* Try to load native Plaid SDK — will be undefined in Expo Go */
 let PlaidLink: any = null;
@@ -395,17 +396,23 @@ export default function LinkAccountScreen() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      // Transactions: unified across providers (Plaid, Flinks, Teller).
-      // Investments / liabilities / balances are still Plaid-only.
-      const [txSync, invSync, liabSync, balSync] = await Promise.allSettled([
+      // Plaid still uses its dedicated sync endpoint (provider stub returns an
+      // error). Teller / Flinks go through /auth/bank/sync-all, which skips
+      // Plaid accounts to avoid noisy log errors.
+      const [plaidTxSync, txSync, invSync, liabSync, balSync] = await Promise.allSettled([
+        syncPlaidTransactions(),
         syncAllBankAccounts(),
         syncPlaidInvestments(),
         syncPlaidLiabilities(),
         syncPlaidBalances(),
       ]);
-      const txTotal = txSync.status === 'fulfilled' ? (txSync.value as any)?.synced ?? 0 : 0;
-      const perProvider: Record<string, number> =
-        txSync.status === 'fulfilled' ? (txSync.value as any)?.per_provider ?? {} : {};
+      const plaidTxTotal = plaidTxSync.status === 'fulfilled' ? (plaidTxSync.value as any)?.synced ?? 0 : 0;
+      const bankTxTotal = txSync.status === 'fulfilled' ? (txSync.value as any)?.synced ?? 0 : 0;
+      const txTotal = plaidTxTotal + bankTxTotal;
+      const perProvider: Record<string, number> = {
+        ...((txSync.status === 'fulfilled' ? (txSync.value as any)?.per_provider : {}) || {}),
+      };
+      if (plaidTxTotal > 0) perProvider.plaid = (perProvider.plaid || 0) + plaidTxTotal;
       const txAccounts: Array<{ provider: string; error?: string }> =
         txSync.status === 'fulfilled' ? (txSync.value as any)?.accounts ?? [] : [];
       const reauthNeeded = txAccounts.filter(
@@ -731,9 +738,7 @@ export default function LinkAccountScreen() {
     return (
       <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
         <SafeAreaView style={styles.safeArea}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={22} color="#c084fc" />
-          </TouchableOpacity>
+          <BackButton fallback="/linked-accounts" color="#c084fc" style={{ marginTop: 12 }} />
           <View style={styles.centerContent}>
             <ActivityIndicator size="large" color="#c084fc" />
           </View>
@@ -754,9 +759,7 @@ export default function LinkAccountScreen() {
       style={styles.container}
     >
       <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#c084fc" />
-        </TouchableOpacity>
+        <BackButton fallback="/linked-accounts" color="#c084fc" style={{ marginTop: 12 }} />
 
         <ScrollView
           style={styles.scrollView}
@@ -932,9 +935,7 @@ function NativePlaidFlow({
       style={styles.container}
     >
       <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#c084fc" />
-        </TouchableOpacity>
+        <BackButton fallback="/linked-accounts" color="#c084fc" style={{ marginTop: 12 }} />
 
         <View style={styles.centerContent}>
           <View style={styles.heroWrap}>

@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -843,9 +844,7 @@ export default function PlansScreen() {
         <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/goals" />
             <Text style={styles.headerTitle}>Financial Plans</Text>
             <TouchableOpacity onPress={() => setShowCreate(true)}>
               <Ionicons name="add-circle" size={28} color="#c084fc" />

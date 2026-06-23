@@ -10,6 +10,7 @@ import (
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/bankprovider"
+	"github.com/aboogie/budget-backend/internal/transfers"
 )
 
 // recordSyncFailure persists provider-specific lifecycle errors on
@@ -204,6 +205,11 @@ func SyncAllBankAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, acct := range accounts {
+		// Plaid still syncs via its dedicated /auth/plaid/sync handler — the
+		// provider stub returns an error. Skip it here to keep the response clean.
+		if acct.Provider == "plaid" {
+			continue
+		}
 		provider := bankprovider.GetProvider(acct.Provider)
 		synced, syncErr := provider.SyncTransactions(dbClient.Conn, acct)
 		res := result{AccountID: acct.ID, Provider: acct.Provider, Synced: synced}
@@ -218,11 +224,51 @@ func SyncAllBankAccounts(w http.ResponseWriter, r *http.Request) {
 		results = append(results, res)
 	}
 
+	// After syncing, link up any internal transfers (matching inflow+outflow
+	// across the user's accounts) so they stop counting as income/expense.
+	pairsCreated, terr := transfers.DetectPairs(dbClient.Conn, userID)
+	if terr != nil {
+		log.Printf("sync-all: transfer detection error (non-fatal): %v", terr)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"synced":       totalSynced,
-		"per_provider": perProvider,
-		"accounts":     results,
+		"synced":          totalSynced,
+		"per_provider":    perProvider,
+		"accounts":        results,
+		"transfer_pairs":  pairsCreated,
+	})
+}
+
+// POST /auth/transactions/detect-transfers — runs the transfer-pair detector
+// over the user's existing transactions. Idempotent: only pairs unpaired rows.
+func DetectTransfers(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID, _ = getUserIDFromRequest(r)
+	}
+	if userID == "" {
+		http.Error(w, "Missing user ID", http.StatusUnauthorized)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	pairs, err := transfers.DetectPairs(dbClient.Conn, userID)
+	if err != nil {
+		log.Printf("DetectTransfers error: %v", err)
+		http.Error(w, "Transfer detection failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"pairs_created": pairs,
 	})
 }
 

@@ -35,6 +35,11 @@ type Classification struct {
 	CategoryID string `json:"category_id"` // "" when the model is not confident
 }
 
+// classifyModel is the cheap, fast model used for bulk merchant
+// categorization. This is a commodity classification task, so it does not need
+// the top-tier conversational model.
+const classifyModel = "claude-haiku-4-5"
+
 const classifySystemPrompt = `You are a precise transaction-categorization assistant for a personal budgeting app.
 
 You receive a JSON object with two arrays: "categories" (each with an id, name, and parent) and "merchants" (each a normalized merchant name with a sample raw bank description and an optional category hint).
@@ -42,10 +47,38 @@ You receive a JSON object with two arrays: "categories" (each with an id, name, 
 For each merchant, choose the single best-fitting category from the allowed list.
 
 Rules:
-- Respond with ONLY a JSON array — no prose, no markdown code fences.
-- One element per merchant: {"merchant": "<merchant name verbatim>", "category_id": "<id from the categories list>"}.
+- Return one classification element per merchant, using the merchant name verbatim.
 - Use only category_id values that appear in the provided categories list.
 - If you cannot confidently determine the category for a merchant, set "category_id" to "" (empty string). Do not guess.`
+
+// classifySchema constrains the response via structured outputs so the model
+// must return well-formed JSON in a fixed shape — no prose-wrapping or fence
+// stripping to recover from. All objects use additionalProperties:false and
+// list every property as required, per the structured-outputs constraints.
+var classifySchema = map[string]interface{}{
+	"type": "object",
+	"properties": map[string]interface{}{
+		"classifications": map[string]interface{}{
+			"type": "array",
+			"items": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"merchant":    map[string]interface{}{"type": "string"},
+					"category_id": map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"merchant", "category_id"},
+				"additionalProperties": false,
+			},
+		},
+	},
+	"required":             []string{"classifications"},
+	"additionalProperties": false,
+}
+
+// classifyResponse is the structured-output envelope returned by the model.
+type classifyResponse struct {
+	Classifications []Classification `json:"classifications"`
+}
 
 // ClassifyMerchants asks Claude to assign a category to each merchant. It is a
 // single API call; callers should batch merchants into reasonably-sized groups.
@@ -65,14 +98,20 @@ func ClassifyMerchants(sender ClaudeSender, merchants []MerchantInput, cats []Ca
 	}
 
 	resp, err := sender.SendMessage(models.ClaudeRequest{
+		Model:     classifyModel,
 		MaxTokens: 4096,
 		System:    classifySystemPrompt,
 		Messages:  []models.ClaudeMessage{{Role: "user", Content: string(payload)}},
+		OutputConfig: &models.ClaudeOutputConfig{
+			Format: &models.ClaudeOutputFormat{Type: "json_schema", Schema: classifySchema},
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("classify: claude request: %w", err)
 	}
 
+	// Structured outputs guarantee the first text block is valid JSON matching
+	// classifySchema — no array-scanning or fence-stripping needed.
 	var text strings.Builder
 	for _, b := range resp.Content {
 		if b.Type == "text" {
@@ -80,17 +119,9 @@ func ClassifyMerchants(sender ClaudeSender, merchants []MerchantInput, cats []Ca
 		}
 	}
 
-	// Extract the JSON array even if the model wrapped it in prose / fences.
-	raw := text.String()
-	start := strings.Index(raw, "[")
-	end := strings.LastIndex(raw, "]")
-	if start < 0 || end < 0 || end < start {
-		return nil, fmt.Errorf("classify: no JSON array in response")
-	}
-
-	var out []Classification
-	if err := json.Unmarshal([]byte(raw[start:end+1]), &out); err != nil {
+	var parsed classifyResponse
+	if err := json.Unmarshal([]byte(text.String()), &parsed); err != nil {
 		return nil, fmt.Errorf("classify: parse response: %w", err)
 	}
-	return out, nil
+	return parsed.Classifications, nil
 }

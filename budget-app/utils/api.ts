@@ -31,6 +31,47 @@ export async function syncPlaidTransactions() {
   return api.post(`/auth/plaid/sync?user_id=${userId}`, undefined);
 }
 
+export type AttentionItem = {
+  id: string;
+  priority: number;
+  title: string;
+  body?: string;
+  icon: string;
+  color: string;
+  cta_label: string;
+  action: 'reconnect' | 'mark_paid' | 'review' | 'open_budget' | 'ai_categorize';
+  payload?: Record<string, any>;
+};
+
+export async function fetchAttention() {
+  return api.get<{ items: AttentionItem[]; count: number }>('/auth/dashboard/attention');
+}
+
+export type NetWorthSnapshotPoint = {
+  date: string; // YYYY-MM-DD
+  total: number;
+};
+
+export async function recordNetWorthSnapshot(values: {
+  cash: number;
+  investments: number;
+  properties: number;
+  debt: number;
+  total: number;
+}, days: number = 30) {
+  return api.post<{ snapshots: NetWorthSnapshotPoint[]; days: number }>(
+    `/auth/dashboard/networth/snapshot?days=${days}`,
+    values,
+  );
+}
+
+export async function aiCategorizeTransactions() {
+  return api.post<{ merchants: number; classified: number; applied: number }>(
+    '/auth/transactions/ai-categorize',
+    undefined,
+  );
+}
+
 export async function syncAllBankAccounts() {
   return api.post<{
     synced: number;

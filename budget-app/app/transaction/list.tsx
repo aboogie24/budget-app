@@ -9,10 +9,11 @@ import { getCurrentUser } from '@/utils/storage';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import CategoryPicker from '@/components/CategoryPicker';
+import { BackButton } from '@/components/BackButton';
 
 type Tx = {
   id: string;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'transfer';
   amount: number;
   note?: string;
   category_id?: string;
@@ -39,8 +40,12 @@ function getSourceBadge(source?: string): { label: string; color: string } {
 
 export default function TransactionList() {
   const router = useRouter();
-  // Optional filter — when navigated to from a budget category.
-  const params = useLocalSearchParams<{ category_id?: string; category_name?: string }>();
+  // Optional filters — when navigated to from a budget category or a calendar day.
+  const params = useLocalSearchParams<{
+    category_id?: string;
+    category_name?: string;
+    date?: string; // YYYY-MM-DD — single-day filter (used by dashboard weekly bars)
+  }>();
   const [transactions, setTransactions] = useState<Tx[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,12 +53,30 @@ export default function TransactionList() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
 
-  const headerTitle = params.category_name || 'All Transactions';
-  const visible = (
-    params.category_id
-      ? transactions.filter((t) => t.category_id === params.category_id)
-      : transactions
-  ).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const headerTitle = params.category_name
+    ? params.category_name
+    : params.date
+      ? new Date(params.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
+      : 'All Transactions';
+  const visible = transactions
+    .filter((t) => {
+      if (params.category_id && t.category_id !== params.category_id) return false;
+      if (params.date) {
+        // Compare local date components — transactions store timestamps but
+        // we want a calendar-day match.
+        const txDate = new Date(t.date);
+        const [y, m, d] = params.date.split('-').map(Number);
+        if (
+          txDate.getFullYear() !== y ||
+          txDate.getMonth() !== m - 1 ||
+          txDate.getDate() !== d
+        ) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const load = useCallback(async () => {
     const user = await getCurrentUser();
@@ -123,9 +146,7 @@ export default function TransactionList() {
       <LinearGradient colors={['#0b1021', '#1b0d30', '#2d0c53']} style={{ flex: 1 }}>
         <SafeAreaView style={{ flex: 1 }}>
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-              <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/budget" size={20} />
             <Text style={styles.header}>{headerTitle}</Text>
             <View style={{ width: 40 }} />
           </View>
@@ -148,9 +169,7 @@ export default function TransactionList() {
     <LinearGradient colors={['#0b1021', '#1b0d30', '#2d0c53']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/budget" size={20} />
           <Text style={styles.header}>{headerTitle}</Text>
           <View style={{ width: 40 }} />
         </View>
@@ -188,9 +207,21 @@ export default function TransactionList() {
               <View style={styles.rowTop}>
                 <View style={styles.iconCircle}>
                   <Ionicons
-                    name={item.type === 'income' ? 'trending-up' : 'card-outline'}
+                    name={
+                      item.type === 'transfer'
+                        ? 'swap-horizontal'
+                        : item.type === 'income'
+                          ? 'trending-up'
+                          : 'card-outline'
+                    }
                     size={16}
-                    color={item.type === 'income' ? '#22c55e' : '#f472b6'}
+                    color={
+                      item.type === 'transfer'
+                        ? '#94a3b8'
+                        : item.type === 'income'
+                          ? '#22c55e'
+                          : '#f472b6'
+                    }
                   />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -207,8 +238,17 @@ export default function TransactionList() {
                     <Ionicons name="chevron-down" size={10} color="#a855f7" />
                   </TouchableOpacity>
                 </View>
-                <Text style={[styles.amount, item.type === 'income' ? styles.income : styles.expense]}>
-                  {item.type === 'income' ? '+' : '-'}
+                <Text
+                  style={[
+                    styles.amount,
+                    item.type === 'transfer'
+                      ? styles.transfer
+                      : item.type === 'income'
+                        ? styles.income
+                        : styles.expense,
+                  ]}
+                >
+                  {item.type === 'transfer' ? '' : item.type === 'income' ? '+' : '-'}
                   {formatCurrency(item.amount)}
                 </Text>
               </View>
@@ -307,6 +347,7 @@ const styles = StyleSheet.create({
   amount: { fontWeight: '800', fontSize: 15 },
   income: { color: '#4ade80' },
   expense: { color: '#f87171' },
+  transfer: { color: '#94a3b8' },
   rowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   meta: { color: '#cbd5e1', fontSize: 12 },
   sourceBadge: {

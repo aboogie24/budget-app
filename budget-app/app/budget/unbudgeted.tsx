@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { BackButton } from '@/components/BackButton';
 
 /* ─── Types ─── */
 type Transaction = {
@@ -162,12 +163,7 @@ export default function UnbudgetedScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => router.navigate('/(tabs)/budget' as any)}
-            style={styles.backBtn}
-          >
-            <Ionicons name="chevron-back" size={20} color="#e5e7eb" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/budget" iconName="chevron-back" size={20} />
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Unbudgeted Spending</Text>
             <Text style={styles.headerSubtitle}>

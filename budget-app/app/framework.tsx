@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -240,9 +241,7 @@ export default function FrameworkScreen() {
       <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
         <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={22} color="#fff" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/goals" color="#fff" />
             <Text style={styles.headerTitle}>CoupleFlow Method</Text>
             <View style={{ width: 36 }} />
           </View>
@@ -265,9 +264,7 @@ export default function FrameworkScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/goals" color="#fff" />
           <Text style={styles.headerTitle}>CoupleFlow Method</Text>
           <View style={{ width: 36 }} />
         </View>

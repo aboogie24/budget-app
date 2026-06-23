@@ -57,12 +57,34 @@ func mustQuote(s string) string {
 
 // ClaudeRequest is the request body for the Anthropic Messages API.
 type ClaudeRequest struct {
-	Model     string               `json:"model"`
-	MaxTokens int                  `json:"max_tokens"`
-	System    string               `json:"system,omitempty"`
-	Messages  []ClaudeMessage      `json:"messages"`
-	Stream    bool                 `json:"stream"`
-	Tools     []ClaudeToolDef      `json:"tools,omitempty"`
+	Model        string              `json:"model"`
+	MaxTokens    int                 `json:"max_tokens"`
+	System       string              `json:"system,omitempty"`
+	Messages     []ClaudeMessage     `json:"messages"`
+	Stream       bool                `json:"stream"`
+	Tools        []ClaudeToolDef     `json:"tools,omitempty"`
+	Thinking     *ClaudeThinking     `json:"thinking,omitempty"`
+	OutputConfig *ClaudeOutputConfig `json:"output_config,omitempty"`
+}
+
+// ClaudeThinking configures extended thinking. On Opus 4.8 only "adaptive" is
+// valid; Display "summarized" returns a readable reasoning summary (otherwise
+// thinking text is empty).
+type ClaudeThinking struct {
+	Type    string `json:"type"`              // "adaptive"
+	Display string `json:"display,omitempty"` // "summarized" | "omitted"
+}
+
+// ClaudeOutputConfig carries effort and/or a structured-output format.
+type ClaudeOutputConfig struct {
+	Effort string              `json:"effort,omitempty"` // low|medium|high|max
+	Format *ClaudeOutputFormat `json:"format,omitempty"`
+}
+
+// ClaudeOutputFormat constrains the response to a JSON schema (structured outputs).
+type ClaudeOutputFormat struct {
+	Type   string      `json:"type"` // "json_schema"
+	Schema interface{} `json:"schema"`
 }
 
 // ClaudeToolDef defines a tool that Claude can call.

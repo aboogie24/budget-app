@@ -20,6 +20,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
 
 // ── Types ──
 type Debt = {
@@ -637,12 +638,7 @@ export default function DebtsScreen() {
           {/* ── Header ── */}
           <View style={styles.headerRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <TouchableOpacity
-                onPress={() => router.navigate('/(tabs)/goals' as any)}
-                style={styles.iconButton}
-              >
-                <Ionicons name="arrow-back" size={20} color={C.textMuted} />
-              </TouchableOpacity>
+              <BackButton fallback="/(tabs)/goals" color={C.textMuted} size={20} />
               <Text style={styles.headerTitle}>Debts</Text>
             </View>
             <TouchableOpacity

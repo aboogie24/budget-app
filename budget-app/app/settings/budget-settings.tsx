@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { router } from 'expo-router';
+import { BackButton } from '@/components/BackButton';
 import { v4 as uuidv4 } from 'uuid';
 
 type Category = {
@@ -136,9 +137,7 @@ export default function BudgetSettingsScreen() {
         <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-              <Ionicons name="arrow-back" size={20} color="#c084fc" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/settings" color="#c084fc" size={20} />
             <Text style={styles.header}>Budget Settings</Text>
             <View style={{ width: 40 }} />
           </View>

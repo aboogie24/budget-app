@@ -14,6 +14,7 @@ import { fetchInvestmentHoldings, syncPlaidInvestments } from '../utils/api';
 import GradientBackground from '@/components/GradientBackground';
 import { ErrorState } from '@/components/ErrorState';
 import { colors, spacing, glassEffects, typography } from '@/utils/design-system';
+import { BackButton } from '@/components/BackButton';
 
 type Holding = {
   id: string;
@@ -79,9 +80,7 @@ export default function InvestmentsScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color={colors.text} />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/goals" color={colors.text} />
             <Text style={styles.headerTitle}>Investments</Text>
             <TouchableOpacity onPress={handleSync} disabled={syncing}>
               <Ionicons

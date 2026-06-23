@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { BackButton } from '@/components/BackButton';
 
 type SharingPrefs = {
   shareBudgets: boolean;
@@ -180,9 +181,7 @@ export default function SharingPreferencesScreen() {
     <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={20} color="#c084fc" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/settings" color="#c084fc" size={20} />
           <Text style={styles.headerText}>Sharing Preferences</Text>
           <View style={{ width: 40 }} />
         </View>

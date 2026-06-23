@@ -15,6 +15,7 @@ import { api } from '../utils/apiClient';
 import GradientBackground from '@/components/GradientBackground';
 import { ErrorState } from '@/components/ErrorState';
 import { colors, spacing, glassEffects, typography } from '@/utils/design-system';
+import { BackButton } from '@/components/BackButton';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -119,9 +120,7 @@ export default function InsightsScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color={colors.text} />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/dashboard" color={colors.text} />
             <Text style={styles.headerTitle}>Spending Insights</Text>
             <View style={{ width: 40 }} />
           </View>

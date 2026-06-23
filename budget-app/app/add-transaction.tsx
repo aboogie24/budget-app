@@ -16,6 +16,7 @@ import { api } from '../utils/apiClient';
 import { v4 as uuidv4 } from 'uuid';
 import { successHaptic, errorHaptic } from '../utils/haptics';
 import CategoryPicker from '../components/CategoryPicker';
+import { BackButton } from '@/components/BackButton';
 
 const frequencyOptions = ['one-time', 'weekly', 'biweekly', 'monthly'];
 
@@ -113,9 +114,7 @@ export default function AddTransactionScreen() {
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={styles.container}>
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={handleRedirect} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/budget" />
             <View style={styles.headerCenter}>
               <Text style={styles.headerTitle}>New Transaction</Text>
               <Text style={styles.headerSubtitle}>Log it to keep budgets fresh</Text>

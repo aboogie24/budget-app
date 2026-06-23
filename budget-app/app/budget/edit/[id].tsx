@@ -8,6 +8,7 @@ import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { v4 as uuidv4 } from 'uuid';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { BackButton } from '@/components/BackButton';
 
 type Category = { id: string; name: string; type: string };
 type BudgetData = { id: string; name: string; updated_by?: string; updated_by_name?: string; updated_at?: string };
@@ -101,9 +102,7 @@ export default function EditBudget() {
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-              <Ionicons name="arrow-back" size={20} color="#e5e7eb" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/budget" size={20} />
             <View style={{ flex: 1 }}>
               <Text style={styles.header}>Edit Budget</Text>
               {budgetData && budgetData.updated_by && budgetData.updated_by !== currentUserId && (

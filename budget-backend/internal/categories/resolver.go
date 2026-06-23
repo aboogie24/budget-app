@@ -88,6 +88,19 @@ func ResolveCategory(
 		}
 	}
 
+	// 6b. System keyword rule — substring match against the merchant name.
+	// Catches long-tail merchants whose provider-supplied category is empty
+	// (e.g. "BP#10421003 WAY FOOD MAR HOPE MILLS NC" matches keyword "bp ").
+	if lowerMerchant != "" {
+		cid, rid, found, e := matchSystemKeywordRule(db, lowerMerchant)
+		if e != nil {
+			return "", "", nil, e
+		}
+		if found {
+			return cid, "medium", &rid, nil
+		}
+	}
+
 	// 7. Fuzzy match: ILIKE against category names using plaid categories
 	if len(plaidCategories) > 0 {
 		cid, found, e := fuzzyMatchCategoryName(db, plaidCategories)
@@ -201,6 +214,30 @@ func matchPlaidCategoryRule(db *sql.DB, plaidCategories []string) (categoryID st
 	}
 
 	return "", "", false, nil
+}
+
+// matchSystemKeywordRule scans system-level keyword rules (no user/household
+// scope) and returns the first one whose match_value appears as a substring
+// of the merchant name. Higher priority wins on ties.
+func matchSystemKeywordRule(db *sql.DB, lowerMerchant string) (categoryID string, ruleID string, found bool, err error) {
+	err = db.QueryRow(`
+		SELECT id, category_id FROM category_mapping_rules
+		WHERE rule_type = 'keyword'
+		  AND user_id IS NULL AND household_id IS NULL
+		  AND $1 LIKE '%' || LOWER(match_value) || '%'
+		ORDER BY priority DESC, LENGTH(match_value) DESC
+		LIMIT 1
+	`, lowerMerchant).Scan(&ruleID, &categoryID)
+
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+
+	go incrementUsage(db, ruleID)
+	return categoryID, ruleID, true, nil
 }
 
 // matchSystemMerchantRule checks system-level merchant rules (no user/household).

@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { BackButton } from '@/components/BackButton';
 
 type Invite = {
   code: string;
@@ -106,9 +107,7 @@ export default function PendingInvitesScreen() {
     <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={20} color="#c084fc" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/settings" color="#c084fc" size={20} />
           <Text style={styles.headerText}>Pending Invites</Text>
           <View style={{ width: 40 }} />
         </View>

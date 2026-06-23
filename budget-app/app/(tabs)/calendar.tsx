@@ -250,6 +250,9 @@ export default function CalendarScreen() {
 
       (Array.isArray(transactions) ? transactions : []).forEach((t) => {
         if (!t.date) return;
+        // Internal transfers between the user's accounts shouldn't appear on
+        // the calendar — they're not income or expense, just money moving.
+        if ((t.type || '').toLowerCase() === 'transfer') return;
         const date = parseCalDate(t.date);
         if (isNaN(date.getTime())) return;
         // Only manual templates (source is null/'manual') should be projected

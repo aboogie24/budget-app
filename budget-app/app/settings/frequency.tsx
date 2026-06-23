@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import { BackButton } from '@/components/BackButton';
 
 const FIELDS = [
   { key: 'weekly', label: 'Weekly', icon: 'calendar-outline' as const, hint: 'times per month' },
@@ -80,9 +81,7 @@ export default function FrequencySettingsScreen() {
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-              <Ionicons name="arrow-back" size={20} color="#c084fc" />
-            </TouchableOpacity>
+            <BackButton fallback="/(tabs)/settings" color="#c084fc" size={20} />
             <Text style={styles.header}>Frequency</Text>
             <View style={{ width: 40 }} />
           </View>

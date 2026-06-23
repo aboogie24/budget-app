@@ -19,6 +19,7 @@ import { getCurrentUser } from '../../utils/storage';
 import { api } from '../../utils/apiClient';
 import { router } from 'expo-router';
 import CategoryPicker from '../../components/CategoryPicker';
+import { BackButton } from '@/components/BackButton';
 
 type CategoryRule = {
   id: string;
@@ -266,12 +267,7 @@ export default function CategoryRulesScreen() {
           ListHeaderComponent={
             <>
               <View style={styles.headerRow}>
-                <TouchableOpacity
-                  onPress={() => router.navigate('/(tabs)/settings' as any)}
-                  style={styles.backBtn}
-                >
-                  <Ionicons name="arrow-back" size={20} color="#c084fc" />
-                </TouchableOpacity>
+                <BackButton fallback="/(tabs)/settings" color="#c084fc" size={20} />
                 <Text style={styles.header}>Category Rules</Text>
                 <TouchableOpacity onPress={openAddModal} style={styles.addHeaderBtn}>
                   <Ionicons name="add" size={22} color="#c084fc" />

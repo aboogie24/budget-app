@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchAccountBalances, syncPlaidBalances } from '@/utils/api';
+import { BackButton } from '@/components/BackButton';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -264,12 +265,7 @@ export default function AccountsScreen() {
       <SafeAreaView style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => router.navigate('/(tabs)/goals' as any)}
-          >
-            <Ionicons name="arrow-back" size={22} color="#c084fc" />
-          </TouchableOpacity>
+          <BackButton fallback="/(tabs)/goals" color="#c084fc" />
           <Text style={styles.headerTitle}>Accounts</Text>
           <View style={styles.headerActions}>
             <TouchableOpacity

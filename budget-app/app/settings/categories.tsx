@@ -22,6 +22,7 @@ import { getCurrentUser } from '../../utils/storage';
 import { api } from '../../utils/apiClient';
 import { v4 as uuidv4 } from 'uuid';
 import { router } from 'expo-router';
+import { BackButton } from '@/components/BackButton';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -445,12 +446,7 @@ export default function CategorySettings() {
             <>
               {/* Header */}
               <View style={styles.headerRow}>
-                <TouchableOpacity
-                  onPress={() => router.navigate('/(tabs)/settings' as any)}
-                  style={styles.backBtn}
-                >
-                  <Ionicons name="arrow-back" size={20} color="#c084fc" />
-                </TouchableOpacity>
+                <BackButton fallback="/(tabs)/settings" color="#c084fc" size={20} />
                 <Text style={styles.header}>Categories</Text>
                 <TouchableOpacity onPress={openAddParent} style={styles.addHeaderBtn}>
                   <Ionicons name="add" size={22} color="#c084fc" />
