@@ -57,8 +57,44 @@ func GenerateNudges(conn *sql.DB, userID, householdID string) []models.AINudge {
 	return nudges
 }
 
-// SaveNudges persists nudges to the database, deduplicating and cleaning up expired ones.
-func SaveNudges(conn *sql.DB, nudges []models.AINudge) error {
+// AssignDedupKeys stamps each nudge with a stable de-duplication key derived
+// from its type and DETERMINISTIC title. Call this immediately after
+// GenerateNudges and before AuthorNudges, so the key survives AI rewriting of
+// the display title.
+func AssignDedupKeys(nudges []models.AINudge) {
+	for i := range nudges {
+		nudges[i].DedupKey = nudges[i].NudgeType + "|" + nudges[i].Title
+	}
+}
+
+// isNewNudge reports whether a nudge with this dedup_key has NOT already been
+// created for the user in the last 24 hours (i.e. it is not a duplicate). On a
+// query error it returns false (treat as duplicate / skip), matching the prior
+// conservative behavior.
+func isNewNudge(conn *sql.DB, n models.AINudge) bool {
+	key := n.DedupKey
+	if key == "" {
+		key = n.NudgeType + "|" + n.Title
+	}
+	var exists bool
+	err := conn.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM ai_nudges
+			WHERE user_id = $1 AND dedup_key = $2
+			  AND created_at > NOW() - INTERVAL '24 hours'
+		)
+	`, n.UserID, key).Scan(&exists)
+	if err != nil {
+		log.Printf("nudges: duplicate check error: %v", err)
+		return false
+	}
+	return !exists
+}
+
+// SaveNudges persists nudges to the database, deduplicating and cleaning up
+// expired ones. It returns the nudges that were actually inserted, each with its
+// new ID populated — the caller uses these to decide what to push.
+func SaveNudges(conn *sql.DB, nudges []models.AINudge) ([]models.AINudge, error) {
 	// Delete expired nudges
 	_, err := conn.Exec(`DELETE FROM ai_nudges WHERE expires_at IS NOT NULL AND expires_at < NOW()`)
 	if err != nil {
@@ -71,34 +107,32 @@ func SaveNudges(conn *sql.DB, nudges []models.AINudge) error {
 		log.Printf("nudges: delete old error: %v", err)
 	}
 
+	var inserted []models.AINudge
 	for _, n := range nudges {
-		// Check for duplicate: same user_id + nudge_type + title in last 24 hours
-		var exists bool
-		err := conn.QueryRow(`
-			SELECT EXISTS(
-				SELECT 1 FROM ai_nudges
-				WHERE user_id = $1 AND nudge_type = $2 AND title = $3
-				  AND created_at > NOW() - INTERVAL '24 hours'
-			)
-		`, n.UserID, n.NudgeType, n.Title).Scan(&exists)
-		if err != nil {
-			log.Printf("nudges: duplicate check error: %v", err)
-			continue
-		}
-		if exists {
+		if !isNewNudge(conn, n) {
 			continue
 		}
 
-		_, err = conn.Exec(`
-			INSERT INTO ai_nudges (user_id, household_id, nudge_type, title, body, action_type, action_data, priority, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		`, n.UserID, n.HouseholdID, n.NudgeType, n.Title, n.Body, n.ActionType, n.ActionData, n.Priority, n.ExpiresAt)
+		key := n.DedupKey
+		if key == "" {
+			key = n.NudgeType + "|" + n.Title
+		}
+
+		var id string
+		err = conn.QueryRow(`
+			INSERT INTO ai_nudges (user_id, household_id, nudge_type, title, body, action_type, action_data, priority, expires_at, dedup_key)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			RETURNING id
+		`, n.UserID, n.HouseholdID, n.NudgeType, n.Title, n.Body, n.ActionType, n.ActionData, n.Priority, n.ExpiresAt, key).Scan(&id)
 		if err != nil {
 			log.Printf("nudges: insert error: %v", err)
+			continue
 		}
+		n.ID = id
+		inserted = append(inserted, n)
 	}
 
-	return nil
+	return inserted, nil
 }
 
 // --- Individual nudge checks ---

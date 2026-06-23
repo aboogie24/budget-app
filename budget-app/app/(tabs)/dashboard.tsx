@@ -758,7 +758,11 @@ export default function DashboardScreen() {
                 try { await api.post(`/auth/ai/nudges/${nudge.id}/dismiss`); } catch {}
                 setNudges(prev => prev.filter(n => n.id !== nudge.id));
                 if (nudge.action_type === 'ask_ai') {
-                  router.push('/(tabs)/ai-chat' as any);
+                  // Seed the advisor with an opening question about this card.
+                  router.push({
+                    pathname: '/(tabs)/ai-chat',
+                    params: nudge.action_data ? { seed: String(nudge.action_data) } : {},
+                  } as any);
                 } else if (nudge.action_type === 'navigate_to' && nudge.action_data) {
                   router.push(nudge.action_data as any);
                 }

@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { api } from '../../utils/apiClient';
 import { colors, spacing, radius, typography, glassEffects } from '../../utils/design-system';
 import GradientBackground from '../../components/GradientBackground';
@@ -70,6 +70,20 @@ export default function AIChatScreen() {
       loadConversations();
     }, [])
   );
+
+  // If we arrived from a proactive nudge with a seed question, open a fresh
+  // conversation and send it automatically (once).
+  const params = useLocalSearchParams<{ seed?: string | string[] }>();
+  const seedConsumed = useRef(false);
+  useEffect(() => {
+    const seed = Array.isArray(params.seed) ? params.seed[0] : params.seed;
+    if (seed && !seedConsumed.current && !loading) {
+      seedConsumed.current = true;
+      setShowConvoList(false);
+      sendMessage(seed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.seed, loading]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -130,8 +144,11 @@ export default function AIChatScreen() {
 
   // ─── Send Message with SSE Streaming ──────────────────────
 
-  async function sendMessage() {
-    const text = inputText.trim();
+  async function sendMessage(overrideText?: string) {
+    // overrideText may be a seed string (from a tapped nudge). Guard against
+    // event objects passed by onPress/onSubmitEditing handlers.
+    const source = typeof overrideText === 'string' ? overrideText : inputText;
+    const text = source.trim();
     if (!text || isStreaming) return;
 
     setInputText('');

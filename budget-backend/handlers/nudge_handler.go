@@ -146,11 +146,18 @@ func GenerateNudgesNow(w http.ResponseWriter, r *http.Request) {
 	householdID := db.ResolveHouseholdID(conn.Raw(), userID)
 
 	nudges := ai.GenerateNudges(conn.Raw(), userID, householdID)
-	if err := ai.SaveNudges(conn.Raw(), nudges); err != nil {
+	ai.AssignDedupKeys(nudges)
+	// Rewrite new nudges into warm, memory-grounded copy (cheap model, graceful
+	// fallback to the deterministic text on any failure).
+	ai.AuthorNudges(ai.NewClient(), conn.Raw(), userID, householdID, nudges)
+	inserted, err := ai.SaveNudges(conn.Raw(), nudges)
+	if err != nil {
 		log.Printf("GenerateNudgesNow save error: %v", err)
 		http.Error(w, "Save error", http.StatusInternalServerError)
 		return
 	}
+	// Push the high-priority, actionable ones (quiet hours + 1/day cap + consent).
+	PushNewNudges(conn.Raw(), inserted)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

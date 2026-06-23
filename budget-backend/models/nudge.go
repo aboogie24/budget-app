@@ -14,6 +14,9 @@ type AINudge struct {
 	IsRead      bool    `json:"is_read"`
 	ExpiresAt   *string `json:"expires_at,omitempty"`
 	CreatedAt   string  `json:"created_at"`
+	// DedupKey is a stable identity (type + deterministic title) set before the
+	// AI rewrites Title/Body. Internal only — used for 24h de-duplication.
+	DedupKey string `json:"-"`
 }
 
 // WhatIfRequest is the payload for a what-if simulation.

@@ -390,10 +390,14 @@ func RunNudgeGeneration() {
 
 		householdID := db.ResolveHouseholdID(client.Raw(), userID)
 		nudges := ai.GenerateNudges(client.Raw(), userID, householdID)
-		if err := ai.SaveNudges(client.Raw(), nudges); err != nil {
+		ai.AssignDedupKeys(nudges)
+		ai.AuthorNudges(ai.NewClient(), client.Raw(), userID, householdID, nudges)
+		inserted, err := ai.SaveNudges(client.Raw(), nudges)
+		if err != nil {
 			log.Printf("nudge generation: save error for user %s: %v", userID, err)
 			continue
 		}
+		PushNewNudges(client.Raw(), inserted)
 		totalGenerated += len(nudges)
 
 		// Send push notifications for high-priority nudges (priority <= 3)
