@@ -8,11 +8,13 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { api } from '@/utils/apiClient';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import { colors, spacing, radius, typography, glassEffects } from '@/utils/design-system';
 
 // ── Types ──
 
@@ -32,17 +34,6 @@ type EventItem = {
 type DayEvents = Record<string, EventItem[]>;
 
 // ── Constants ──
-
-const INCOME_COLOR = '#34d399';
-const EXPENSE_COLOR = '#f87171';
-const BILL_COLOR = '#60a5fa';
-const ACCENT = '#a855f7';
-const PINK = '#ec4899';
-const TEXT_PRIMARY = '#f8fafc';
-const TEXT_MUTED = '#94a3b8';
-const TEXT_DIM = 'rgba(255,255,255,0.3)';
-const SURFACE = 'rgba(255,255,255,0.06)';
-const BORDER = 'rgba(255,255,255,0.08)';
 
 const DAY_NAMES = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const MONTHS = [
@@ -72,11 +63,6 @@ const dateLabel = (s: string) => {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 };
 
-const shortDate = (s: string) => {
-  const d = new Date(s + 'T12:00:00');
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
-};
-
 const getWeekDates = (date: Date): Date[] => {
   const start = new Date(date);
   start.setDate(date.getDate() - date.getDay());
@@ -87,115 +73,148 @@ const getWeekDates = (date: Date): Date[] => {
   });
 };
 
+// ── Actual vs Projected — the single source of truth ──
+// A bill that isn't paid for the period is a *projection* (upcoming money out).
+// Everything else — real income, real expenses, and paid bills (which arrive as
+// transactions) — is *actual*.
+const isProjected = (e: EventItem) => e.source === 'bill' && e.billStatus !== 'paid';
+const isOverdue = (e: EventItem) => isProjected(e) && e.billStatus === 'overdue';
+
+// Per-day / per-month split. spent and due are kept SEPARATE end-to-end — never
+// summed before display. That separation is the regression guard against the
+// bill double-count bug.
+type Buckets = { income: number; spent: number; due: number; incomeCount: number; spentCount: number; dueCount: number };
+const bucket = (events: EventItem[]): Buckets => {
+  const b: Buckets = { income: 0, spent: 0, due: 0, incomeCount: 0, spentCount: 0, dueCount: 0 };
+  events.forEach((e) => {
+    if (e.type === 'income') { b.income += e.amount; b.incomeCount++; }
+    else if (isProjected(e)) { b.due += e.amount; b.dueCount++; }
+    else { b.spent += e.amount; b.spentCount++; }
+  });
+  return b;
+};
+
+// ── Day-cell markers ──
+// One marker per kind: solid = it happened, hollow ring = it's coming.
+type Marker = { solid: boolean; color: string };
+const getDayMarkers = (events: EventItem[]): Marker[] => {
+  if (!events || events.length === 0) return [];
+  const markers: Marker[] = [];
+  if (events.some((e) => e.type === 'income')) markers.push({ solid: true, color: colors.success });
+  if (events.some((e) => e.type === 'expense' && !isProjected(e))) markers.push({ solid: true, color: colors.error });
+  const projected = events.filter(isProjected);
+  if (projected.length > 0) {
+    markers.push({ solid: false, color: projected.some(isOverdue) ? colors.error : colors.warning });
+  }
+  return markers;
+};
+
+const DayMarkers = ({ markers }: { markers: Marker[] }) => (
+  <View style={styles.markerRow}>
+    {markers.slice(0, 3).map((m, i) =>
+      m.solid ? (
+        <View key={i} style={[styles.markerDot, { backgroundColor: m.color }]} />
+      ) : (
+        <View key={i} style={[styles.markerRing, { borderColor: m.color }]} />
+      ),
+    )}
+  </View>
+);
+
 // ── Icon helper ──
 
 const getEventIcon = (item: EventItem): string => {
-  if (item.source === 'bill') return 'receipt-outline';
+  if (item.source === 'bill') return isProjected(item) ? 'receipt-outline' : 'receipt';
   if (item.type === 'income') return 'trending-up-outline';
   if (item.source === 'budget') return 'wallet-outline';
   return 'cart-outline';
 };
 
-const getEventIconColor = (item: EventItem): string => {
-  if (item.source === 'bill') return BILL_COLOR;
-  if (item.type === 'income') return INCOME_COLOR;
-  return ACCENT;
-};
+// ── Status / AutoPay chips (projected bills) ──
 
-const getEventAmountColor = (item: EventItem): string => {
-  if (item.source === 'bill') return BILL_COLOR;
-  if (item.type === 'income') return INCOME_COLOR;
-  return EXPENSE_COLOR;
-};
-
-// ── Dot colors for calendar indicators ──
-
-const getDotsForDay = (events: EventItem[]): string[] => {
-  if (!events || events.length === 0) return [];
-  const dots: string[] = [];
-  const hasBill = events.some(e => e.source === 'bill');
-  const hasIncome = events.some(e => e.type === 'income');
-  const hasExpense = events.some(e => e.type === 'expense' && e.source !== 'bill');
-  if (hasBill) dots.push(BILL_COLOR);
-  if (hasIncome) dots.push(INCOME_COLOR);
-  if (hasExpense && !hasBill) dots.push(ACCENT);
-  if (dots.length === 0 && events.length > 0) dots.push(ACCENT);
-  return dots;
-};
-
-// ── Status Chip ──
-
-const StatusChip = ({ status, isAutoPay }: { status?: string; isAutoPay?: boolean }) => {
-  if (!status) return null;
-  const colorMap: Record<string, { bg: string; text: string; label: string }> = {
-    paid: { bg: 'rgba(52,211,153,0.12)', text: INCOME_COLOR, label: 'Paid' },
-    overdue: { bg: 'rgba(248,113,113,0.12)', text: EXPENSE_COLOR, label: 'Overdue' },
-    due: { bg: 'rgba(251,191,36,0.12)', text: '#fbbf24', label: 'Due' },
-  };
-  const c = colorMap[status] || colorMap.due;
-
+const ProjectedChips = ({ status, isAutoPay }: { status?: string; isAutoPay?: boolean }) => {
+  const overdue = status === 'overdue';
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-      <View style={{ backgroundColor: c.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-        <Text style={{ fontSize: 9, fontWeight: '700', color: c.text }}>{c.label}</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+      <View style={[styles.miniChip, { backgroundColor: overdue ? 'rgba(239,68,68,0.14)' : 'rgba(234,179,8,0.14)' }]}>
+        <Text style={[styles.miniChipText, { color: overdue ? colors.error : colors.warning }]}>
+          {overdue ? 'OVERDUE' : 'DUE'}
+        </Text>
       </View>
       {isAutoPay && (
-        <View style={{
-          backgroundColor: 'rgba(168,85,247,0.12)',
-          paddingHorizontal: 5,
-          paddingVertical: 2,
-          borderRadius: 4,
-        }}>
-          <Text style={{ fontSize: 8, fontWeight: '700', color: ACCENT, letterSpacing: 0.3 }}>AUTO</Text>
+        <View style={[styles.miniChip, { backgroundColor: 'rgba(168,85,247,0.14)' }]}>
+          <Text style={[styles.miniChipText, { color: colors.primary2 }]}>AUTO</Text>
         </View>
       )}
     </View>
   );
 };
 
-// ── Event Row ──
+// ── Event Row ── actual = solid, projected = dashed/ghosted
 
-const EventRow = ({ item, dateBadge }: { item: EventItem; dateBadge?: string }) => {
+const EventRow = ({ item }: { item: EventItem }) => {
+  const projected = isProjected(item);
   const isIncome = item.type === 'income';
-  const isBill = item.source === 'bill';
-  const iconColor = getEventIconColor(item);
-  const amountColor = getEventAmountColor(item);
   const iconName = getEventIcon(item);
-  const sourceLabel = isBill ? 'Bill' : item.source === 'budget' ? 'Budget' : 'Transaction';
+  const iconColor = projected
+    ? (isOverdue(item) ? colors.error : colors.warning)
+    : isIncome ? colors.success : colors.primary2;
+  const amountColor = projected
+    ? (isOverdue(item) ? colors.error : colors.warning)
+    : isIncome ? colors.success : colors.error;
+
+  const subtitle = projected
+    ? `Bill · projected${item.isAutoPay ? ' · autopay' : ''}`
+    : `${item.source === 'budget' ? 'Budget' : 'Transaction'}${item.note ? ` · ${item.note}` : ''}`;
 
   return (
-    <View style={styles.eventRow}>
-      <View style={[styles.eventIcon, { backgroundColor: `${iconColor}18` }]}>
-        <Ionicons name={iconName as any} size={14} color={iconColor} />
+    <View style={[styles.eventRow, projected ? styles.eventRowProjected : styles.eventRowActual]}>
+      <View style={[styles.eventIcon, { backgroundColor: `${iconColor}1F` }]}>
+        <Ionicons name={iconName as any} size={15} color={iconColor} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={styles.eventName} numberOfLines={1}>{item.name}</Text>
-          {isBill && <StatusChip status={item.billStatus} isAutoPay={item.isAutoPay} />}
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-          <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: ACCENT }} />
-          <Text style={{ fontSize: 10, color: TEXT_MUTED }}>
-            {sourceLabel}
-            {item.frequency ? ` \u00B7 ${item.frequency}` : ''}
-            {dateBadge ? ` \u00B7 ${dateBadge}` : item.note ? ` \u00B7 ${item.note}` : ''}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+          <Text style={[styles.eventName, projected && styles.projectedText]} numberOfLines={1}>
+            {item.name}
           </Text>
+          {projected && <ProjectedChips status={item.billStatus} isAutoPay={item.isAutoPay} />}
         </View>
+        <Text style={[styles.eventSub, projected && styles.projectedText]} numberOfLines={1}>
+          {subtitle}
+        </Text>
       </View>
-      <Text style={{ fontSize: 13, fontWeight: '700', color: amountColor, flexShrink: 0 }}>
-        {isIncome ? '+' : '-'}{formatCurrency(item.amount)}
+      <Text style={[styles.eventAmount, { color: amountColor }, projected && styles.projectedText]}>
+        {projected ? '~' : isIncome ? '+' : '-'}{formatCurrency(item.amount)}
       </Text>
     </View>
   );
 };
 
+// ── Summary header — Spent so far / Still due / Income ──
+
+const SummaryColumn = ({
+  label, value, count, color, projected,
+}: { label: string; value: number; count: string; color: string; projected?: boolean }) => (
+  <View style={styles.sumCol}>
+    <Text style={styles.sumLabel}>{label}</Text>
+    <Text style={[styles.sumValue, { color }]} numberOfLines={1}>
+      {projected ? '~' : ''}{formatCurrency(value)}
+    </Text>
+    <View style={[styles.sumUnderline, projected ? { borderColor: color, borderStyle: 'dashed' } : { backgroundColor: color }]} />
+    <Text style={styles.sumCount}>{count}</Text>
+  </View>
+);
+
 // ── Main Screen ──
 
 export default function CalendarScreen() {
+  const router = useRouter();
   const today = useMemo(() => toKey(new Date()), []);
 
   const [dayEvents, setDayEvents] = useState<DayEvents>({});
   const [loading, setLoading] = useState(false);
+  const [errored, setErrored] = useState(false);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [month, setMonth] = useState(() => ({ year: new Date().getFullYear(), month: new Date().getMonth() }));
   const [selected, setSelected] = useState(today);
   const [expanded, setExpanded] = useState(false);
@@ -206,6 +225,7 @@ export default function CalendarScreen() {
     const userId = await api.getUserId();
     if (!userId) return;
     setLoading(true);
+    setErrored(false);
 
     const monthStart = new Date(month.year, month.month, 1);
     const monthEnd = new Date(month.year, month.month + 1, 0);
@@ -237,16 +257,10 @@ export default function CalendarScreen() {
     };
 
     try {
-      const [budgets, transactions, bills] = await Promise.all([
-        api.get<any[]>(`/auth/budgets/user/${userId}`).catch(() => []),
-        api.get<any[]>('/auth/transactions', { user_id: userId }).catch(() => []),
-        api.get<any[]>('/auth/bills', { user_id: userId }).catch(() => []),
+      const [transactions, bills] = await Promise.all([
+        api.get<any[]>('/auth/transactions', { user_id: userId }),
+        api.get<any[]>('/auth/bills', { user_id: userId }),
       ]);
-
-      // Note: Budgets represent expected amounts, not calendar events.
-      // Transactions and bills are the actual events shown on the calendar.
-      // Income budgets (like "Cisco weekly") would create duplicate entries
-      // alongside real income transactions, so we skip them.
 
       (Array.isArray(transactions) ? transactions : []).forEach((t) => {
         if (!t.date) return;
@@ -255,10 +269,8 @@ export default function CalendarScreen() {
         if ((t.type || '').toLowerCase() === 'transfer') return;
         const date = parseCalDate(t.date);
         if (isNaN(date.getTime())) return;
-        // Only manual templates (source is null/'manual') should be projected
-        // forward by frequency. Recurring children already exist as real dated
-        // rows, and bank-synced transactions are real one-off events — both
-        // would double-count if expanded.
+        // Only manual templates (source null/'manual') project forward by
+        // frequency. Recurring children + bank-synced rows are real dated events.
         const isTemplate = !t.source || t.source === 'manual';
         const freq = isTemplate ? (t.frequency || '') : '';
         expandFrequency(date, freq, {
@@ -273,6 +285,10 @@ export default function CalendarScreen() {
 
       (Array.isArray(bills) ? bills : []).forEach((bill) => {
         if (!bill.due_day) return;
+        // Once a bill is paid for the period, its real transaction already
+        // represents it (added in the transaction loop). Suppress the scheduled
+        // bill so it isn't double-counted.
+        if (bill.paid_this_period) return;
         const billDate = new Date(monthStart.getFullYear(), monthStart.getMonth(), bill.due_day);
         if (billDate > monthEnd) return;
         expandFrequency(billDate, bill.frequency || 'monthly', {
@@ -284,13 +300,14 @@ export default function CalendarScreen() {
       });
     } catch (e) {
       console.error('Failed to load calendar data:', e);
+      setErrored(true);
     }
 
     setDayEvents(ev);
     setLoading(false);
+    setLoadedOnce(true);
   }, [month]);
 
-  // Reload on tab focus and when month changes
   useFocusEffect(
     useCallback(() => {
       loadData();
@@ -302,32 +319,26 @@ export default function CalendarScreen() {
   const weekDates = useMemo(() => getWeekDates(new Date(selected + 'T12:00:00')), [selected]);
 
   const selEvents = dayEvents[selected] || [];
-  const selIncome = selEvents.filter(e => e.type === 'income').reduce((s, e) => s + e.amount, 0);
-  const selExpense = selEvents.filter(e => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const selBuckets = useMemo(() => bucket(selEvents), [selEvents]);
+  const selActual = useMemo(() => selEvents.filter((e) => !isProjected(e)), [selEvents]);
+  const selProjected = useMemo(() => selEvents.filter(isProjected), [selEvents]);
 
-  const monthTotals = useMemo(() => {
-    let inc = 0, exp = 0;
-    // Only sum events that belong to the current month
+  const monthBuckets = useMemo(() => {
     const prefix = `${month.year}-${String(month.month + 1).padStart(2, '0')}`;
+    const all: EventItem[] = [];
     Object.entries(dayEvents).forEach(([key, evs]) => {
-      if (key.startsWith(prefix)) {
-        evs.forEach(e => {
-          if (e.type === 'income') inc += e.amount; else exp += e.amount;
-        });
-      }
+      if (key.startsWith(prefix)) all.push(...evs);
     });
-    return { inc, exp, net: inc - exp };
+    return bucket(all);
   }, [dayEvents, month]);
 
-  const upcoming = useMemo(() => {
-    const items: { date: string; event: EventItem }[] = [];
-    for (const date of Object.keys(dayEvents).sort()) {
-      if (date <= today) continue;
-      for (const event of dayEvents[date]) items.push({ date, event });
-      if (items.length >= 6) break;
-    }
-    return items.slice(0, 6);
-  }, [dayEvents, today]);
+  const netSoFar = monthBuckets.income - monthBuckets.spent;
+  const projectedNet = monthBuckets.income - (monthBuckets.spent + monthBuckets.due);
+
+  const monthHasData = useMemo(() => {
+    const prefix = `${month.year}-${String(month.month + 1).padStart(2, '0')}`;
+    return Object.keys(dayEvents).some((k) => k.startsWith(prefix) && dayEvents[k].length > 0);
+  }, [dayEvents, month]);
 
   // ── Full month grid cells ──
 
@@ -373,128 +384,119 @@ export default function CalendarScreen() {
   };
 
   const toggleExpand = () => setExpanded(!expanded);
-
   const monthLabel = `${MONTHS[month.month]} ${month.year}`;
+  const showSkeleton = loading && !loadedOnce;
 
   // ── Render ──
 
   return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Calendar</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {loading && <ActivityIndicator color={ACCENT} size="small" />}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+            {loading && loadedOnce && <ActivityIndicator color={colors.primary2} size="small" />}
             {selected !== today && (
               <TouchableOpacity style={styles.todayBtn} onPress={goToday}>
                 <Text style={styles.todayBtnText}>Today</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={styles.expandBtn} onPress={toggleExpand}>
-              <Ionicons
-                name={expanded ? 'contract-outline' : 'expand-outline'}
-                size={16}
-                color={ACCENT}
-              />
+            <TouchableOpacity style={styles.iconBtn} onPress={toggleExpand}>
+              <Ionicons name={expanded ? 'contract-outline' : 'expand-outline'} size={16} color={colors.primary2} />
             </TouchableOpacity>
           </View>
         </View>
 
         <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
 
-          {/* ── Calendar View ── */}
+          {showSkeleton ? (
+            <View style={{ paddingHorizontal: spacing.lg, gap: spacing.md }}>
+              <Skeleton height={120} borderRadius={radius.xl} />
+              <Skeleton height={92} borderRadius={radius.lg} />
+              <Skeleton height={64} borderRadius={radius.md} />
+              <Skeleton height={64} borderRadius={radius.md} />
+            </View>
+          ) : (
+          <>
+          {/* ── Calendar (week strip / month grid) ── */}
           {expanded ? (
-            /* Full Month Grid */
-            <View style={styles.calCard}>
-              {/* Month nav */}
+            <View style={styles.card}>
               <View style={styles.monthNav}>
                 <TouchableOpacity onPress={() => shiftMonth(-1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
-                  <Ionicons name="chevron-back" size={18} color={ACCENT} />
+                  <Ionicons name="chevron-back" size={18} color={colors.primary2} />
                 </TouchableOpacity>
-                <Text style={{ fontSize: 17, fontWeight: '700', color: TEXT_PRIMARY }}>{monthLabel}</Text>
+                <Text style={styles.monthNavLabel}>{monthLabel}</Text>
                 <TouchableOpacity onPress={() => shiftMonth(1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
-                  <Ionicons name="chevron-forward" size={18} color={ACCENT} />
+                  <Ionicons name="chevron-forward" size={18} color={colors.primary2} />
                 </TouchableOpacity>
               </View>
 
-              {/* Day headers */}
               <View style={styles.gridRow}>
                 {DAY_NAMES.map((d, i) => (
                   <View key={i} style={styles.gridHeaderCell}>
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: TEXT_MUTED }}>{d}</Text>
+                    <Text style={styles.gridHeaderText}>{d}</Text>
                   </View>
                 ))}
               </View>
 
-              {/* Calendar grid */}
               <View style={styles.gridContainer}>
                 {calendarCells.map((day, i) => {
-                  if (day === null) {
-                    return <View key={`empty-${i}`} style={styles.gridCell} />;
-                  }
+                  if (day === null) return <View key={`empty-${i}`} style={styles.gridCell} />;
                   const key = toKeyYMD(month.year, month.month, day);
                   const isToday = key === today;
                   const isSelected = key === selected;
-                  const dots = getDotsForDay(dayEvents[key] || []);
-
+                  const markers = getDayMarkers(dayEvents[key] || []);
                   return (
                     <TouchableOpacity
                       key={key}
-                      style={[
-                        styles.gridCell,
-                        isSelected && { backgroundColor: 'rgba(168,85,247,0.2)', borderRadius: 10 },
-                      ]}
+                      style={[styles.gridCell, isSelected && styles.gridCellSelected]}
                       onPress={() => pick(key)}
                       activeOpacity={0.7}
                     >
                       <View style={[
-                        styles.gridDayCircle,
-                        isSelected && { backgroundColor: ACCENT },
-                        isToday && !isSelected && { borderWidth: 1.5, borderColor: ACCENT },
+                        styles.dayCircle,
+                        isSelected && styles.dayCircleSel,
+                        isToday && !isSelected && styles.dayCircleToday,
                       ]}>
-                        <Text style={{
-                          fontSize: 14,
-                          fontWeight: isSelected || isToday ? '700' : '500',
-                          color: isSelected ? '#fff' : isToday ? ACCENT : TEXT_PRIMARY,
-                        }}>{day}</Text>
+                        <Text style={[
+                          styles.dayNum,
+                          isSelected && { color: '#fff' },
+                          isToday && !isSelected && { color: colors.primary2 },
+                        ]}>{day}</Text>
                       </View>
-                      <View style={{ flexDirection: 'row', gap: 2, marginTop: 3, height: 5 }}>
-                        {dots.slice(0, 3).map((c, j) => (
-                          <View key={j} style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: c }} />
-                        ))}
-                      </View>
+                      <DayMarkers markers={markers} />
                     </TouchableOpacity>
                   );
                 })}
               </View>
 
-              {/* Legend */}
               <View style={styles.legend}>
                 {[
-                  { color: BILL_COLOR, label: 'Bills' },
-                  { color: INCOME_COLOR, label: 'Income' },
-                  { color: PINK, label: 'Partner' },
+                  { solid: true, color: colors.error, label: 'Spent' },
+                  { solid: true, color: colors.success, label: 'Income' },
+                  { solid: false, color: colors.warning, label: 'Upcoming' },
                 ].map((l, i) => (
                   <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: l.color }} />
-                    <Text style={{ fontSize: 10, color: TEXT_MUTED }}>{l.label}</Text>
+                    {l.solid
+                      ? <View style={[styles.markerDot, { backgroundColor: l.color }]} />
+                      : <View style={[styles.markerRing, { borderColor: l.color }]} />}
+                    <Text style={styles.legendText}>{l.label}</Text>
                   </View>
                 ))}
               </View>
             </View>
           ) : (
-            /* Compact Week Strip */
-            <View style={styles.calCard}>
-              <View style={styles.weekNav}>
+            <View style={styles.card}>
+              <View style={styles.monthNav}>
                 <TouchableOpacity onPress={() => shiftWeek(-1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
-                  <Ionicons name="chevron-back" size={16} color={ACCENT} />
+                  <Ionicons name="chevron-back" size={16} color={colors.primary2} />
                 </TouchableOpacity>
                 <TouchableOpacity onPress={toggleExpand}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: TEXT_PRIMARY }}>{monthLabel}</Text>
+                  <Text style={styles.monthNavLabel}>{monthLabel}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => shiftWeek(1)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
-                  <Ionicons name="chevron-forward" size={16} color={ACCENT} />
+                  <Ionicons name="chevron-forward" size={16} color={colors.primary2} />
                 </TouchableOpacity>
               </View>
               <View style={styles.weekRow}>
@@ -502,13 +504,10 @@ export default function CalendarScreen() {
                   const k = toKey(d);
                   const isSel = k === selected;
                   const isTod = k === today;
-                  const dots = getDotsForDay(dayEvents[k] || []);
+                  const markers = getDayMarkers(dayEvents[k] || []);
                   return (
-                    <TouchableOpacity key={k} style={styles.dayCell} onPress={() => pick(k)} activeOpacity={0.7}>
-                      <Text style={[
-                        styles.dayName,
-                        isTod && !isSel && { color: ACCENT },
-                      ]}>{DAY_NAMES[i]}</Text>
+                    <TouchableOpacity key={k} style={styles.weekCell} onPress={() => pick(k)} activeOpacity={0.7}>
+                      <Text style={[styles.weekDayName, isTod && !isSel && { color: colors.primary2 }]}>{DAY_NAMES[i]}</Text>
                       <View style={[
                         styles.dayCircle,
                         isSel && styles.dayCircleSel,
@@ -517,14 +516,10 @@ export default function CalendarScreen() {
                         <Text style={[
                           styles.dayNum,
                           isSel && { color: '#fff' },
-                          isTod && !isSel && { color: ACCENT },
+                          isTod && !isSel && { color: colors.primary2 },
                         ]}>{d.getDate()}</Text>
                       </View>
-                      <View style={styles.dotRow}>
-                        {dots.slice(0, 3).map((c, j) => (
-                          <View key={j} style={[styles.dot, { backgroundColor: c }]} />
-                        ))}
-                      </View>
+                      <DayMarkers markers={markers} />
                     </TouchableOpacity>
                   );
                 })}
@@ -532,262 +527,252 @@ export default function CalendarScreen() {
             </View>
           )}
 
-          {/* ── Monthly Summary Bar ── */}
-          <View style={styles.summaryBar}>
-            <View style={styles.summaryCol}>
-              <View style={[styles.legendDot, { backgroundColor: INCOME_COLOR }]} />
-              <Text style={[styles.summaryAmt, { color: INCOME_COLOR }]}>+{formatCurrency(monthTotals.inc)}</Text>
+          {/* ── Summary header: Spent so far / Still due / Income ── */}
+          <View style={styles.summaryCard}>
+            <View style={styles.summaryRow}>
+              <SummaryColumn
+                label="Spent so far" value={monthBuckets.spent} color={colors.error}
+                count={`${monthBuckets.spentCount} ${monthBuckets.spentCount === 1 ? 'transaction' : 'transactions'}`}
+              />
+              <SummaryColumn
+                label="Still due" value={monthBuckets.due} color={colors.warning} projected
+                count={`${monthBuckets.dueCount} ${monthBuckets.dueCount === 1 ? 'bill' : 'bills'} unpaid`}
+              />
+              <SummaryColumn
+                label="Income" value={monthBuckets.income} color={colors.success}
+                count={`${monthBuckets.incomeCount} ${monthBuckets.incomeCount === 1 ? 'deposit' : 'deposits'}`}
+              />
             </View>
-            <View style={styles.summaryDiv} />
-            <View style={styles.summaryCol}>
-              <View style={[styles.legendDot, { backgroundColor: EXPENSE_COLOR }]} />
-              <Text style={[styles.summaryAmt, { color: EXPENSE_COLOR }]}>-{formatCurrency(monthTotals.exp)}</Text>
-            </View>
-            <View style={styles.summaryDiv} />
-            <View style={styles.summaryCol}>
-              <Text style={styles.netLabel}>Net</Text>
-              <Text style={[styles.summaryAmt, { color: monthTotals.net >= 0 ? INCOME_COLOR : EXPENSE_COLOR }]}>
-                {monthTotals.net >= 0 ? '+' : ''}{formatCurrency(monthTotals.net)}
+            <View style={styles.netLine}>
+              <Text style={styles.netLineText}>
+                Net so far <Text style={{ color: netSoFar >= 0 ? colors.success : colors.error, fontWeight: '700' }}>
+                  {netSoFar >= 0 ? '+' : '-'}{formatCurrency(netSoFar)}
+                </Text>
+              </Text>
+              <Text style={styles.netDot}>·</Text>
+              <Text style={styles.netLineMuted}>
+                Projected net {projectedNet >= 0 ? '+' : '-'}{formatCurrency(projectedNet)}
               </Text>
             </View>
           </View>
 
-          {/* ── Day Detail Section ── */}
+          {/* ── Day detail ── */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{dateLabel(selected)}</Text>
 
             {selEvents.length === 0 ? (
               <View style={styles.emptyDay}>
-                <Ionicons name="sunny-outline" size={18} color={TEXT_DIM} />
-                <Text style={styles.emptyText}>Nothing scheduled</Text>
+                <Ionicons name="sunny-outline" size={20} color={colors.textDark} />
+                <Text style={styles.emptyDayText}>Nothing scheduled</Text>
               </View>
             ) : (
               <>
-                {/* Day income/expense chips */}
-                {(selIncome > 0 || selExpense > 0) && (
-                  <View style={styles.dayChips}>
-                    {selIncome > 0 && (
-                      <View style={[styles.chip, {
-                        backgroundColor: 'rgba(52,211,153,0.1)',
-                        borderColor: 'rgba(52,211,153,0.15)',
-                      }]}>
-                        <Ionicons name="trending-up-outline" size={11} color={INCOME_COLOR} />
-                        <Text style={[styles.chipText, { color: INCOME_COLOR }]}>+{formatCurrency(selIncome)}</Text>
-                      </View>
-                    )}
-                    {selExpense > 0 && (
-                      <View style={[styles.chip, {
-                        backgroundColor: 'rgba(248,113,113,0.1)',
-                        borderColor: 'rgba(248,113,113,0.15)',
-                      }]}>
-                        <Ionicons name="trending-down-outline" size={11} color={EXPENSE_COLOR} />
-                        <Text style={[styles.chipText, { color: EXPENSE_COLOR }]}>-{formatCurrency(selExpense)}</Text>
-                      </View>
-                    )}
-                  </View>
+                {/* per-day split chips */}
+                <View style={styles.dayChips}>
+                  {selBuckets.income > 0 && (
+                    <View style={[styles.chip, { backgroundColor: 'rgba(34,197,94,0.1)' }]}>
+                      <Ionicons name="trending-up-outline" size={11} color={colors.success} />
+                      <Text style={[styles.chipText, { color: colors.success }]}>Received {formatCurrency(selBuckets.income)}</Text>
+                    </View>
+                  )}
+                  {selBuckets.spent > 0 && (
+                    <View style={[styles.chip, { backgroundColor: 'rgba(239,68,68,0.1)' }]}>
+                      <Ionicons name="trending-down-outline" size={11} color={colors.error} />
+                      <Text style={[styles.chipText, { color: colors.error }]}>Spent {formatCurrency(selBuckets.spent)}</Text>
+                    </View>
+                  )}
+                  {selBuckets.due > 0 && (
+                    <View style={[styles.chip, styles.chipProjected]}>
+                      <Ionicons name="time-outline" size={11} color={colors.warning} />
+                      <Text style={[styles.chipText, { color: colors.warning }]}>Due ~{formatCurrency(selBuckets.due)}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {selActual.length > 0 && (
+                  <>
+                    <Text style={styles.groupLabel}>ACTUAL</Text>
+                    {selActual.map((item, idx) => <EventRow key={`a-${item.id}-${idx}`} item={item} />)}
+                  </>
                 )}
-                {selEvents.map((item, idx) => (
-                  <EventRow key={`${item.id}-${idx}`} item={item} />
-                ))}
+                {selProjected.length > 0 && (
+                  <>
+                    <Text style={[styles.groupLabel, { marginTop: spacing.md }]}>UPCOMING</Text>
+                    {selProjected.map((item, idx) => <EventRow key={`p-${item.id}-${idx}`} item={item} />)}
+                  </>
+                )}
               </>
             )}
           </View>
 
-          {/* ── Upcoming Section ── */}
-          {upcoming.length > 0 && (
-            <View style={styles.section}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <Ionicons name="time-outline" size={14} color={ACCENT} />
-                <Text style={styles.sectionTitle}>Upcoming</Text>
-              </View>
-              {upcoming.map(({ date, event }, idx) => (
-                <EventRow key={`up-${idx}`} item={event} dateBadge={shortDate(date)} />
-              ))}
+          {/* ── Empty month / error ── */}
+          {errored && (
+            <View style={styles.noticeCard}>
+              <Ionicons name="alert-circle-outline" size={22} color={colors.error} />
+              <Text style={styles.noticeTitle}>Couldn't load your calendar</Text>
+              <TouchableOpacity onPress={loadData}><Text style={styles.noticeAction}>Retry</Text></TouchableOpacity>
             </View>
+          )}
+          {!errored && !monthHasData && loadedOnce && (
+            <View style={styles.noticeCard}>
+              <Ionicons name="calendar-outline" size={26} color={colors.textDark} />
+              <Text style={styles.noticeTitle}>No money flow yet</Text>
+              <Text style={styles.noticeSub}>Link an account or add a transaction to see your month come to life.</Text>
+              <TouchableOpacity style={styles.cta} onPress={() => router.push('/add-transaction' as any)}>
+                <Text style={styles.ctaText}>Add a transaction</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          </>
           )}
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 // ── Styles ──
 
 const styles = StyleSheet.create({
-  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 12,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
-  title: { color: TEXT_PRIMARY, fontSize: 22, fontWeight: '800' },
+  title: { color: colors.text, ...typography.h3, fontWeight: '800' },
   todayBtn: {
     backgroundColor: 'rgba(192,132,252,0.15)',
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.md,
     paddingVertical: 5,
-    borderRadius: 12,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: 'rgba(192,132,252,0.25)',
   },
-  todayBtnText: { color: ACCENT, fontSize: 12, fontWeight: '700' },
-  expandBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: SURFACE,
-    alignItems: 'center',
-    justifyContent: 'center',
+  todayBtnText: { color: colors.primary2, ...typography.caption, fontWeight: '700' },
+  iconBtn: {
+    width: 34, height: 34, borderRadius: radius.sm,
+    backgroundColor: colors.glassLight,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.borderGlass,
   },
 
-  // Shared calendar card
-  calCard: {
-    marginHorizontal: 16,
-    backgroundColor: SURFACE,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
+  // Calendar card (week + month)
+  card: {
+    ...glassEffects.glass,
+    marginHorizontal: spacing.lg,
+    padding: spacing.lg,
   },
-
-  // Full month grid
   monthNav: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
-  gridRow: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  gridHeaderCell: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  gridCell: {
-    width: '14.28%' as any,
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  gridDayCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  monthNavLabel: { color: colors.text, ...typography.bodyBold, fontWeight: '700' },
+  gridRow: { flexDirection: 'row', marginBottom: spacing.sm },
+  gridHeaderCell: { flex: 1, alignItems: 'center' },
+  gridHeaderText: { color: colors.textMuted, ...typography.caption, fontWeight: '600' },
+  gridContainer: { flexDirection: 'row', flexWrap: 'wrap' },
+  gridCell: { width: '14.28%' as any, alignItems: 'center', paddingVertical: 6 },
+  gridCellSelected: { backgroundColor: 'rgba(124,58,237,0.18)', borderRadius: radius.md },
   legend: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 16,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: BORDER,
+    flexDirection: 'row', justifyContent: 'center', gap: spacing.lg,
+    marginTop: spacing.md, paddingTop: spacing.sm,
+    borderTopWidth: 1, borderTopColor: colors.borderGlass,
   },
+  legendText: { color: colors.textMuted, ...typography.caption },
 
-  // Week strip (compact)
-  weekNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  },
+  // Week strip
   weekRow: { flexDirection: 'row' },
-  dayCell: { flex: 1, alignItems: 'center', gap: 4 },
-  dayName: { color: TEXT_MUTED, fontSize: 11, fontWeight: '600' },
-  dayCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayCircleSel: { backgroundColor: ACCENT },
-  dayCircleToday: { borderWidth: 1.5, borderColor: ACCENT },
-  dayNum: { color: TEXT_PRIMARY, fontSize: 15, fontWeight: '700' },
-  dotRow: { flexDirection: 'row', gap: 3, height: 5, alignItems: 'center' },
-  dot: { width: 5, height: 5, borderRadius: 2.5 },
+  weekCell: { flex: 1, alignItems: 'center', gap: spacing.xs },
+  weekDayName: { color: colors.textMuted, ...typography.caption, fontWeight: '600' },
 
-  // Monthly summary bar
-  summaryBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    marginHorizontal: 16,
-    marginTop: 12,
-    backgroundColor: SURFACE,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: BORDER,
+  // Shared day circle
+  dayCircle: { width: 34, height: 34, borderRadius: radius.full, alignItems: 'center', justifyContent: 'center' },
+  dayCircleSel: { backgroundColor: colors.primary },
+  dayCircleToday: { borderWidth: 1.5, borderColor: colors.primary2 },
+  dayNum: { color: colors.text, ...typography.smallBold, fontWeight: '600' },
+
+  // Markers
+  markerRow: { flexDirection: 'row', gap: 3, height: 7, alignItems: 'center', marginTop: 3 },
+  markerDot: { width: 5, height: 5, borderRadius: 2.5 },
+  markerRing: { width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, backgroundColor: 'transparent' },
+
+  // Summary header
+  summaryCard: {
+    ...glassEffects.glassFloating,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.lg,
   },
-  summaryCol: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  summaryAmt: { fontSize: 12, fontWeight: '700' },
-  summaryDiv: { width: 1, height: 16, backgroundColor: 'rgba(255,255,255,0.1)' },
-  legendDot: { width: 7, height: 7, borderRadius: 4 },
-  netLabel: { color: TEXT_MUTED, fontSize: 10, fontWeight: '600' },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  sumCol: { flex: 1, alignItems: 'center', gap: 3 },
+  sumLabel: { color: colors.textMuted, ...typography.caption },
+  sumValue: { ...typography.bodyBold, fontWeight: '800' },
+  sumUnderline: { width: 28, height: 2, borderRadius: 1, borderWidth: 1, borderColor: 'transparent' },
+  sumCount: { color: colors.textDark, fontSize: 10, lineHeight: 14, textAlign: 'center' },
+  netLine: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    marginTop: spacing.md, paddingTop: spacing.md,
+    borderTopWidth: 1, borderTopColor: colors.borderGlass,
+  },
+  netLineText: { color: colors.textMuted, ...typography.caption },
+  netLineMuted: { color: colors.textDark, ...typography.caption },
+  netDot: { color: colors.textDark },
 
   // Sections
   section: {
-    marginHorizontal: 16,
-    marginTop: 16,
-    backgroundColor: SURFACE,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
+    ...glassEffects.glass,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.lg,
   },
-  sectionTitle: { color: TEXT_PRIMARY, fontSize: 15, fontWeight: '800', marginBottom: 2 },
+  sectionTitle: { color: colors.text, ...typography.bodyBold, fontWeight: '800', marginBottom: spacing.sm },
+  groupLabel: { color: colors.textDark, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: spacing.sm },
 
-  // Day detail
-  emptyDay: {
-    alignItems: 'center',
-    paddingVertical: 20,
-    gap: 8,
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  emptyText: { color: TEXT_DIM, fontSize: 13, fontWeight: '600' },
-  dayChips: { flexDirection: 'row', gap: 8, marginBottom: 12, marginTop: 10 },
+  emptyDay: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm, flexDirection: 'row', justifyContent: 'center' },
+  emptyDayText: { color: colors.textMuted, ...typography.small, fontWeight: '600' },
+
+  dayChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md, marginTop: spacing.xs },
   chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: radius.lg,
   },
-  chipText: { fontSize: 11, fontWeight: '700' },
+  chipProjected: { backgroundColor: 'transparent', borderWidth: 1, borderStyle: 'dashed', borderColor: colors.warning },
+  chipText: { ...typography.caption, fontWeight: '700' },
 
   // Event row
   eventRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 12,
-    padding: 11,
-    paddingHorizontal: 12,
-    marginBottom: 6,
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.sm,
   },
-  eventIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+  eventRowActual: { backgroundColor: colors.glassLight, borderWidth: 1, borderColor: colors.borderGlass },
+  eventRowProjected: { backgroundColor: 'transparent', borderWidth: 1, borderStyle: 'dashed', borderColor: colors.borderGlass },
+  eventIcon: { width: 36, height: 36, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  eventName: { color: colors.text, ...typography.small, fontWeight: '600', flexShrink: 1 },
+  eventSub: { color: colors.textMuted, fontSize: 11, lineHeight: 15, marginTop: 2 },
+  eventAmount: { ...typography.small, fontWeight: '700', flexShrink: 0 },
+  projectedText: { opacity: 0.7 },
+
+  // Mini chips (DUE/AUTO)
+  miniChip: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  miniChipText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.3 },
+
+  // Notice (empty month / error)
+  noticeCard: {
+    ...glassEffects.glass,
+    marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.xl,
+    alignItems: 'center', gap: spacing.sm,
   },
-  eventName: { color: TEXT_PRIMARY, fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  noticeTitle: { color: colors.text, ...typography.bodyBold, fontWeight: '700' },
+  noticeSub: { color: colors.textMuted, ...typography.caption, textAlign: 'center', paddingHorizontal: spacing.lg },
+  noticeAction: { color: colors.primary2, ...typography.smallBold, fontWeight: '700', marginTop: spacing.xs },
+  cta: {
+    marginTop: spacing.sm, backgroundColor: colors.primary,
+    paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: radius.md,
+  },
+  ctaText: { color: '#fff', ...typography.smallBold, fontWeight: '700' },
 });

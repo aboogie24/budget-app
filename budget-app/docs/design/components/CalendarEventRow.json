@@ -1,0 +1,70 @@
+{
+  "componentName": "CalendarEventRow",
+  "description": "A single event in the selected-day list. Renders in one of two visual modes driven by a single predicate: ACTUAL (solid card) for income / real expenses / paid bills, or PROJECTED (dashed, ghosted card) for unpaid upcoming bills. Optionally shows partner attribution.",
+  "platform": "react-native",
+  "predicate": "isProjected = item.source === 'bill' && item.billStatus !== 'paid'",
+  "props": {
+    "id": { "type": "string", "required": true },
+    "name": { "type": "string", "required": true },
+    "amount": { "type": "number", "required": true },
+    "type": { "type": "'income' | 'expense'", "required": true },
+    "source": { "type": "'transaction' | 'bill' | 'budget'", "required": true },
+    "billStatus": { "type": "'paid' | 'due' | 'overdue' | undefined", "required": false },
+    "isAutoPay": { "type": "boolean", "default": false },
+    "category": { "type": "string", "required": false },
+    "timeLabel": { "type": "string", "required": false, "description": "e.g. '2:14 PM' or due-date for projected" },
+    "frequency": { "type": "string", "required": false },
+    "partner": { "type": "'A' | 'B' | 'shared' | undefined", "required": false, "description": "Optional couples attribution; omit to degrade gracefully" },
+    "partnerName": { "type": "string", "required": false },
+    "onPress": { "type": "function", "required": false }
+  },
+  "variants": {
+    "actual": {
+      "appliesTo": "income, real expenses, paid bills",
+      "card": "glassEffects.glass (solid)",
+      "fill": "colors.glassLight",
+      "border": "colors.borderGlass (solid)",
+      "icon": "filled icon in semantic-color chip at ~12% opacity",
+      "nameOpacity": 1.0,
+      "amountPrefix": "+ for income / - for expense",
+      "amountColor": "income colors.success, expense colors.error"
+    },
+    "projected": {
+      "appliesTo": "unpaid / upcoming bills (isProjected === true)",
+      "card": "ghosted glass",
+      "fill": "transparent or rgba(255,255,255,0.02)",
+      "border": "1px DASHED, colors.borderGlass",
+      "icon": "OUTLINE icon (e.g. receipt-outline) in colors.warning",
+      "nameOpacity": 0.7,
+      "amountPrefix": "~ (estimate)",
+      "amountColor": "colors.warning",
+      "subtitleIncludes": "the literal word 'projected'"
+    }
+  },
+  "statusChips": {
+    "DUE": { "color": "colors.warning", "bg": "rgba(234,179,8,0.12)" },
+    "OVERDUE": { "color": "colors.error", "bg": "rgba(239,68,68,0.12)" },
+    "AUTO": { "color": "colors.primary2", "bg": "rgba(168,85,247,0.12)", "show": "isAutoPay" }
+  },
+  "partnerGlyph": {
+    "A": { "color": "colors.primary2", "glyph": "initial or half-moon" },
+    "B": { "color": "colors.info", "glyph": "initial or half-moon" },
+    "shared": { "glyph": "house-outline or none" },
+    "placement": "inline in subtitle, e.g. 'Groceries · 2:14 PM · ◑ Alex'",
+    "note": "Secondary glyph only — never recolor the amount by partner."
+  },
+  "layout": {
+    "minHeight": 56,
+    "padding": { "horizontal": "spacing.md", "vertical": "spacing.md" },
+    "iconSize": 34,
+    "gap": "spacing.md"
+  },
+  "states": ["actual", "projected", "pressed", "loading-skeleton"],
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {variant === 'projected' ? 'upcoming bill' : type}, {amount}, {billStatus}",
+    "hint": "Double tap to view details",
+    "note": "Projected vs actual conveyed by dashed border + outline icon + 'projected'/'DUE' label, not color alone."
+  },
+  "developerNotes": "Drive ALL projected styling off the single isProjected predicate. The '~' amount prefix and 'projected' subtitle copy are intentional and required."
+}

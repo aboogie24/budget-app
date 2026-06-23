@@ -165,13 +165,18 @@ func ListBills(w http.ResponseWriter, r *http.Request) {
 		// Compute status for current billing period
 		periodStart, periodEnd := computeBillingPeriod(b.DueDay, b.Frequency, now)
 		var paymentCount int
+		var paidTxnID sql.NullString
 		_ = client.QueryRow(`
-			SELECT COUNT(*) FROM bill_payments
+			SELECT COUNT(*), MAX(transaction_id::text) FROM bill_payments
 			WHERE bill_id = $1 AND period_start = $2 AND period_end = $3
-		`, b.ID, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02")).Scan(&paymentCount)
+		`, b.ID, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02")).Scan(&paymentCount, &paidTxnID)
 
 		if paymentCount > 0 {
 			b.Status = "paid"
+			b.PaidThisPeriod = true
+			if paidTxnID.Valid {
+				b.PaidTransactionID = &paidTxnID.String
+			}
 		} else if isDueDatePassed(b.DueDay, b.Frequency, periodStart, now) {
 			b.Status = "overdue"
 		} else {

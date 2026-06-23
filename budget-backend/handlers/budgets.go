@@ -463,6 +463,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		  AND t.type = 'expense'
 		  AND t.date >= $1 AND t.date < $2
 		  AND COALESCE(t.source, '') != 'bill'
+		  AND t.id NOT IN (SELECT transaction_id FROM bill_payments WHERE transaction_id IS NOT NULL)
 	`
 	txQuerySplit := `
 		SELECT ts.category_id::text, COALESCE(c.parent_id::text, ''), ts.amount
@@ -473,6 +474,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		  AND t.type = 'expense'
 		  AND t.date >= $1 AND t.date < $2
 		  AND COALESCE(t.source, '') != 'bill'
+		  AND t.id NOT IN (SELECT transaction_id FROM bill_payments WHERE transaction_id IS NOT NULL)
 	`
 	var txRows *sql.Rows
 	if hhID == "" {
