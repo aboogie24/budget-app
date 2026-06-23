@@ -72,6 +72,20 @@ export async function aiCategorizeTransactions() {
   );
 }
 
+export type AdvisorMemory = {
+  id: string;
+  scope: 'shared' | 'private';
+  fact: string;
+};
+
+export async function fetchAdvisorMemories() {
+  return api.get<{ memories: AdvisorMemory[] }>('/auth/ai/memories');
+}
+
+export async function deleteAdvisorMemory(id: string) {
+  return api.delete(`/auth/ai/memories/${id}`);
+}
+
 export async function syncAllBankAccounts() {
   return api.post<{
     synced: number;

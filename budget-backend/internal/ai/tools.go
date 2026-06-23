@@ -168,6 +168,25 @@ func GetToolDefinitions() []models.ClaudeToolDef {
 				"required": []string{"name", "plan_type", "monthly_contribution"},
 			},
 		},
+		{
+			Name:        "remember_fact",
+			Description: "Save a durable fact about this couple so you remember it in future conversations — their goals in their own words, constraints, preferences, decisions or commitments they've made, or what they've already tried. Use this whenever the user shares something worth remembering long-term. Do NOT use it for transient numbers you can already get from the financial tools. Set scope to 'shared' for couple-level facts both partners should see (shared goals, agreed strategy, household constraints), or 'private' for one person's individual context (personal worries, individual preferences, solo aspirations). When unsure, use 'private' — private facts are never shown to the partner.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"fact": map[string]interface{}{
+						"type":        "string",
+						"description": "The fact to remember, written concisely in your own words.",
+					},
+					"scope": map[string]interface{}{
+						"type":        "string",
+						"description": "'shared' (both partners can see it) or 'private' (only the current user). Defaults to 'private' when unsure.",
+						"enum":        []string{"shared", "private"},
+					},
+				},
+				"required": []string{"fact"},
+			},
+		},
 	}
 
 	// Conditionally add web_search tool if Tavily API key is configured
@@ -218,6 +237,8 @@ func ExecuteTool(conn *sql.DB, userID string, householdID string, toolName strin
 		return getPartnerStatus(conn, userID, householdID)
 	case "create_financial_plan":
 		return createFinancialPlanTool(conn, userID, householdID, input)
+	case "remember_fact":
+		return rememberFactTool(conn, userID, householdID, input)
 	case "web_search":
 		return executeWebSearch(userID, input)
 	default:

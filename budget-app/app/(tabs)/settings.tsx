@@ -341,6 +341,12 @@ export default function SettingsScreen() {
               onPress={() => router.push('/settings/category-rules')}
             />
             <Row
+              icon="sparkles-outline"
+              title="Advisor Memory"
+              subtitle="What your AI advisor remembers"
+              onPress={() => router.push('/settings/advisor-memory')}
+            />
+            <Row
               icon="receipt-outline"
               title="Bills & Recurring"
               subtitle="Manage recurring payments"

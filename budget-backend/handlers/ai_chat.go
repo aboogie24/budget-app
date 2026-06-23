@@ -377,6 +377,14 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 		systemPrompt += "\n\n" + contextBlock
 	}
 
+	// Inject what the advisor remembers about this couple (shared facts + the
+	// current user's private facts — never the partner's private facts).
+	if mems, memErr := ai.LoadAdvisorMemories(conn.Raw(), userID, householdID); memErr != nil {
+		log.Printf("load advisor memories error: %v", memErr)
+	} else if memBlock := ai.BuildMemoryBlock(mems); memBlock != "" {
+		systemPrompt += "\n\n" + memBlock
+	}
+
 	// Build Claude request. Model defaults to ai.ChatModel (Opus 4.8) in the
 	// client. Adaptive thinking + high effort buys the deeper, couple-aware
 	// reasoning the advisor is for; "summarized" display keeps the raw chain of

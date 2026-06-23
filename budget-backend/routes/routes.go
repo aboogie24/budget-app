@@ -232,4 +232,8 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/ai/what-if", handlers.SimulateWhatIf).Methods("POST")
 	authRoutes.HandleFunc("/ai/monthly-review", handlers.GetMonthlyReview).Methods("GET")
 
+	// Advisor memory — what the AI remembers about the couple
+	authRoutes.HandleFunc("/ai/memories", handlers.GetAdvisorMemories).Methods("GET")
+	authRoutes.HandleFunc("/ai/memories/{id}", handlers.DeleteAdvisorMemory).Methods("DELETE")
+
 }
