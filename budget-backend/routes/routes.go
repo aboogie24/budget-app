@@ -42,6 +42,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/transactions/ai-categorize", handlers.AICategorizeTransactions).Methods("POST")
 	authRoutes.HandleFunc("/transactions/detect-transfers", handlers.DetectTransfers).Methods("POST")
 	authRoutes.HandleFunc("/dashboard/attention", handlers.GetAttention).Methods("GET")
+	authRoutes.HandleFunc("/dashboard/status", handlers.GetDashboardStatus).Methods("GET")
 	authRoutes.HandleFunc("/dashboard/networth/snapshot", handlers.RecordNetWorthSnapshot).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
@@ -108,6 +109,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/bills/{id}", handlers.DeleteBill).Methods("DELETE")
 	authRoutes.HandleFunc("/bills/{id}/pay", handlers.MarkBillPaid).Methods("POST")
 	authRoutes.HandleFunc("/bills/{id}/payments", handlers.ListBillPayments).Methods("GET")
+	authRoutes.HandleFunc("/bill-payments", handlers.ListBillPaymentsInRange).Methods("GET")
 
 	// Auth (Login, Register, OAuth)
 	r.HandleFunc("/users/register", handlers.RegisterUser).Methods("POST")

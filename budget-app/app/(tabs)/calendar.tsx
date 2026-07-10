@@ -257,10 +257,23 @@ export default function CalendarScreen() {
     };
 
     try {
-      const [transactions, bills] = await Promise.all([
+      const [transactions, bills, billPayments] = await Promise.all([
         api.get<any[]>('/auth/transactions', { user_id: userId }),
         api.get<any[]>('/auth/bills', { user_id: userId }),
+        // Which bills were paid for a period overlapping THIS displayed month —
+        // so we suppress the scheduled bill correctly in any month, not just the
+        // current period (paid_this_period on /bills is current-period only).
+        api
+          .get<{ payments?: { bill_id: string }[] }>('/auth/bill-payments', {
+            start: toKey(monthStart),
+            end: toKey(monthEnd),
+          })
+          .catch(() => ({ payments: [] as { bill_id: string }[] })),
       ]);
+
+      const paidBillIds = new Set(
+        (billPayments?.payments || []).map((p) => String(p.bill_id)),
+      );
 
       (Array.isArray(transactions) ? transactions : []).forEach((t) => {
         if (!t.date) return;
@@ -285,10 +298,11 @@ export default function CalendarScreen() {
 
       (Array.isArray(bills) ? bills : []).forEach((bill) => {
         if (!bill.due_day) return;
-        // Once a bill is paid for the period, its real transaction already
-        // represents it (added in the transaction loop). Suppress the scheduled
-        // bill so it isn't double-counted.
-        if (bill.paid_this_period) return;
+        // Once a bill is paid for the displayed month's period, its real
+        // transaction already represents it (added in the transaction loop) —
+        // suppress the scheduled bill so it isn't double-counted. paidBillIds is
+        // month-accurate; paid_this_period is a current-period fallback.
+        if (paidBillIds.has(String(bill.id)) || bill.paid_this_period) return;
         const billDate = new Date(monthStart.getFullYear(), monthStart.getMonth(), bill.due_day);
         if (billDate > monthEnd) return;
         expandFrequency(billDate, bill.frequency || 'monthly', {

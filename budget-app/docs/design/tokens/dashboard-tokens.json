@@ -1,0 +1,89 @@
+{
+  "_comment": "Dashboard-specific semantic mapping. ALL values reference budget-app/utils/design-system.ts — do not hardcode. This file documents which design-system token plays which dashboard role. Mirrors calendar-tokens.json conventions.",
+  "source": "budget-app/utils/design-system.ts",
+  "screen": {
+    "background": { "token": "GradientBackground variant='bgDarkPurple'", "value": "gradients.bgDarkPurple" },
+    "padding": { "token": "spacing.lg", "value": 16 },
+    "tierGapUnderHeadline": { "token": "spacing.xl", "value": 24 },
+    "tierGap": { "token": "spacing.lg", "value": 16 }
+  },
+  "hierarchy": {
+    "_note": "Only tier 1 floats and only tier 1 uses h1 — this is what makes the headline unmistakably the top.",
+    "tier1_statusHeadline": { "surface": "glassEffects.glassFloating", "radius": "radius.xl", "heroType": "typography.h1", "padding": "spacing.xl" },
+    "tier2_attention": { "surface": "glassEffects.glass", "component": "AttentionCard (tokenized)" },
+    "tier3_thisWeekProof": { "surface": "glassEffects.glass", "radius": "radius.lg", "padding": "spacing.lg" },
+    "tier4_trajectoryStrip": { "surface": "glassEffects.glass", "radius": "radius.lg", "paddingVertical": "spacing.md" },
+    "tier5_recentActivity": { "surface": "flat rows on screen bg", "rowRadius": "radius.md" }
+  },
+  "statusStates": {
+    "good": { "token": "colors.success", "value": "#22c55e", "icon": "checkmark-circle", "word": "GOOD" },
+    "watch": { "token": "colors.warning", "value": "#eab308", "icon": "alert-circle", "word": "WATCH" },
+    "alert": { "token": "colors.error", "value": "#ef4444", "icon": "warning", "word": "ALERT" },
+    "setup": { "token": "colors.info", "value": "#3b82f6", "icon": "information-circle", "word": "SET UP" },
+    "accentWash": { "note": "status color at ~8% for card wash / 4pt left rail", "value": "{statusColor}14" }
+  },
+  "semanticRoles": {
+    "cashFlowPositive": { "token": "colors.success", "value": "#22c55e", "prefix": "+" },
+    "cashFlowNegative": { "token": "colors.error", "value": "#ef4444", "prefix": "−" },
+    "spendBar": { "token": "colors.primary", "value": "#7c3aed" },
+    "overLimitSpend": { "token": "colors.warning", "value": "#eab308" },
+    "todayBarCap": { "token": "colors.primary2", "value": "#a855f7" },
+    "budgetBar": { "token": "colors.primary", "value": "#7c3aed", "over100": "colors.error" },
+    "savingsBar": { "token": "colors.success", "value": "#22c55e" },
+    "sparkline": { "token": "colors.primary2", "value": "#a855f7" },
+    "ctaButton": { "token": "gradients.primaryGradient", "value": "[#7c3aed, #a855f7]" }
+  },
+  "deltaBadges": {
+    "under": { "glyph": "▼", "color": "colors.success", "fill": "{success}1f" },
+    "over": { "glyph": "▲", "color": "colors.error", "fill": "{error}1f" },
+    "note": "arrow + word + color; never color alone"
+  },
+  "partnerAttribution": {
+    "partnerA": { "token": "colors.primary2", "value": "#a855f7", "glyph": "◑" },
+    "partnerB": { "token": "colors.info", "value": "#3b82f6", "glyph": "◐" },
+    "shared": { "token": "colors.textMuted", "value": "#94a3b8", "note": "neutral / no glyph" },
+    "note": "Matches calendar-tokens.json for cross-screen consistency; suppress glyph in Me scope."
+  },
+  "scopeToggle": {
+    "container": { "token": "glassEffects.glass", "radius": "radius.full", "height": 32 },
+    "activeSegment": { "fill": "colors.primary", "text": "colors.text" },
+    "inactiveSegment": { "fill": "transparent", "text": "colors.textMuted" },
+    "animation": "animation.fast (instant under reduce-motion)"
+  },
+  "avatars": {
+    "size": 28,
+    "radius": "radius.full",
+    "ring": "1.5px colors.bg",
+    "partnerAFill": "colors.primary",
+    "partnerBFill": "colors.info"
+  },
+  "text": {
+    "greeting": "typography.bodyBold colors.text",
+    "heroNumber": "typography.h1",
+    "headlineSentence": "typography.body colors.text",
+    "heroSubCaption": "typography.caption colors.textMuted",
+    "groupLabel": "typography.caption (uppercase) colors.textMuted",
+    "cardValue": "typography.smallBold colors.text",
+    "cardLabel": "typography.caption colors.textMuted"
+  },
+  "spacing": {
+    "screenPadding": "spacing.lg (16)",
+    "underHeadlineGap": "spacing.xl (24)",
+    "tierGap": "spacing.lg (16)",
+    "cardPadding": "spacing.lg (16)",
+    "headlinePadding": "spacing.xl (24)",
+    "rowGap": "spacing.sm (8)"
+  },
+  "radii": {
+    "headlineCard": "radius.xl (20)",
+    "card": "radius.lg (16)",
+    "row": "radius.md (12)",
+    "chip": "radius.full",
+    "toggle": "radius.full"
+  },
+  "animation": {
+    "scopeToggleSlide": "animation.fast (150ms) — instant under reduce-motion",
+    "barGrowIn": "animation.medium (250ms) — instant under reduce-motion",
+    "cardPress": "animation.fast"
+  }
+}

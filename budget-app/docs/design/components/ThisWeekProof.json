@@ -1,0 +1,69 @@
+{
+  "componentName": "ThisWeekProof",
+  "description": "Tier 3. The evidence behind the Status Headline, grouped as ONE glass card under a single 'THIS WEEK' label (Gestalt proximity). Top half: weekly spend bar chart. Bottom half (below an internal divider): a condensed Budget / Savings / Bills mini-row. Explicitly one card, not three, so it reads as supporting proof — never a competitor to the headline.",
+  "platform": "react-native",
+  "designSystem": {
+    "card": "glassEffects.glass",
+    "radius": "radius.lg",
+    "padding": "spacing.lg",
+    "internalDivider": "commonStyles.divider (colors.borderLight)",
+    "groupLabel": { "text": "THIS WEEK", "typography": "typography.caption uppercase", "color": "colors.textMuted" }
+  },
+  "props": {
+    "spentThisWeek": { "type": "number", "required": true },
+    "weeklyBudget": { "type": "number", "required": true },
+    "weeklyByDay": { "type": "number[]", "required": true, "description": "7 values, Monday-first, one per weekday" },
+    "todayIndex": { "type": "number", "required": true, "description": "0-6 Monday-first; today's bar gets a primary2 cap" },
+    "dailyLimit": { "type": "number", "required": false, "description": "Days exceeding it tint colors.warning" },
+    "budgetPercentUsed": { "type": "number", "required": true },
+    "savingsCurrent": { "type": "number", "required": true },
+    "savingsTarget": { "type": "number", "required": true },
+    "savingsProgressPercent": { "type": "number", "required": true },
+    "billsPaid": { "type": "number", "required": true },
+    "billsTotal": { "type": "number", "required": true },
+    "scope": { "type": "'household' | 'me'", "default": "household" },
+    "onBudgetPress": { "type": "function", "required": false },
+    "onSavingsPress": { "type": "function", "required": false },
+    "onBillsPress": { "type": "function", "required": false }
+  },
+  "chart": {
+    "title": { "text": "Spent this week", "typography": "typography.smallBold", "color": "colors.text" },
+    "amounts": { "spent": "colors.text", "slashBudget": "colors.textMuted", "typography": "typography.small" },
+    "deltaBadge": {
+      "radius": "radius.full",
+      "under": { "glyph": "▼", "word": "under", "color": "colors.success", "fill": "{success}1f" },
+      "over": { "glyph": "▲", "word": "over", "color": "colors.error", "fill": "{error}1f" },
+      "colorIndependence": "arrow + word + color, never color alone"
+    },
+    "bars": {
+      "count": 7,
+      "order": "Monday-first",
+      "fill": "colors.primary",
+      "overLimitFill": "colors.warning",
+      "todayCap": "colors.primary2",
+      "baseline": "colors.borderGlass",
+      "weekdayLabels": { "typography": "typography.caption", "color": "colors.textMuted" }
+    }
+  },
+  "miniRow": {
+    "columns": [
+      { "key": "budget", "label": "Budget", "value": "{budgetPercentUsed}% used", "bar": "colors.primary (>=100% -> colors.error)" },
+      { "key": "savings", "label": "Savings", "value": "{savingsCurrent} / {savingsTarget}", "bar": "colors.success (savingsProgressPercent)" },
+      { "key": "bills", "label": "Bills", "value": "{billsPaid} / {billsTotal} paid", "bar": "none; 'paid' in colors.textMuted" }
+    ],
+    "columnType": { "label": "typography.caption colors.textMuted", "value": "typography.smallBold colors.text", "bar": "3pt radius.full", "tapTarget": ">=44pt tall, deep-links per column" }
+  },
+  "states": ["default", "loading", "error", "empty"],
+  "stateTreatments": {
+    "loading": "skeleton card: 7 skeleton bars + 3 mini columns (reuse components/Skeleton.tsx)",
+    "error": "inline 'Couldn't load this week — Retry' within the card only",
+    "empty": "if no budget and no spend, show 'Nothing to show yet — this fills in as money moves'"
+  },
+  "accessibility": {
+    "chartLabel": "Spent this week {spentThisWeek} of {weeklyBudget}, {percent} percent {under|over} budget.",
+    "columnLabels": "Budget {n} percent used. Savings {current} of {target}. Bills {paid} of {total} paid.",
+    "touchTargets": "each mini-row column >=44pt tall",
+    "reducedMotion": "bar grow-in becomes instant"
+  },
+  "developerNotes": "All inputs already computed in the current dashboard (thisWeekTotal, weeklyBudget, per-day spend, savings_progress, billsSummary, budgets). This is a regrouping of existing cards into one; the Sun/Mon weekly-recap card is deleted, not merged."
+}

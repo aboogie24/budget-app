@@ -1,0 +1,45 @@
+{
+  "componentName": "ScopeToggle",
+  "description": "Compact segmented control in the dashboard header that re-scopes the WHOLE screen between Household (default) and Me. Every tier below (status headline, hero number, this-week proof, trajectory, recent activity) recomputes for the selected scope. Hidden entirely for solo users.",
+  "platform": "react-native",
+  "designSystem": {
+    "container": "glassEffects.glass",
+    "radius": "radius.full",
+    "height": 32,
+    "innerPadding": 2,
+    "activeFill": "colors.primary",
+    "animation": "active pill slides between segments with animation.fast (instant under reduce-motion)"
+  },
+  "props": {
+    "value": { "type": "'household' | 'me'", "required": true, "description": "Current scope" },
+    "onChange": { "type": "function", "required": true, "description": "(scope) => void; triggers the scoped refresh path" },
+    "visible": { "type": "boolean", "default": true, "description": "Pass false / render null for solo users (householdMembers.length < 2)" }
+  },
+  "segments": [
+    { "key": "household", "label": "Household", "default": true },
+    { "key": "me", "label": "Me" }
+  ],
+  "segmentStates": {
+    "active": { "fill": "colors.primary", "text": "colors.text", "typography": "typography.smallBold", "press": "subtle scale" },
+    "inactive": { "fill": "transparent", "text": "colors.textMuted", "typography": "typography.smallBold" }
+  },
+  "behavior": {
+    "default": "household",
+    "persistence": "per-session",
+    "soloUsers": "component returns null; screen renders Me-scope data with no toggle and no partner avatars",
+    "scopeSemantics": {
+      "household": "joint summary (/auth/households/summary): net_cash_flow, joint bills/savings/budgets",
+      "me": "current user's own transactions/budgets/bills only (tx.user_id === userId)"
+    }
+  },
+  "states": ["household-selected", "me-selected", "hidden"],
+  "accessibility": {
+    "role": "tablist",
+    "segmentRole": "tab",
+    "selectedState": "each segment reports selected true/false",
+    "announce": "'Showing household' / 'Showing me' on change",
+    "touchTarget": ">=44pt wide per segment via hit-slop even though visual height is 32pt",
+    "reducedMotion": "pill slide becomes instant"
+  },
+  "developerNotes": "Thread a single scope state through all dashboard derivations. Force 'me' and return null from the toggle when householdMembers.length < 2. Changing scope reuses the same refresh path as pull-to-refresh, scoped."
+}

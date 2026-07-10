@@ -5,6 +5,7 @@ import { useRouter, type Href } from 'expo-router';
 import type { AttentionItem } from '@/utils/api';
 import { aiCategorizeTransactions } from '@/utils/api';
 import { api } from '@/utils/apiClient';
+import { colors, spacing, radius, typography } from '@/utils/design-system';
 
 type Props = {
   items: AttentionItem[];
@@ -76,7 +77,7 @@ export function AttentionCard({ items, onActionComplete }: Props) {
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Ionicons name="alert-circle" size={14} color="#f59e0b" />
+        <Ionicons name="alert-circle" size={14} color={colors.warning} />
         <Text style={styles.headerText}>Needs your attention</Text>
       </View>
       {items.map((item, i) => {
@@ -119,60 +120,64 @@ export function AttentionCard({ items, onActionComplete }: Props) {
 
 const styles = StyleSheet.create({
   card: {
-    marginBottom: 16,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: 'rgba(245,158,11,0.05)',
+    marginBottom: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: `${colors.warning}0d`,
     borderWidth: 1,
-    borderColor: 'rgba(245,158,11,0.18)',
+    borderColor: `${colors.warning}2e`,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
   },
   headerText: {
+    ...typography.caption,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.4,
-    color: '#f59e0b',
+    color: colors.warning,
     textTransform: 'uppercase',
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
   },
   rowDivider: {
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: colors.borderLight,
   },
   iconBox: {
     width: 32,
     height: 32,
-    borderRadius: 10,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
   title: {
-    color: '#f8fafc',
+    ...typography.small,
+    color: colors.text,
     fontWeight: '600',
     fontSize: 13,
   },
   body: {
-    color: 'rgba(255,255,255,0.55)',
+    ...typography.caption,
+    color: colors.textMuted,
     fontSize: 11,
     marginTop: 2,
   },
   cta: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
     borderWidth: 1,
   },
   ctaText: {
+    ...typography.caption,
     fontSize: 12,
     fontWeight: '700',
   },

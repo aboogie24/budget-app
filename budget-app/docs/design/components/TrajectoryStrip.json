@@ -1,0 +1,47 @@
+{
+  "componentName": "TrajectoryStrip",
+  "description": "Tier 4. The condensed 'over time' view. Compresses what used to be TWO full dashboard cards (net worth + framework-level progress) into ONE compact horizontal glass row, split by a center divider. Deliberately demoted below the right-now tiers per the north star.",
+  "platform": "react-native",
+  "designSystem": {
+    "card": "glassEffects.glass",
+    "radius": "radius.lg",
+    "paddingVertical": "spacing.md",
+    "paddingHorizontal": "spacing.lg",
+    "centerDivider": "1px vertical rule colors.borderGlass with spacing.md each side"
+  },
+  "props": {
+    "netWorth": { "type": "number", "required": true, "description": "Total net worth: cash + investments + property - debt" },
+    "netWorthDeltaPercent": { "type": "number", "required": false, "description": "Percent change vs prior snapshot; sign-colored" },
+    "netWorthHistory": { "type": "NetWorthSnapshotPoint[]", "required": false, "description": "Series for the sparkline; degrades to no sparkline if < 2 points" },
+    "level": { "type": "number", "required": true, "description": "frameworkLevel.current_level, rendered as L{n}" },
+    "levelName": { "type": "string", "required": true, "description": "frameworkLevel.level_name, e.g. 'Stability'" },
+    "progressPercent": { "type": "number", "required": true, "description": "frameworkLevel.progress_percent 0-100" },
+    "onPress": { "type": "function", "required": false, "description": "Deep-link to progress/net-worth screen" }
+  },
+  "layout": {
+    "leftHalf": {
+      "label": { "text": "Net worth", "typography": "typography.caption", "color": "colors.textMuted" },
+      "value": { "typography": "typography.bodyBold", "color": "colors.text" },
+      "delta": { "typography": "typography.caption", "colorRule": "getValueColor(delta) with ▲/▼ glyph" },
+      "sparkline": { "component": "components/Sparkline.tsx", "size": "~48x20pt", "stroke": "colors.primary2" }
+    },
+    "rightHalf": {
+      "levelLabel": { "text": "L{level} {levelName}", "typography": "typography.smallBold", "color": "colors.text", "truncation": "levelName truncates first; numbers never truncate (flexShrink:0)" },
+      "progressBar": { "fill": "colors.primary", "track": "colors.glassLight", "radius": "radius.full", "height": 4 },
+      "progressText": { "text": "{progressPercent}%", "typography": "typography.caption", "color": "colors.textMuted" }
+    }
+  },
+  "states": ["default", "loading", "error", "empty"],
+  "stateTreatments": {
+    "loading": "single 1-line skeleton row (reuse components/Skeleton.tsx)",
+    "error": "inline 'Couldn't load — Retry' within the strip only; does not take down the screen",
+    "empty": "if no net-worth history and no level data, hide the strip entirely"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "Net worth {netWorth}, {up|down} {deltaPercent} percent. Level {level}, {levelName}, {progressPercent} percent.",
+    "hint": "Double tap to view progress details",
+    "colorIndependence": "delta uses ▲/▼ glyph + word-equivalent, not color alone"
+  },
+  "developerNotes": "All inputs already exist on the current dashboard (netWorth, netWorthHistory, frameworkLevel). This is pure re-layout: two cards to one row. Reuse Sparkline; do not reimplement."
+}

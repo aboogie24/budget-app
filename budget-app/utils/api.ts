@@ -47,6 +47,46 @@ export async function fetchAttention() {
   return api.get<{ items: AttentionItem[]; count: number }>('/auth/dashboard/attention');
 }
 
+// ─── Dashboard status verdict ───────────────────────────────────
+// GET /auth/dashboard/status?scope=household|personal — a ready-to-render
+// "how are we doing right now?" summary for the Status Headline card. The
+// backend synthesizes the worst-signal-wins status, an AI-authored warm
+// sentence, and this-month cash flow. If this call fails, the dashboard
+// falls back to a client-side computation (never an empty headline).
+export type DashboardStatusScope = 'household' | 'personal';
+export type DashboardStatus = 'good' | 'watch' | 'alert';
+
+export type DashboardStatusSignals = {
+  income_month: number;
+  expense_month: number;
+  cash_flow_month: number;
+  budgeted_month: number;
+  spent_month: number;
+  within_budget: boolean;
+  bills_overdue: number;
+  bills_due_soon: number;
+  bills_covered: boolean;
+  top_category: string;
+  top_category_amount: number;
+};
+
+export type DashboardStatusResponse = {
+  scope: DashboardStatusScope;
+  status: DashboardStatus;
+  headline: string;
+  hero_label: string;
+  hero_value: number;
+  signals: DashboardStatusSignals;
+};
+
+/**
+ * Fetch the synthesized dashboard status verdict for the given scope.
+ * The ScopeToggle's "Me" segment maps to scope=personal.
+ */
+export async function fetchDashboardStatus(scope: DashboardStatusScope = 'household') {
+  return api.get<DashboardStatusResponse>('/auth/dashboard/status', { scope });
+}
+
 export type NetWorthSnapshotPoint = {
   date: string; // YYYY-MM-DD
   total: number;
