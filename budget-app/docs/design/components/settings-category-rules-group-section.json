@@ -1,0 +1,23 @@
+{
+  "componentName": "RuleGroupSection",
+  "description": "A titled group of category rules (Merchant / Keyword / System) with an icon chip, title, and count badge, followed by a stack of RuleRow.",
+  "platform": "react-native",
+  "screen": "settings/category-rules",
+  "props": {
+    "title": { "type": "string", "required": true, "description": "Group title, e.g. 'Merchant Rules'" },
+    "type": { "type": "string", "required": true, "description": "'merchant' | 'keyword' | 'system'" },
+    "icon": { "type": "string", "required": true, "description": "Ionicons name for the group chip" },
+    "rules": { "type": "CategoryRule[]", "required": true, "description": "Rules in this group (non-empty; empty groups are filtered out)" }
+  },
+  "variants": ["merchant", "keyword", "system"],
+  "states": ["default"],
+  "tokens": {
+    "sectionGap": "spacing.xl",
+    "iconChip": { "size": "spacing.xxl", "radius": "radius.sm", "bg": "colors.accent @12%", "iconColor": "colors.accent" },
+    "title": { "type": "typography.bodyBold", "color": "colors.text" },
+    "countBadge": { "bg": "colors.glassMedium", "radius": "radius.sm", "text": "typography.smallBold", "textColor": "colors.textMuted" },
+    "rowGap": "spacing.sm"
+  },
+  "iconMap": { "merchant": "storefront-outline", "keyword": "text-outline", "system": "settings-outline" },
+  "accessibility": { "headerLabel": "{title}, {rules.length} rules" }
+}

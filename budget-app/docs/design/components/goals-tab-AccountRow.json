@@ -1,0 +1,34 @@
+{
+  "componentName": "GoalsAccountRow",
+  "description": "A single account inside an expandable Assets/Debts section on the Finances (goals tab) screen. Tokenized replacement for the inline AccountRow. Icon chip + name/subtitle + optional real-data sparkline + balance, tappable to a detail route.",
+  "platform": "react-native",
+  "surface": "colors.glassLight fill, radius.md, 1px colors.borderGlass",
+  "props": {
+    "name": { "type": "string", "required": true },
+    "subtitle": { "type": "string", "required": true },
+    "iconName": { "type": "Ionicons name", "required": true },
+    "iconToken": { "type": "'primary' | 'info' | 'success' | 'error'", "required": true, "description": "Semantic token key: property=primary, cash=info, investments=success, debt=error" },
+    "balance": { "type": "number", "required": true, "description": "Negative for debts" },
+    "trendData": { "type": "number[]", "required": false, "description": "REAL history only; omit if none (no synthetic arrays)" },
+    "balanceVisible": { "type": "boolean", "default": true },
+    "onPress": { "type": "function", "required": false }
+  },
+  "tokens": {
+    "iconChip": "38x38, radius.md, background `${iconColor}18` where iconColor = colors[iconToken]",
+    "name": "typography.smallBold / colors.text, numberOfLines 1",
+    "subtitle": "typography.caption / colors.textMuted, numberOfLines 1",
+    "balancePositive": "typography.smallBold / colors.text",
+    "balanceNegative": "typography.smallBold / colors.error",
+    "padding": "spacing.md",
+    "gap": "spacing.md",
+    "minHeight": 44
+  },
+  "reuses": ["components/Sparkline.tsx (small, filled off, only when trendData is real)"],
+  "states": ["default", "pressed", "masked", "loading-skeleton"],
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {subtitle}, {balance}. Double tap to open.",
+    "note": "balance flexShrink 0 — never truncates; name/subtitle ellipsize."
+  },
+  "developerNotes": "Drop the current `bal * 0.9 … bal` synthetic trend arrays — pass real history or omit the sparkline."
+}

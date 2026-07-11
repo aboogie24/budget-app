@@ -1,0 +1,47 @@
+{
+  "componentName": "BudgetHealthCard",
+  "description": "Read-only card showing one budget's spend-vs-limit health with a color-independent status (word + icon + color), progress bar, and optional over-limit badge. Renders for budgets returned by checkBudgetThresholds().",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "budgetName": { "type": "string", "required": true, "description": "Budget display name" },
+    "spentAmount": { "type": "number", "required": true, "description": "Amount spent this period" },
+    "budgetAmount": { "type": "number", "required": true, "description": "Budget limit" },
+    "percentUsed": { "type": "number", "required": true, "description": "spent / limit * 100, may exceed 100" },
+    "thresholdPercent": { "type": "number", "required": true, "description": "Alert threshold for this budget" },
+    "overThreshold": { "type": "boolean", "default": false, "description": "Whether spend breached the alert threshold" }
+  },
+  "variants": ["over", "nearing", "watch", "healthy"],
+  "statusTiers": {
+    "over": { "condition": "percentUsed >= 100", "word": "Over", "icon": "alert-circle", "color": "colors.error" },
+    "nearing": { "condition": "percentUsed >= thresholdPercent", "word": "Nearing", "icon": "warning", "color": "colors.warning" },
+    "watch": { "condition": "percentUsed >= 60", "word": "Watch", "icon": "eye-outline", "color": "colors.warning" },
+    "healthy": { "condition": "else", "word": "On track", "icon": "checkmark-circle", "color": "colors.success" }
+  },
+  "states": ["default", "mount-animate"],
+  "layout": {
+    "surface": "glassEffects.glass",
+    "borderRadius": "radius.lg",
+    "padding": "spacing.lg",
+    "marginBottom": "spacing.md",
+    "rows": [
+      "name (flex, numberOfLines 1) + statusChip + percent",
+      "progress bar: height 8, radius.sm, track colors.glassMedium, fill = tier color, width min(percentUsed,100)%",
+      "'{spent} of {budget}' (caption/textMuted) + optional [Over limit] badge"
+    ]
+  },
+  "tokens": {
+    "name": "typography.bodyBold / colors.text",
+    "percent": "typography.bodyBold weight 800 / tier color",
+    "amount": "typography.caption / colors.textMuted",
+    "overBadgeBg": "${colors.error}22",
+    "overBadgeText": "colors.error",
+    "barTrack": "colors.glassMedium",
+    "animation": "animation.medium (reduced-motion: instant final width)"
+  },
+  "accessibility": {
+    "role": "text",
+    "label": "{budgetName}, {statusWord}, {percentUsed} percent, {spent} of {budget}{, over limit}",
+    "colorIndependence": "status conveyed by word + icon + color, never hue alone"
+  }
+}

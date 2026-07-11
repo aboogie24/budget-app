@@ -1,0 +1,59 @@
+{
+  "componentName": "SavingsGoalRow",
+  "description": "A single savings goal in the list. Flat glass card with a status chip (icon+word+color), a status-colored progress bar, a sub-line (target + optional date), and an inline Update-Progress action. Mirrors bills-BillRow / debts-row proportions so the three list screens read identically.",
+  "platform": "react-native",
+  "predicate": "status = getGoalStatus(goal)  // 'funded' | 'on_track' | 'behind'",
+  "props": {
+    "id": { "type": "string", "required": true },
+    "name": { "type": "string", "required": true },
+    "currentAmount": { "type": "number", "required": true },
+    "targetAmount": { "type": "number", "required": true },
+    "targetDate": { "type": "string", "required": false, "description": "ISO date; omit sub fragment when empty" },
+    "percent": { "type": "number", "required": true, "description": "min(current/target*100, 100)" },
+    "status": { "type": "'funded' | 'on_track' | 'behind'", "required": true },
+    "onPress": { "type": "function", "required": true, "description": "opens edit modal via openEdit(goal)" },
+    "onUpdatePress": { "type": "function", "required": true, "description": "stopPropagation then setProgressId(id)" }
+  },
+  "statusVariants": {
+    "funded": { "appliesTo": "current >= target", "color": "colors.success", "icon": "checkmark-circle", "word": "FUNDED", "barFill": "colors.success" },
+    "on_track": { "appliesTo": "no deadline OR projected to hit target", "color": "colors.info", "icon": "trending-up", "word": "ON TRACK", "barFill": "colors.info" },
+    "behind": { "appliesTo": "deadline exists and genuinely at risk (conservative)", "color": "colors.warning", "icon": "alert-circle", "word": "BEHIND", "barFill": "colors.warning" }
+  },
+  "statusChip": {
+    "shape": "pill, radius.full",
+    "type": "typography.caption bold",
+    "bg": "`${statusColor}1f` (12%)",
+    "textAndIcon": "full statusColor"
+  },
+  "layout": {
+    "surface": "glassEffects.glass",
+    "borderRadius": "radius.lg",
+    "padding": "spacing.lg",
+    "marginBottom": "spacing.md",
+    "rows": [
+      "row1: name (bodyBold, colors.text, numberOfLines 1) | statusChip | amount (bodyBold, colors.text, flexShrink 0)",
+      "row2: progress bar (shared recipe, fill=barFill) + {percent}% (caption, colors.textMuted)",
+      "row3: sub 'of {target} · by {date}' (caption, colors.textMuted) | Update button"
+    ],
+    "noLeadingIcon": true
+  },
+  "updateButton": {
+    "icon": "trending-up",
+    "label": "Update",
+    "type": "typography.caption bold",
+    "color": "colors.success",
+    "bg": "`${colors.success}1f`",
+    "borderRadius": "radius.md",
+    "minTapTarget": "44pt (hit-slop if visually shorter)",
+    "onPress": "e.stopPropagation() then setProgressId(id)"
+  },
+  "states": ["funded", "on_track", "behind", "pressed", "over-funded (bar caps 100%, amount shows true current)", "loading-skeleton"],
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {funded | on track | behind}, {current} saved of {target}, {percent} percent{, due {date}}",
+    "hint": "Double tap to edit goal",
+    "nestedAction": "Update {name} progress",
+    "note": "Status conveyed by chip icon + WORD + color and the bar color together — never color alone. Amount stays colors.text (neutral); status color lives on the chip + bar, matching bills/debts rows."
+  },
+  "developerNotes": "Drive chip, bar color, and amount off status = getGoalStatus(goal). 'Behind' is conservative — default to on_track when the pace check is ambiguous (never false-nag). Reuse existing openEdit / setProgressId handlers unchanged. Progress-bar width tweens with animation.medium on optimistic update; snap under reduce-motion."
+}

@@ -1,0 +1,30 @@
+{
+  "componentName": "StartDateField",
+  "description": "Glass inset row that opens the native DateTimePicker for the budget start date. Same visual recipe as FormField but taps to a picker instead of a text input. Preserves the exact iOS/Android platform branching.",
+  "platform": "react-native",
+  "props": {
+    "value": { "type": "Date", "required": true },
+    "onChange": { "type": "function", "required": true, "description": "(next: Date) => void" },
+    "showPicker": { "type": "boolean", "required": true },
+    "onOpen": { "type": "function", "required": true },
+    "onClose": { "type": "function", "required": true }
+  },
+  "variants": ["default"],
+  "states": ["collapsed", "pickerOpen"],
+  "layout": {
+    "row": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "paddingHorizontal": "spacing.md", "minHeight": 48, "direction": "row", "align": "center", "gap": "spacing.sm" },
+    "donePill": { "fill": "colors.primary2 @15%", "radius": "radius.md", "alignSelf": "flex-end", "paddingHorizontal": "spacing.md", "paddingVertical": "spacing.sm", "minTarget": 44 }
+  },
+  "tokens": {
+    "icon": { "name": "calendar-outline", "color": "colors.primary2" },
+    "valueText": { "type": "typography.smallBold", "color": "colors.text" },
+    "doneText": { "type": "typography.smallBold", "color": "colors.primary2" }
+  },
+  "behavior": "Value = value.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }). iOS: DateTimePicker display='spinner', themeVariant='dark', followed by a Done pill that calls onClose. Android: display='calendar', auto-dismiss on change (onClose then onChange). Preserve current platform branches exactly.",
+  "accessibility": {
+    "role": "button",
+    "label": "Start date, {formatted date}, opens date picker",
+    "minTarget": "48pt row",
+    "reducedMotion": "No entrance animation required; native picker handles its own"
+  }
+}

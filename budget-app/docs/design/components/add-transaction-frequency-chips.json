@@ -1,0 +1,28 @@
+{
+  "componentName": "FrequencyChips",
+  "description": "Wrapping row of selectable chips for transaction frequency.",
+  "platform": "react-native",
+  "props": {
+    "value": { "type": "'one-time' | 'weekly' | 'biweekly' | 'monthly'", "required": true },
+    "onChange": { "type": "function", "required": true }
+  },
+  "variants": ["default"],
+  "states": ["default", "selected", "pressed"],
+  "layout": {
+    "row": { "direction": "row", "flexWrap": "wrap", "gap": "spacing.sm" },
+    "chip": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "paddingVertical": "spacing.sm", "paddingHorizontal": "spacing.md", "minHeight": 44 }
+  },
+  "tokens": {
+    "label": { "type": "typography.small", "color": "colors.text", "transform": "capitalize" },
+    "selected": { "fill": "colors.primary2 @18%", "border": "colors.primary2 @70%", "text": "colors.text", "weight": 700 }
+  },
+  "options": ["one-time", "weekly", "biweekly", "monthly"],
+  "behavior": "Selecting 'monthly' while type === 'expense' reveals the Due-day FormField.",
+  "accessibility": {
+    "role": "radiogroup",
+    "chipRole": "radio",
+    "state": "accessibilityState={{ checked }}",
+    "minTarget": "44pt (padded)",
+    "colorIndependent": "Selection conveyed by checked state + weight, not tint alone"
+  }
+}

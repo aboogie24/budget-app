@@ -1,0 +1,31 @@
+{
+  "componentName": "DeleteAction",
+  "description": "Header-right square-glass icon button (mirrors BackButton footprint) that opens the delete confirmation. Edit-only; replaces add-transaction's empty 40pt spacer.",
+  "platform": "react-native",
+  "props": {
+    "onPress": { "type": "function", "required": true, "description": "Opens DeleteConfirmSheet" },
+    "disabled": { "type": "boolean", "default": false, "description": "True while transaction still loading or no delete endpoint exists" },
+    "hidden": { "type": "boolean", "default": false, "description": "True in not-found / no-session state (nothing to delete)" }
+  },
+  "variants": ["default"],
+  "states": ["default", "pressed", "disabled", "hidden"],
+  "layout": {
+    "size": 40,
+    "hitSlop": 12,
+    "radius": "radius.md",
+    "border": "colors.borderGlass",
+    "bg": "colors.glassLight"
+  },
+  "tokens": {
+    "icon": { "name": "trash-outline", "color": "colors.error", "size": 22 },
+    "disabledOpacity": 0.5
+  },
+  "behavior": "Square-glass footprint identical to BackButton so the header stays balanced. Disabled-styled while loading or when DELETE endpoint is unavailable (forward-compat). Returns null when hidden.",
+  "accessibility": {
+    "role": "button",
+    "label": "Delete transaction",
+    "hint": "Opens a delete confirmation.",
+    "minTarget": "40 + hitSlop 12 → 44pt",
+    "colorIndependent": "trash icon conveys action alongside the error-red tint"
+  }
+}

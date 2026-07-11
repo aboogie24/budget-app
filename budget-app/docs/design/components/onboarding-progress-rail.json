@@ -1,0 +1,30 @@
+{
+  "componentName": "OnboardingProgressRail",
+  "description": "Slim 4-segment progress bar at the top of the onboarding wizard, replacing the bespoke dot-row indicator.",
+  "platform": "react-native",
+  "props": {
+    "totalSteps": { "type": "number", "required": true, "default": 4, "description": "Number of segments" },
+    "currentStep": { "type": "number", "required": true, "description": "0-based current step; segments with index <= currentStep are filled" }
+  },
+  "variants": ["default"],
+  "states": ["default"],
+  "layout": {
+    "flexDirection": "row",
+    "gap": "spacing.xs",
+    "height": 4,
+    "marginBottom": "spacing.md",
+    "segmentRadius": "radius.full",
+    "segmentFlex": 1
+  },
+  "tokens": {
+    "track": "colors.glassLight",
+    "fill": "colors.primary",
+    "fillAnimation": "animation.medium (instant under reduce-motion)"
+  },
+  "accessibility": {
+    "role": "progressbar",
+    "value": "{ min: 1, max: totalSteps, now: currentStep + 1 }",
+    "label": "Step {currentStep + 1} of {totalSteps}",
+    "note": "Segments are non-interactive/decorative; the value carries the retired counter's info"
+  }
+}

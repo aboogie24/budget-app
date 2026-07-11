@@ -1,0 +1,36 @@
+{
+  "componentName": "EditStateCard",
+  "description": "Single inline glass card rendered for the three fatal pre-fill outcomes (not-found / no-session / load-error), replacing the current blank error screen. One component driven by a `kind` prop so all three read consistently.",
+  "platform": "react-native",
+  "props": {
+    "kind": { "type": "'notFound' | 'noSession' | 'loadError'", "required": true, "description": "Which fatal outcome to render" },
+    "onRetry": { "type": "function", "required": false, "description": "Re-runs the fetch (loadError only)" },
+    "onBack": { "type": "function", "required": true, "description": "Navigates to /(tabs)/budget or sign-in" },
+    "retrying": { "type": "boolean", "default": false, "description": "Retry in flight; shows spinner (loadError only)" }
+  },
+  "variants": ["notFound", "noSession", "loadError"],
+  "states": ["default", "retrying"],
+  "layout": {
+    "card": "glassEffects.glass",
+    "padding": "spacing.xl",
+    "align": "center",
+    "gap": "spacing.md",
+    "centeredInBody": true
+  },
+  "tokens": {
+    "notFound": { "icon": "search-outline", "iconColor": "colors.textMuted", "title": "We couldn't find this transaction", "subcopy": "It may have been deleted or moved.", "actions": ["backGlass"] },
+    "noSession": { "icon": "person-outline", "iconColor": "colors.textMuted", "title": "You're signed out", "subcopy": "Sign in again to edit this transaction.", "actions": ["backGlass"] },
+    "loadError": { "icon": "alert-circle-outline", "iconColor": "colors.error", "title": "Couldn't load this transaction", "subcopy": "Check your connection and try again.", "actions": ["retryPrimary", "backGlass"] },
+    "title": { "text": "typography.smallBold", "color": "colors.text" },
+    "subcopy": { "text": "typography.small", "color": "colors.textMuted" },
+    "retryPrimary": { "gradient": "gradients.primaryGradient", "radius": "radius.lg", "label": "typography.button", "content": "Retry" },
+    "backGlass": { "surface": "glassEffects.glass", "radius": "radius.lg", "label": "typography.button", "content": "Back to transactions" }
+  },
+  "behavior": "Renders in place of the form body when the transaction can't be populated. Header stays (BackButton visible); the Delete action is hidden in these states. loadError's Retry returns the screen to the skeleton loading state.",
+  "accessibility": {
+    "role": "summary",
+    "srOrder": "icon-implied → title → subcopy → action button(s)",
+    "minTarget": "each action button ≥44pt",
+    "colorIndependent": "each kind pairs a distinct icon + a headline word; loadError red is backed by the word 'Couldn't load'"
+  }
+}

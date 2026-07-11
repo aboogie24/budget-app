@@ -1,0 +1,36 @@
+{
+  "componentName": "SharingPartnerCard",
+  "description": "Top context card on the Sharing Preferences screen naming who the user is sharing with (partner avatar + name + household). Grounds the abstract toggles in a real person. Tokenized against design-system.ts. Partner palette matches the dashboard (partner = colors.info).",
+  "platform": "react-native",
+  "spec": "docs/design/specs/sharing-preferences-redesign.md#5.3",
+  "props": {
+    "partnerName": { "type": "string", "required": true, "description": "Partner first name from householdMembers" },
+    "partnerInitial": { "type": "string", "required": true, "description": "Uppercased first letter" },
+    "householdName": { "type": "string", "required": false, "description": "e.g. 'The Brown Household'" },
+    "memberCount": { "type": "number", "required": false, "description": "e.g. 2 -> '2 members'" },
+    "loading": { "type": "boolean", "default": false, "description": "Renders the skeleton variant" }
+  },
+  "variants": ["default", "loading", "longName"],
+  "states": ["default", "loading"],
+  "layout": {
+    "card": { "surface": "glassEffects.glass", "radius": "radius.lg", "padding": "spacing.lg", "marginBottom": "spacing.md", "flexDirection": "row", "alignItems": "center", "gap": "spacing.md" },
+    "avatar": { "size": 40, "radius": "radius.full", "fill": "colors.info", "textColor": "colors.text", "type": "typography.smallBold" },
+    "title": { "type": "typography.smallBold", "color": "colors.text", "text": "Sharing with {partnerName}", "numberOfLines": 1 },
+    "subtitle": { "type": "typography.caption", "color": "colors.textMuted", "text": "{householdName} · {memberCount} members", "numberOfLines": 1 }
+  },
+  "skeleton": {
+    "component": "components/Skeleton.tsx",
+    "recipe": "Skeleton 40x40 radius.full (avatar) + flex1 two lines (60% / 40%)"
+  },
+  "tokens": {
+    "colors": ["info", "text", "textMuted", "glassLight", "borderGlass"],
+    "typography": ["smallBold", "caption"],
+    "spacing": ["lg", "md"],
+    "radius": ["lg", "full"]
+  },
+  "accessibility": {
+    "avatarRole": "image (decorative initial)",
+    "label": "Sharing with {partnerName}, {householdName}, {memberCount} members",
+    "overflow": "title + subtitle numberOfLines 1 with ellipsis"
+  }
+}

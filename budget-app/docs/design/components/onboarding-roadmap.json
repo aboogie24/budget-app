@@ -1,0 +1,43 @@
+{
+  "componentName": "OnboardingRoadmap",
+  "description": "Step-3 framework preview: renders the 5 CoupleFlow levels as a vertical stepper inside one glass card. Tokenized and aligned with the real framework screen's journey stepper.",
+  "platform": "react-native",
+  "props": {
+    "levels": {
+      "type": "array",
+      "required": true,
+      "description": "Ordered levels",
+      "itemShape": {
+        "title": { "type": "string", "required": true },
+        "description": { "type": "string", "required": true },
+        "icon": { "type": "string", "required": true, "description": "Ionicons name (home-outline, flame-outline, shield-checkmark-outline, trending-up-outline, star-outline)" },
+        "colorToken": { "type": "string", "required": true, "description": "design-system color token per §7.1: primary2 / error / success / info / primary2" }
+      }
+    }
+  },
+  "variants": ["default"],
+  "states": ["default"],
+  "layout": {
+    "surface": "glassEffects.glass",
+    "padding": "spacing.lg",
+    "iconChip": { "size": 40, "radius": "radius.full", "fill": "`${levelColor}33` (~20%)" },
+    "connector": { "width": 2, "height": "spacing.xl", "color": "colors.borderGlass" },
+    "rowGap": "spacing.md"
+  },
+  "tokens": {
+    "iconChipFill": "`${levelColorToken}33`",
+    "icon": "levelColorToken",
+    "connector": "colors.borderGlass",
+    "title": "typography.smallBold / colors.text",
+    "description": "typography.caption / colors.textMuted"
+  },
+  "overflow": {
+    "description": "numberOfLines=2 + ellipsis",
+    "title": "never truncates"
+  },
+  "accessibility": {
+    "role": "list",
+    "rowLabel": "{title}: {description}",
+    "connectorHidden": true
+  }
+}

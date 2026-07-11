@@ -1,0 +1,34 @@
+{
+  "componentName": "AccountSectionCard",
+  "description": "Collapsible glass card grouping accounts of one class (Assets or Debts). Header shows an uppercase group label, count badge, and section total; body is a divider-separated list of AccountRow.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "reuses": ["AccountRow"],
+  "props": {
+    "title": { "type": "string", "required": true, "description": "ASSETS or DEBTS" },
+    "count": { "type": "number", "required": true },
+    "total": { "type": "number", "required": true },
+    "isDebt": { "type": "boolean", "required": true },
+    "accounts": { "type": "AccountRow[]", "required": true },
+    "expanded": { "type": "boolean", "default": true },
+    "onToggle": { "type": "function", "required": true },
+    "balanceVisible": { "type": "boolean", "default": true }
+  },
+  "states": ["expanded", "collapsed", "loading"],
+  "layout": {
+    "card": "glassEffects.glass, radius.lg, padding spacing.md",
+    "header": { "minHeight": 44, "flexDirection": "row", "justifyContent": "space-between", "activeOpacity": 0.7 },
+    "divider": "colors.borderLight, height 1"
+  },
+  "tokens": {
+    "chevron": "colors.textMuted",
+    "groupLabel": "typography.caption uppercase, letterSpacing 0.6, weight 700, colors.textMuted",
+    "countBadge": "colors.glassMedium pill, typography.caption colors.textMuted",
+    "total": "typography.bodyBold, colors.success if !isDebt else colors.error"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{title}, {count} accounts, total {total}, {expanded|collapsed}. Double tap to toggle.",
+    "note": "Assets vs Debts distinguished by label + section total sign, not color alone."
+  }
+}

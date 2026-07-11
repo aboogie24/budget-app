@@ -1,0 +1,46 @@
+{
+  "componentName": "LinkAccountConnectCTA",
+  "description": "The connect / sync call-to-action button for the link-account screen. Primary variant uses the brand gradient (Connect / Link Another); secondary variant is the outlined Sync Now. Preserves the existing busy/disabled label logic.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "variant": { "type": "'primary' | 'secondary'", "default": "primary", "description": "primary = connect (gradient); secondary = sync (outline)" },
+    "label": { "type": "string", "required": true, "description": "Visible label, e.g. 'Connect with Plaid', 'Sync Now'" },
+    "icon": { "type": "string", "required": false, "description": "Leading Ionicon name (e.g. shield-checkmark-outline, sync-outline)" },
+    "busy": { "type": "boolean", "default": false, "description": "Shows inline spinner + busy label" },
+    "disabled": { "type": "boolean", "default": false, "description": "Dimmed + non-interactive" },
+    "onPress": { "type": "function", "required": true, "description": "Trigger connect or sync" }
+  },
+  "variants": ["primary", "secondary"],
+  "states": ["default", "busy", "disabled"],
+  "layout": {
+    "fullWidth": true,
+    "minHeight": 48,
+    "radius": "radius.lg",
+    "paddingVertical": "spacing.md",
+    "iconSize": 24,
+    "iconGap": "spacing.sm"
+  },
+  "tokens": {
+    "primaryFill": "gradients.primaryGradient (LinearGradient)",
+    "primaryLabel": "typography.button + colors.text",
+    "primarySpinner": "colors.text",
+    "secondaryFill": "${colors.primary2}1f",
+    "secondaryBorder": "${colors.primary2}40",
+    "secondaryLabel": "typography.smallBold + colors.primary2",
+    "secondarySpinner": "colors.primary2",
+    "disabled": "opacity 0.5"
+  },
+  "labelLogic": [
+    "no provider selected -> 'Select a provider' (disabled)",
+    "busy -> 'Connecting via {Provider}…' / 'Syncing…' / 'Opening Plaid…'",
+    "accounts.length > 0 & plaid-only -> 'Link Another Account'",
+    "provider selected -> 'Connect with {Provider}'"
+  ],
+  "accessibility": {
+    "role": "button",
+    "state": { "disabled": "{disabled || busy}" },
+    "label": "matches visible label",
+    "touchTarget": "minHeight 48"
+  }
+}

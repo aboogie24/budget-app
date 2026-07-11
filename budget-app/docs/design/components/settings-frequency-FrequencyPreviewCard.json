@@ -1,0 +1,36 @@
+{
+  "componentName": "FrequencyPreviewCard",
+  "description": "Read-only glass card that makes the multipliers legible by showing '$50 {freq} budget -> ${50 x n}/month' for all three frequencies, recomputed live from the current field values. New additive IA element in the frequency redesign; pure presentation, no new data or storage.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-frequency-redesign.md#5.2",
+  "props": {
+    "weekly": { "type": "number", "required": true, "description": "Weekly multiplier (integer)" },
+    "biweekly": { "type": "number", "required": true, "description": "Biweekly multiplier (integer)" },
+    "monthly": { "type": "number", "required": true, "description": "Monthly multiplier (integer)" },
+    "baseAmount": { "type": "number", "default": 50, "description": "Illustrative per-occurrence amount; fixed constant, NOT user data" }
+  },
+  "variants": ["default"],
+  "states": ["default", "disabled"],
+  "computation": "each line result = baseAmount * multiplier, rendered via formatCurrency(result, 0)",
+  "layout": {
+    "surface": "glassEffects.glass",
+    "radius": "radius.lg",
+    "padding": "spacing.lg",
+    "marginBottom": "spacing.lg",
+    "label": { "text": "PREVIEW", "type": "typography.caption", "color": "colors.textDark", "letterSpacing": 1, "marginBottom": "spacing.sm" },
+    "line": { "rowGap": "spacing.sm", "left": "'A $50 {freq} budget' typography.small colors.textMuted", "arrow": "arrow-forward glyph colors.textDark 14", "result": "'${x}/month' typography.smallBold colors.text, flexShrink 0" }
+  },
+  "tokens": {
+    "colors": ["textDark", "textMuted", "text"],
+    "typography": ["caption", "small", "smallBold"],
+    "spacing": ["lg", "sm"],
+    "radius": ["lg"]
+  },
+  "loading": "During screen load render a single Skeleton height 110 radius radius.lg in place of the whole card.",
+  "accessibility": {
+    "role": "text / summary",
+    "perLineLabel": "A 50 dollar {freq} budget equals {result} dollars per month",
+    "decorativeArrows": "accessibilityElementsHidden on the arrow glyphs; each line is one SR node",
+    "colorIndependence": "no status color; informational only"
+  }
+}

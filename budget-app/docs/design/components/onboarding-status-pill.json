@@ -1,0 +1,32 @@
+{
+  "componentName": "OnboardingStatusPill",
+  "description": "Color-independent success/confirmation pill that replaces a CTA once an async onboarding action succeeds (invite sent, account connected). Always icon + word + color.",
+  "platform": "react-native",
+  "props": {
+    "label": { "type": "string", "required": true, "description": "e.g. 'Invite sent', 'Account connected'" },
+    "tone": { "type": "string", "required": false, "default": "success", "description": "'success' | 'info'" }
+  },
+  "variants": ["success", "info"],
+  "states": ["default"],
+  "layout": {
+    "flexDirection": "row",
+    "justify": "center",
+    "align": "center",
+    "gap": "spacing.sm",
+    "paddingVertical": "spacing.md",
+    "paddingHorizontal": "spacing.lg",
+    "radius": "radius.lg"
+  },
+  "tokens": {
+    "fill": "`${colors.success}1f` (~12%)",
+    "border": "`${colors.success}33`",
+    "icon": "checkmark-circle / colors.success (filled)",
+    "text": "typography.smallBold / colors.success"
+  },
+  "accessibility": {
+    "role": "text",
+    "label": "{label}",
+    "liveRegion": "polite",
+    "note": "Success is conveyed by filled check icon + word + color together, never color alone"
+  }
+}

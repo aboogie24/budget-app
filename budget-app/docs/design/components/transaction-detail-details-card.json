@@ -1,0 +1,46 @@
+{
+  "componentName": "TransactionDetailsCard",
+  "description": "Flat glass card of labelled detail rows for the transaction-detail screen: Note, Date, Source (icon+word+color badge), Added-by (partner glyph), and Recurring. Rows are divider-separated; empty/unknown rows are omitted, not shown blank.",
+  "platform": "react-native",
+  "sourceOfTruthTokens": "budget-app/utils/design-system.ts",
+  "props": {
+    "note": { "type": "string", "required": false, "description": "Free-text note. Row omitted when empty. Value wraps freely (no line cap)." },
+    "date": { "type": "string", "required": false, "description": "ISO 8601 timestamp; formatted 'Tue, Jun 17 2026 · 2:14 PM'. Row shows 'Date unavailable' (textMuted) when absent." },
+    "source": { "type": "string", "required": true, "description": "'manual' | 'bank'. Drives SourceBadge icon/word/tint." },
+    "bankName": { "type": "string", "required": false, "description": "Linked institution name, e.g. 'Chase'. Shown only when source==='bank'." },
+    "accountLast4": { "type": "string", "required": false, "description": "Masked account tail, e.g. '4021'. Rendered as '••4021'." },
+    "actorGlyph": { "type": "object", "required": false, "description": "{ glyph: '◑'|'◐', color: string, name: string } | null. Null for shared/unknown/solo → 'Added by' row omitted.", "shape": { "glyph": "string", "color": "string", "name": "string" } },
+    "frequency": { "type": "string", "required": false, "description": "'one-time'|'weekly'|'biweekly'|'monthly'. Recurring row shown only when set and !== 'one-time'." },
+    "dueDay": { "type": "number", "required": false, "description": "1-31; appended as 'due day {n}' when frequency==='monthly'." }
+  },
+  "rows": [
+    { "key": "note", "icon": "create-outline", "label": "Note", "value": "note", "shownWhen": "note is non-empty", "valueLayout": "full-width under label (long text)" },
+    { "key": "date", "icon": "time-outline", "label": "Date", "value": "formatted date | 'Date unavailable'" },
+    { "key": "source", "icon": "shield-checkmark-outline", "label": "Source", "value": "SourceBadge (see below)" },
+    { "key": "addedBy", "icon": "person-outline", "label": "Added by", "value": "{actorGlyph.glyph in actorGlyph.color} {actorGlyph.name}", "shownWhen": "actorGlyph != null" },
+    { "key": "recurring", "icon": "repeat-outline", "label": "Recurring", "value": "{frequency}[ · due day {dueDay}]", "shownWhen": "frequency && frequency !== 'one-time'" }
+  ],
+  "sourceBadge": {
+    "manual": { "icon": "pencil / ● dot", "word": "Entered manually", "tint": "colors.textMuted", "note": "neutral baseline; text stays colors.text" },
+    "bank": { "icon": "card / business-outline", "word": "From {bankName} ••{accountLast4} (linked)", "tint": "colors.info", "note": "tint on icon + 'linked' only; body stays colors.text" }
+  },
+  "variants": ["manual", "bank-linked", "recurring", "with-note", "minimal"],
+  "states": ["default", "loading"],
+  "layout": {
+    "card": { "surface": "glassEffects.glass", "borderRadius": "radius.lg", "padding": "spacing.lg" },
+    "row": { "flexDirection": "row", "alignItems": "center", "minHeight": 44, "gap": "spacing.md" },
+    "divider": "commonStyles.divider between rows",
+    "leadingIcon": { "size": 18, "color": "colors.textMuted" }
+  },
+  "typography": {
+    "label": "typography.caption + colors.textMuted",
+    "value": "typography.small / smallBold + colors.text",
+    "noteValue": "typography.small + colors.text (wraps, no numberOfLines)"
+  },
+  "accessibility": {
+    "role": "list of static text rows (or button when a row deep-links, e.g. Source → linked account)",
+    "label": "per row: '{label}, {spoken value}.' e.g. 'Source, from Chase, linked account.'",
+    "colorIndependence": "source and partner conveyed by icon/glyph + word + color together",
+    "touchTarget": "44pt min on any tappable row"
+  }
+}

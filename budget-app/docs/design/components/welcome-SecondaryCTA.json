@@ -1,0 +1,30 @@
+{
+  "componentName": "WelcomeSecondaryCTA",
+  "description": "The secondary action on the welcome screen: 'I already have an account'. Glass-surface button in the app's secondary-button language, replacing the old purple-outline ghost with purple text. Navigates to the login screen.",
+  "platform": "react-native",
+  "designSystem": {
+    "surface": "glassEffects.glass",
+    "wrapper": "TouchableOpacity",
+    "radius": "radius.lg",
+    "height": 52,
+    "width": "full",
+    "label": { "typography": "typography.button", "color": "colors.text", "align": "center" }
+  },
+  "props": {
+    "label": { "type": "string", "default": "I already have an account" },
+    "onPress": { "type": "function", "required": true, "description": "router.replace('/login') — preserved from original" },
+    "loading": { "type": "boolean", "default": false, "description": "In-flight navigation; dims to opacity 0.6 and blocks re-tap" }
+  },
+  "states": ["default", "pressed", "disabled"],
+  "stateTreatments": {
+    "pressed": "activeOpacity via animation.fast",
+    "disabled": "opacity 0.6 while navigation in flight"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "I already have an account, log in",
+    "hint": "Opens sign-in",
+    "touchTarget": "52pt tall × full width (≥44)",
+    "reducedMotion": "press feedback becomes instant opacity swap"
+  }
+}

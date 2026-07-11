@@ -1,0 +1,31 @@
+{
+  "componentName": "BudgetTypeToggle",
+  "description": "Expenses | Income segmented control for the budget tab. Constructed identically to the dashboard ScopeToggle so the app has ONE segmented-control style. Re-scopes the whole screen (hero + lists recompute for the selected type).",
+  "platform": "react-native",
+  "modeledAfter": "components/dashboard/ScopeToggle.tsx",
+  "props": {
+    "value": { "type": "'expense' | 'income'", "required": true },
+    "onChange": { "type": "(next: 'expense' | 'income') => void", "required": true }
+  },
+  "layout": {
+    "container": "glassEffects.glass",
+    "radius": "radius.full",
+    "innerPadding": 2,
+    "height": 32,
+    "fullWidth": true,
+    "marginBottom": "spacing.md"
+  },
+  "segments": {
+    "active": { "fill": "colors.primary", "label": "typography.smallBold colors.text", "icon": "trending-down (expense) | trending-up (income)" },
+    "inactive": { "fill": "transparent", "label": "colors.textMuted", "hitSlop": "padded to 44" }
+  },
+  "motion": { "activePill": "animation.fast slide", "reducedMotion": "instant state swap" },
+  "states": ["expense-active", "income-active", "pressed"],
+  "accessibility": {
+    "role": "tablist",
+    "segmentRole": "tab with selected state",
+    "announce": "'Showing expenses' / 'Showing income'",
+    "minTouch": 44
+  },
+  "developerNotes": "Replaces the current bespoke typeToggle/typeToggleActive styles. Prefer extending the shared ScopeToggle to accept a generic two-option config over duplicating its internals."
+}

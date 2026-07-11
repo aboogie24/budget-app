@@ -1,0 +1,31 @@
+{
+  "componentName": "CategoryTypeToggle",
+  "description": "Expenses | Income segmented control for the Categories settings screen. Re-scopes the whole list to the selected type. Constructed identically to BudgetTypeToggle / ScopeToggle so the app keeps ONE segmented-control style — replaces the bespoke toggleRow/toggle/toggleActive styles.",
+  "platform": "react-native",
+  "modeledAfter": "components/dashboard/ScopeToggle.tsx (via budget-tab-TypeToggle.json)",
+  "props": {
+    "value": { "type": "'expense' | 'income'", "required": true },
+    "onChange": { "type": "(next: 'expense' | 'income') => void", "required": true }
+  },
+  "layout": {
+    "container": "glassEffects.glass",
+    "radius": "radius.full",
+    "innerPadding": 2,
+    "height": 32,
+    "fullWidth": true,
+    "marginBottom": "spacing.md"
+  },
+  "segments": {
+    "active": { "fill": "colors.primary", "label": "typography.smallBold colors.text", "icon": "cart-outline (expense) | cash-outline (income)" },
+    "inactive": { "fill": "transparent", "label": "colors.textMuted", "icon": "same, colors.textMuted", "hitSlop": "padded to 44" }
+  },
+  "motion": { "activePill": "animation.fast slide", "reducedMotion": "instant state swap" },
+  "states": ["expense-active", "income-active", "pressed", "skeleton"],
+  "accessibility": {
+    "role": "tablist",
+    "segmentRole": "tab with selected state",
+    "announce": "'Showing expense categories' / 'Showing income categories'",
+    "minTouch": 44
+  },
+  "developerNotes": "Prefer extending the shared ScopeToggle/BudgetTypeToggle to accept a generic two-option config over hand-rolling a fourth toggle. Icons are cart/cash to match the current screen's affordances."
+}

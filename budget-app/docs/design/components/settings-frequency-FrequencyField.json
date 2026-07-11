@@ -1,0 +1,47 @@
+{
+  "componentName": "FrequencyField",
+  "description": "A glass settings row with a leading icon chip + label + hint and a compact right-aligned numeric input for one frequency multiplier (Weekly/Biweekly/Monthly). Replaces the bespoke fieldCard in frequency.tsx. Fully tokenized against design-system.ts.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-frequency-redesign.md#5.1",
+  "props": {
+    "icon": { "type": "keyof Ionicons.glyphMap", "required": true, "description": "Leading glyph in the chip, e.g. calendar-outline / swap-horizontal-outline / today-outline" },
+    "label": { "type": "string", "required": true, "description": "Frequency name, typography.smallBold colors.text, numberOfLines 1" },
+    "hint": { "type": "string", "required": true, "description": "e.g. 'counts 4x per month', typography.caption colors.textMuted, numberOfLines 2" },
+    "value": { "type": "string", "required": true, "description": "Current multiplier as a string (digits only)" },
+    "onChangeText": { "type": "function", "required": true, "description": "(v: string) => void; caller strips non-digits" },
+    "onBlur": { "type": "function", "required": false, "description": "Clamp 1-31 / apply default fallback here" },
+    "placeholder": { "type": "string", "required": false, "description": "Default value shown when empty, colors.textDark" },
+    "invalid": { "type": "boolean", "default": false, "description": "Out-of-range → error border + caption hint" }
+  },
+  "variants": ["weekly", "biweekly", "monthly"],
+  "states": ["default", "focused", "filled", "invalid", "disabled"],
+  "layout": {
+    "minHeight": 56,
+    "surface": "glassEffects.glass",
+    "radius": "radius.lg",
+    "padding": "spacing.md",
+    "marginBottom": "spacing.sm",
+    "rowGap": "spacing.md",
+    "iconChip": { "size": 34, "radius": "radius.md", "fill": "${colors.primary2}1a", "iconColor": "colors.accent", "iconSize": 18 },
+    "input": { "width": 60, "minHeight": 44, "radius": "radius.md", "fill": "colors.glassMedium", "border": "colors.borderGlass", "textAlign": "center", "type": "typography.bodyBold", "textColor": "colors.text", "keyboardType": "numeric", "maxLength": 2 }
+  },
+  "stateMap": {
+    "default": { "inputBorder": "colors.borderGlass" },
+    "focused": { "inputBorder": "colors.primary2" },
+    "filled": { "inputBorder": "colors.borderGlass", "textColor": "colors.text" },
+    "invalid": { "inputBorder": "colors.error", "hint": "alert-circle-outline + '1-31' in colors.error typography.caption" },
+    "disabled": { "note": "rendered as Skeleton chip + SkeletonStack + input skeleton during load" }
+  },
+  "tokens": {
+    "colors": ["primary2", "accent", "text", "textMuted", "textDark", "glassMedium", "borderGlass", "error"],
+    "typography": ["smallBold", "caption", "bodyBold"],
+    "spacing": ["md", "sm"],
+    "radius": ["lg", "md"]
+  },
+  "accessibility": {
+    "label": "{label}, {hint}, edit box, {value}",
+    "role": "adjustable / text field (numeric)",
+    "target": "row >= 56pt; input >= 44pt tall",
+    "colorIndependence": "invalid state pairs alert-circle-outline glyph + '1-31' word with the red border"
+  }
+}

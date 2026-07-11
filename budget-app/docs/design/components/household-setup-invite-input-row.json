@@ -1,0 +1,31 @@
+{
+  "componentName": "InviteInputRow",
+  "description": "Email field + gradient send button to invite a partner to an existing household.",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "props": {
+    "value": { "type": "string", "required": true, "description": "Current email input value" },
+    "onChangeText": { "type": "function", "required": true, "description": "Input change handler" },
+    "onSend": { "type": "function", "required": true, "description": "Send invite handler" },
+    "submitting": { "type": "boolean", "default": false, "description": "Disables input+button and shows spinner" }
+  },
+  "variants": ["default"],
+  "states": ["default", "submitting", "disabled"],
+  "layout": {
+    "card": "glassEffects.glass",
+    "input": { "surface": "glassEffects.glass", "radius": "radius.md", "paddingH": "spacing.md", "paddingV": "spacing.md", "text": "colors.text", "placeholder": "colors.textDark", "flex": 1 },
+    "sendButton": { "size": 44, "radius": "radius.md", "gradient": "gradients.primaryGradient", "icon": "paper-plane", "iconSize": 18, "iconColor": "#fff", "disabledOpacity": 0.5 },
+    "gap": "spacing.sm"
+  },
+  "typography": {
+    "fieldDesc": { "style": "typography.small", "color": "colors.textMuted" }
+  },
+  "inputProps": { "keyboardType": "email-address", "autoCapitalize": "none", "placeholder": "partner@email.com" },
+  "accessibility": {
+    "inputLabel": "Partner's email address",
+    "buttonRole": "button",
+    "buttonLabel": "Send invite",
+    "buttonHint": "Sends an invite to the email you entered",
+    "touchTarget": "44x44"
+  }
+}

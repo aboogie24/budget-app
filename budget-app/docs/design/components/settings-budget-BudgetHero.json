@@ -1,0 +1,50 @@
+{
+  "componentName": "BudgetHero",
+  "description": "Tier-1 elevated headline for the Budget Settings screen. Contains the Expenses/Income scope toggle and the Total Monthly Budget number (typography.h1). The only floating card on the screen and the only one using h1.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-budget-redesign.md#4.2",
+  "surface": "glassEffects.glassFloating",
+  "props": {
+    "scope": { "type": "'expense' | 'income'", "required": true, "description": "Active scope; drives which categories the total sums" },
+    "onScopeChange": { "type": "function", "required": true, "description": "(s: 'expense' | 'income') => void" },
+    "totalMonthlyBudget": { "type": "number", "required": true, "description": "Sum of limit_amount across categories in the active scope; formatted via formatCurrency from design-system" },
+    "categoryCount": { "type": "number", "required": true, "description": "Count of categories in the active scope" },
+    "rolloverCount": { "type": "number", "required": true, "description": "Count with rollover_enabled; the '· N with rollover' clause is omitted when 0" },
+    "loading": { "type": "boolean", "default": false, "description": "Renders Skeleton pills + block instead of real content" },
+    "error": { "type": "boolean", "default": false, "description": "Renders '—' as the total when the load failed" }
+  },
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "gapBelow": "spacing.xl",
+    "scopeToggle": {
+      "grammar": "reuse ScopeToggle / budget-tab-TypeToggle",
+      "options": [
+        { "value": "expense", "icon": "cart-outline", "label": "Expenses" },
+        { "value": "income", "icon": "cash-outline", "label": "Income" }
+      ],
+      "active": { "fill": "${colors.primary2}1f", "border": "colors.primary2", "text": "colors.primary2" },
+      "inactive": { "fill": "colors.glassLight", "border": "colors.borderGlass", "text": "colors.textMuted" },
+      "minHeight": 44
+    },
+    "label": { "text": "TOTAL MONTHLY BUDGET", "type": "typography.caption", "color": "colors.textMuted", "uppercase": true },
+    "heroNumber": { "type": "typography.h1", "color": "colors.text" },
+    "proof": { "type": "typography.caption", "color": "colors.textMuted", "format": "{categoryCount} categories · {rolloverCount} with rollover" }
+  },
+  "states": ["default", "loading", "error", "empty"],
+  "tokens": {
+    "colors": ["text", "textMuted", "primary2", "glassLight", "borderGlass"],
+    "typography": ["h1", "caption"],
+    "spacing": ["xl", "md", "sm"],
+    "radius": ["xl", "md"],
+    "glass": ["glassFloating"]
+  },
+  "accessibility": {
+    "heroLabel": "Total monthly budget, {formatted}, {categoryCount} categories, {rolloverCount} with rollover",
+    "scopeOptionRole": "button",
+    "scopeSelectedState": "accessibilityState.selected reflects active scope",
+    "target": "each scope option >= 44pt",
+    "colorIndependence": "active scope shows icon + word + tint, not color alone"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "componentName": "IncomingInviteCard",
+  "description": "Floating hero for an incoming invite in the no-household mode. Household name + inviter + primary Accept & Join gradient CTA, with expired fallback.",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "props": {
+    "householdName": { "type": "string", "required": true, "description": "Household being joined" },
+    "inviterEmail": { "type": "string", "required": false, "description": "Who sent the invite" },
+    "expiresAt": { "type": "string", "required": true, "description": "ISO expiry timestamp" },
+    "onAccept": { "type": "function", "required": true, "description": "Accept & join handler" },
+    "accepting": { "type": "boolean", "default": false, "description": "Shows spinner, disables CTA" }
+  },
+  "variants": ["active", "expired"],
+  "states": ["default", "accepting", "disabled"],
+  "derived": { "expired": "new Date(expiresAt) < now" },
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.lg",
+    "bgTint": "${colors.primary2}14",
+    "iconChip": { "size": 44, "radius": "radius.lg", "fill": "${colors.primary2}1f", "icon": "home", "iconSize": 20, "iconColor": "colors.primary2" },
+    "cta": { "gradient": "gradients.primaryGradient", "radius": "radius.lg", "paddingV": "spacing.md", "icon": "checkmark-circle-outline", "iconSize": 18, "iconColor": "#fff", "spinnerColor": "#fff" },
+    "expiredNote": { "icon": "hourglass-outline", "color": "colors.textMuted", "style": "typography.small" }
+  },
+  "typography": {
+    "name": { "style": "typography.bodyBold", "color": "colors.text", "numberOfLines": 1 },
+    "inviter": { "style": "typography.caption", "color": "colors.textMuted", "text": "Invited by {email}" },
+    "ctaText": { "style": "typography.button", "weight": "800", "color": "#fff", "text": "Accept & Join" }
+  },
+  "accessibility": {
+    "ctaRole": "button",
+    "ctaLabel": "Accept and join {householdName}",
+    "ctaHint": "Joins this household. You can only be in one household at a time.",
+    "touchTarget": "full-width, >=44pt tall"
+  }
+}

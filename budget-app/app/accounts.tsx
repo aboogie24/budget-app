@@ -8,16 +8,23 @@ import {
   ActivityIndicator,
   Animated,
   RefreshControl,
-  Dimensions,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { fetchAccountBalances, syncPlaidBalances } from '@/utils/api';
+import {
+  fetchAccountBalances,
+  syncPlaidBalances,
+  recordNetWorthSnapshot,
+  type NetWorthSnapshotPoint,
+} from '@/utils/api';
 import { BackButton } from '@/components/BackButton';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import { colors, spacing, radius, typography, glassEffects, gradients } from '@/utils/design-system';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AccountsHero } from '@/components/accounts-Hero';
+import { AccountRow, type AccountType } from '@/components/accounts-AccountRow';
 
 type Account = {
   id: string;
@@ -33,83 +40,21 @@ type Account = {
   updated_at?: string;
 };
 
-const TYPE_CONFIG: Record<string, { label: string; color: string; icon: string; bgColor: string }> = {
-  depository: { label: 'Cash', color: '#60a5fa', icon: 'wallet-outline', bgColor: 'rgba(96,165,250,0.12)' },
-  credit: { label: 'Credit', color: '#f87171', icon: 'card-outline', bgColor: 'rgba(248,113,113,0.12)' },
-  loan: { label: 'Loans', color: '#fbbf24', icon: 'document-text-outline', bgColor: 'rgba(251,191,36,0.12)' },
-  investment: { label: 'Investments', color: '#34d399', icon: 'trending-up-outline', bgColor: 'rgba(52,211,153,0.12)' },
-  other: { label: 'Other', color: '#94a3b8', icon: 'ellipsis-horizontal-outline', bgColor: 'rgba(148,163,184,0.12)' },
+// Type metadata: labels + icons kept from the original; colors now derive from
+// design-system tokens instead of a private palette.
+const TYPE_META: Record<
+  string,
+  { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }
+> = {
+  depository: { label: 'Cash', color: colors.info, icon: 'wallet-outline' },
+  credit: { label: 'Credit', color: colors.error, icon: 'card-outline' },
+  loan: { label: 'Loans', color: colors.warning, icon: 'document-text-outline' },
+  investment: { label: 'Investments', color: colors.success, icon: 'trending-up-outline' },
+  other: { label: 'Other', color: colors.textMuted, icon: 'ellipsis-horizontal-outline' },
 };
 
-// Allocation bar component
-const AllocationBar = ({ segments }: { segments: { label: string; pct: number; color: string }[] }) => (
-  <View style={styles.allocationBarContainer}>
-    <View style={styles.allocationBarTrack}>
-      {segments.map((seg, i) => (
-        <View
-          key={i}
-          style={{
-            height: '100%',
-            width: `${seg.pct}%` as any,
-            backgroundColor: seg.color,
-            borderRadius: i === 0 ? 4 : i === segments.length - 1 ? 4 : 0,
-            borderTopLeftRadius: i === 0 ? 4 : 0,
-            borderBottomLeftRadius: i === 0 ? 4 : 0,
-            borderTopRightRadius: i === segments.length - 1 ? 4 : 0,
-            borderBottomRightRadius: i === segments.length - 1 ? 4 : 0,
-          }}
-        />
-      ))}
-    </View>
-    <View style={styles.allocationLegend}>
-      {segments.map((seg, i) => (
-        <View key={i} style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: seg.color }]} />
-          <Text style={styles.legendLabel}>{seg.label}</Text>
-          <Text style={styles.legendPct}>{seg.pct}%</Text>
-        </View>
-      ))}
-    </View>
-  </View>
-);
+const metaFor = (type: string) => TYPE_META[type] || TYPE_META.other;
 
-// Collapsible section header
-const SectionHeader = ({
-  title,
-  count,
-  total,
-  expanded,
-  onToggle,
-  balanceVisible,
-  isDebt,
-}: {
-  title: string;
-  count: number;
-  total: number;
-  expanded: boolean;
-  onToggle: () => void;
-  balanceVisible: boolean;
-  isDebt: boolean;
-}) => (
-  <TouchableOpacity activeOpacity={0.7} onPress={onToggle} style={styles.sectionHeader}>
-    <View style={styles.sectionHeaderLeft}>
-      <Ionicons
-        name={expanded ? 'chevron-down' : 'chevron-forward'}
-        size={16}
-        color="rgba(255,255,255,0.4)"
-      />
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.countBadge}>
-        <Text style={styles.countText}>{count}</Text>
-      </View>
-    </View>
-    <Text style={[styles.sectionTotal, { color: isDebt ? '#ef4444' : '#10b981' }]}>
-      {balanceVisible ? formatCurrency(total) : '••••••'}
-    </Text>
-  </TouchableOpacity>
-);
-
-// Format currency helper
 function formatCurrency(v: number): string {
   const abs = Math.abs(v);
   const prefix = v < 0 ? '-' : '';
@@ -125,24 +70,166 @@ function formatCompact(v: number): string {
   return prefix + '$' + abs.toLocaleString();
 }
 
+function relativeTime(iso?: string): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffMs = Date.now() - then;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+// ─── Asset allocation card (retokenized AllocationBar) ───
+const AllocationCard = ({
+  segments,
+}: {
+  segments: { label: string; pct: number; color: string }[];
+}) => {
+  const a11y =
+    'Asset allocation: ' +
+    segments.map((s) => `${s.label} ${s.pct} percent`).join(', ') +
+    '.';
+  return (
+    <View style={styles.card}>
+      <Text style={styles.groupLabel}>ASSET ALLOCATION</Text>
+      <View style={styles.allocationBody}>
+        <View style={styles.allocationTrack} accessible accessibilityLabel={a11y}>
+          {segments.map((seg, i) => (
+            <View
+              key={i}
+              style={{
+                height: '100%',
+                width: `${seg.pct}%` as any,
+                backgroundColor: seg.color,
+                borderTopLeftRadius: i === 0 ? radius.sm : 0,
+                borderBottomLeftRadius: i === 0 ? radius.sm : 0,
+                borderTopRightRadius: i === segments.length - 1 ? radius.sm : 0,
+                borderBottomRightRadius: i === segments.length - 1 ? radius.sm : 0,
+              }}
+            />
+          ))}
+        </View>
+        <View style={styles.allocationLegend}>
+          {segments.map((seg, i) => (
+            <View key={i} style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: seg.color }]} />
+              <Text style={styles.legendLabel}>{seg.label}</Text>
+              <Text style={styles.legendPct}>{seg.pct}%</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+};
+
+// ─── Collapsible Assets / Debts section card ───
+const AccountSectionCard = ({
+  title,
+  count,
+  total,
+  isDebt,
+  expanded,
+  onToggle,
+  balanceVisible,
+  children,
+}: {
+  title: string;
+  count: number;
+  total: number;
+  isDebt: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  balanceVisible: boolean;
+  children: React.ReactNode;
+}) => {
+  const totalColor = isDebt ? colors.error : colors.success;
+  const totalText = balanceVisible ? formatCurrency(total) : '••••••';
+  return (
+    <View style={styles.card}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={onToggle}
+        style={styles.sectionHeader}
+        accessibilityRole="button"
+        accessibilityLabel={`${title}, ${count} accounts, total ${totalText}, ${
+          expanded ? 'expanded' : 'collapsed'
+        }. Double tap to toggle.`}
+      >
+        <View style={styles.sectionHeaderLeft}>
+          <Ionicons
+            name={expanded ? 'chevron-down' : 'chevron-forward'}
+            size={16}
+            color={colors.textMuted}
+          />
+          <Text style={styles.groupLabel}>{title}</Text>
+          <View style={styles.countBadge}>
+            <Text style={styles.countText}>{count}</Text>
+          </View>
+        </View>
+        <Text style={[styles.sectionTotal, { color: totalColor }]}>{totalText}</Text>
+      </TouchableOpacity>
+      {expanded && <View style={styles.sectionBody}>{children}</View>}
+    </View>
+  );
+};
+
 export default function AccountsScreen() {
   const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [errored, setErrored] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [balanceVisible, setBalanceVisible] = useState(true);
-  const [expandedSection, setExpandedSection] = useState<string | null>('assets');
+  const [assetsExpanded, setAssetsExpanded] = useState(true);
+  const [debtsExpanded, setDebtsExpanded] = useState(true);
+  const [netWorthHistory, setNetWorthHistory] = useState<NetWorthSnapshotPoint[]>([]);
   const spinAnim = useRef(new Animated.Value(0)).current;
 
   const load = useCallback(async () => {
     try {
       const data = await fetchAccountBalances();
       setAccounts(Array.isArray(data) ? (data as Account[]) : []);
+      setErrored(false);
     } catch {
-      // silent
+      setErrored(true);
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
+    }
+  }, []);
+
+  // Read the trailing net-worth window for the hero sparkline. Non-blocking:
+  // degrades to "Collecting…" with <2 points.
+  const loadNetWorth = useCallback(async (list: Account[]) => {
+    try {
+      const cash = list
+        .filter((a) => a.type === 'depository')
+        .reduce((s, a) => s + (a.current_balance || 0), 0);
+      const investments = list
+        .filter((a) => a.type === 'investment')
+        .reduce((s, a) => s + (a.current_balance || 0), 0);
+      const other = list
+        .filter((a) => a.type !== 'depository' && a.type !== 'investment' && a.type !== 'credit' && a.type !== 'loan')
+        .reduce((s, a) => s + (a.current_balance || 0), 0);
+      const debt = list
+        .filter((a) => a.type === 'credit' || a.type === 'loan')
+        .reduce((s, a) => s + (a.current_balance || 0), 0);
+      const total = cash + investments + other - debt;
+      const res = await recordNetWorthSnapshot(
+        { cash, investments, properties: other, debt, total },
+        30,
+      );
+      setNetWorthHistory(Array.isArray(res?.snapshots) ? res.snapshots : []);
+    } catch {
+      // non-blocking
     }
   }, []);
 
@@ -150,16 +237,24 @@ export default function AccountsScreen() {
     load();
   }, [load]);
 
+  // Refresh the sparkline window whenever balances change.
+  useEffect(() => {
+    if (loadedOnce && accounts.length > 0) {
+      loadNetWorth(accounts);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts, loadedOnce]);
+
   const handleSync = async () => {
     setSyncing(true);
     Animated.loop(
-      Animated.timing(spinAnim, { toValue: 1, duration: 800, useNativeDriver: true })
+      Animated.timing(spinAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
     ).start();
     try {
       await syncPlaidBalances();
       await load();
     } catch {
-      // silent
+      // silent — freshness chip / error state surfaces failure
     } finally {
       setSyncing(false);
       spinAnim.stopAnimation();
@@ -175,274 +270,302 @@ export default function AccountsScreen() {
 
   const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
-  // Group accounts
+  // ── Derived data ──
   const grouped = accounts.reduce<Record<string, Account[]>>((acc, a) => {
     const key = a.type || 'other';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(a);
+    (acc[key] = acc[key] || []).push(a);
     return acc;
   }, {});
 
-  // Calculate totals
-  const totalAssets = accounts
-    .filter((a) => a.type !== 'credit' && a.type !== 'loan')
-    .reduce((sum, a) => sum + (a.current_balance || 0), 0);
-
-  const totalDebts = accounts
-    .filter((a) => a.type === 'credit' || a.type === 'loan')
-    .reduce((sum, a) => sum + (a.current_balance || 0), 0);
-
-  const netBalance = totalAssets - totalDebts;
-
-  // Build asset allocation segments
-  const assetTypes = ['depository', 'investment', 'other'].filter((t) => grouped[t]?.length);
-  const allocationSegments = assetTypes.map((type) => {
-    const config = TYPE_CONFIG[type] || TYPE_CONFIG.other;
-    const typeTotal = (grouped[type] || []).reduce((s, a) => s + (a.current_balance || 0), 0);
-    const pct = totalAssets > 0 ? Math.round((typeTotal / totalAssets) * 100) : 0;
-    return { label: config.label, pct, color: config.color, amount: typeTotal };
-  });
-
-  // Asset accounts and debt accounts
   const assetAccounts = accounts.filter((a) => a.type !== 'credit' && a.type !== 'loan');
   const debtAccounts = accounts.filter((a) => a.type === 'credit' || a.type === 'loan');
 
-  const subtypeLabel = (s?: string) => {
-    if (!s) return '';
-    return s
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase());
-  };
+  const totalAssets = assetAccounts.reduce((s, a) => s + (a.current_balance || 0), 0);
+  const totalDebts = debtAccounts.reduce((s, a) => s + (a.current_balance || 0), 0);
+  const netWorth = totalAssets - totalDebts;
 
-  const renderAccountRow = (account: Account) => {
-    const config = TYPE_CONFIG[account.type] || TYPE_CONFIG.other;
-    const isDebt = account.type === 'credit' || account.type === 'loan';
+  const assetTypes = ['depository', 'investment', 'other'].filter((t) => grouped[t]?.length);
+  const allocationSegments = assetTypes.map((type) => {
+    const meta = metaFor(type);
+    const typeTotal = (grouped[type] || []).reduce((s, a) => s + (a.current_balance || 0), 0);
+    const pct = totalAssets > 0 ? Math.round((typeTotal / totalAssets) * 100) : 0;
+    return { label: meta.label, pct, color: meta.color };
+  });
 
+  const historyValues = netWorthHistory.map((p) => p.total);
+  const deltaPercent = (() => {
+    if (netWorthHistory.length < 2) return null;
+    const first = netWorthHistory[0].total;
+    const last = netWorthHistory[netWorthHistory.length - 1].total;
+    if (!first) return null;
+    return Math.round(((last - first) / Math.abs(first)) * 1000) / 10;
+  })();
+
+  const lastSynced = accounts.reduce<string | undefined>((latest, a) => {
+    if (!a.updated_at) return latest;
+    if (!latest || new Date(a.updated_at) > new Date(latest)) return a.updated_at;
+    return latest;
+  }, undefined);
+
+  const renderRow = (account: Account, isDebt: boolean) => {
+    const meta = metaFor(account.type);
     return (
-      <View key={account.id} style={styles.accountCard}>
-        {/* Icon badge */}
-        <View style={[styles.accountIcon, { backgroundColor: config.bgColor }]}>
-          <Ionicons name={config.icon as any} size={18} color={config.color} />
-        </View>
-
-        {/* Account info */}
-        <View style={styles.accountInfo}>
-          <Text style={styles.accountName} numberOfLines={1}>
-            {account.name}
-          </Text>
-          <View style={styles.accountMetaRow}>
-            {account.institution_name ? (
-              <Text style={styles.accountMeta}>{account.institution_name}</Text>
-            ) : null}
-            {account.mask ? (
-              <Text style={styles.accountMeta}>{'••' + account.mask}</Text>
-            ) : null}
-            {account.subtype ? (
-              <View style={styles.subtypeBadge}>
-                <Text style={styles.subtypeText}>{subtypeLabel(account.subtype)}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Balance */}
-        <View style={styles.accountBalanceCol}>
-          <Text style={[styles.accountBalance, { color: isDebt ? '#ef4444' : config.color }]}>
-            {balanceVisible ? formatCurrency(account.current_balance || 0) : '••••••'}
-          </Text>
-          {account.available_balance != null && account.available_balance !== account.current_balance ? (
-            <Text style={styles.availableText}>
-              {balanceVisible ? formatCurrency(account.available_balance) + ' avail' : ''}
-            </Text>
-          ) : null}
-        </View>
-      </View>
+      <AccountRow
+        key={account.id}
+        name={account.name}
+        institutionName={account.institution_name}
+        mask={account.mask}
+        subtype={account.subtype}
+        typeColor={meta.color}
+        icon={meta.icon}
+        currentBalance={account.current_balance || 0}
+        availableBalance={account.available_balance}
+        isDebt={isDebt}
+        balanceVisible={balanceVisible}
+        formatCurrency={formatCurrency}
+      />
     );
   };
 
+  const showSkeleton = loading && !loadedOnce;
+  const isEmpty = loadedOnce && !loading && !errored && accounts.length === 0;
+  const isError = loadedOnce && !loading && errored && accounts.length === 0;
+
   return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
-        {/* Header */}
+        {/* ── Header ── */}
         <View style={styles.header}>
-          <BackButton fallback="/(tabs)/goals" color="#c084fc" />
+          <BackButton fallback="/(tabs)/dashboard" color={colors.primary2} />
           <Text style={styles.headerTitle}>Accounts</Text>
           <View style={styles.headerActions}>
+            {refreshing && <ActivityIndicator color={colors.primary2} size="small" />}
             <TouchableOpacity
               onPress={() => setBalanceVisible(!balanceVisible)}
               style={styles.headerIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel={balanceVisible ? 'Hide balances' : 'Show balances'}
             >
               <Ionicons
                 name={balanceVisible ? 'eye-outline' : 'eye-off-outline'}
-                size={18}
-                color="rgba(255,255,255,0.5)"
+                size={20}
+                color={balanceVisible ? colors.textMuted : colors.primary2}
               />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleSync} disabled={syncing} style={styles.headerIconBtn}>
-              {syncing ? (
-                <Animated.View style={{ transform: [{ rotate: spin }] }}>
-                  <Ionicons name="sync-outline" size={18} color="#c084fc" />
-                </Animated.View>
-              ) : (
-                <Ionicons name="sync-outline" size={18} color="rgba(255,255,255,0.5)" />
-              )}
+            <TouchableOpacity
+              onPress={handleSync}
+              disabled={syncing}
+              style={styles.headerIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Sync accounts"
+            >
+              <Animated.View style={syncing ? { transform: [{ rotate: spin }] } : undefined}>
+                <Ionicons
+                  name="sync-outline"
+                  size={20}
+                  color={syncing ? colors.primary2 : colors.textMuted}
+                />
+              </Animated.View>
             </TouchableOpacity>
           </View>
         </View>
 
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#c084fc" />
-            <Text style={styles.loadingText}>Loading accounts...</Text>
-          </View>
-        ) : accounts.length === 0 ? (
-          /* Empty state */
-          <View style={styles.emptyContainer}>
+        {isEmpty ? (
+          /* ── Empty state ── */
+          <View style={styles.centerContainer}>
             <View style={styles.emptyIconCircle}>
-              <Ionicons name="business-outline" size={40} color="#a855f7" />
+              <Ionicons name="business-outline" size={40} color={colors.primary2} />
             </View>
             <Text style={styles.emptyTitle}>No accounts linked</Text>
             <Text style={styles.emptyText}>
               Connect your bank accounts to track balances, spending, and net worth together as a couple.
             </Text>
-            <TouchableOpacity onPress={() => router.push('/link-account')}>
+            <TouchableOpacity onPress={() => router.push('/link-account')} activeOpacity={0.85}>
               <LinearGradient
-                colors={['#7c3aed', '#a855f7']}
+                colors={[...gradients.primaryGradient]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
-                style={styles.linkBtn}
+                style={styles.primaryBtn}
               >
-                <Ionicons name="add-circle-outline" size={18} color="#fff" />
-                <Text style={styles.linkBtnText}>Link Bank Account</Text>
+                <Ionicons name="add-circle-outline" size={18} color={colors.text} />
+                <Text style={styles.primaryBtnText}>Link Bank Account</Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
         ) : (
           <ScrollView
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={styles.scroll}
             showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={onRefresh}
-                tintColor="#c084fc"
-                colors={['#c084fc']}
+                tintColor={colors.primary2}
+                colors={[colors.primary2]}
               />
             }
           >
-            {/* Net Balance Hero Card */}
-            <LinearGradient
-              colors={['rgba(124,58,237,0.15)', 'rgba(16,185,129,0.06)']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.heroCard}
-            >
-              <Text style={styles.heroLabel}>Net Balance</Text>
-              <Text
-                style={[
-                  styles.heroAmount,
-                  { color: netBalance >= 0 ? '#f8fafc' : '#f87171' },
-                ]}
-              >
-                {balanceVisible
-                  ? (netBalance < 0 ? '-' : '') + formatCurrency(Math.abs(netBalance))
-                  : '••••••••'}
-              </Text>
-              <Text style={styles.heroSub}>
-                {accounts.length} account{accounts.length !== 1 ? 's' : ''} linked
-              </Text>
-
-              {/* Assets / Debts summary row */}
-              <View style={styles.heroSummaryRow}>
-                <View style={styles.heroSummaryItem}>
-                  <Text style={styles.heroSummaryLabel}>Total Assets</Text>
-                  <Text style={[styles.heroSummaryValue, { color: '#10b981' }]}>
-                    {balanceVisible ? formatCompact(totalAssets) : '••••••'}
-                  </Text>
+            {showSkeleton ? (
+              <View style={{ gap: spacing.lg }}>
+                <AccountsHero
+                  loading
+                  netWorth={0}
+                  history={[]}
+                  deltaPercent={null}
+                  totalAssets={0}
+                  assetCount={0}
+                  totalDebts={0}
+                  debtCount={0}
+                  balanceVisible={balanceVisible}
+                  formatCurrency={formatCurrency}
+                  formatCompact={formatCompact}
+                />
+                <View style={styles.card}>
+                  <Skeleton width={120} height={12} />
+                  <Skeleton width="100%" height={8} borderRadius={radius.sm} style={{ marginTop: spacing.md }} />
                 </View>
-                <View style={styles.heroSummaryDivider} />
-                <View style={styles.heroSummaryItem}>
-                  <Text style={styles.heroSummaryLabel}>Total Debts</Text>
-                  <Text style={[styles.heroSummaryValue, { color: '#ef4444' }]}>
-                    {balanceVisible ? formatCompact(totalDebts) : '••••••'}
-                  </Text>
+                <View style={styles.card}>
+                  <View style={styles.sectionHeader}>
+                    <Skeleton width={90} height={12} />
+                    <Skeleton width={70} height={14} />
+                  </View>
+                  <View style={styles.sectionBody}>
+                    {[0, 1, 2].map((i) => (
+                      <View key={i} style={styles.skelRow}>
+                        <Skeleton width={36} height={36} borderRadius={radius.md} />
+                        <View style={{ flex: 1, gap: spacing.sm }}>
+                          <Skeleton width="60%" height={12} />
+                          <Skeleton width="40%" height={10} />
+                        </View>
+                        <Skeleton width={60} height={14} />
+                      </View>
+                    ))}
+                  </View>
                 </View>
               </View>
-            </LinearGradient>
-
-            {/* Asset Allocation */}
-            {allocationSegments.length > 1 && (
-              <View style={styles.glassCard}>
-                <Text style={styles.cardTitle}>Asset Allocation</Text>
-                <AllocationBar segments={allocationSegments} />
+            ) : isError ? (
+              /* ── Error state ── */
+              <View style={styles.card}>
+                <View style={styles.errorInner}>
+                  <Ionicons name="alert-circle-outline" size={32} color={colors.error} />
+                  <Text style={styles.errorTitle}>Couldn't load your accounts</Text>
+                  <Text style={styles.errorText}>Check your connection and try again.</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLoading(true);
+                      load();
+                    }}
+                    style={styles.retryBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading accounts"
+                  >
+                    <Ionicons name="refresh-outline" size={16} color={colors.primary2} />
+                    <Text style={styles.retryText}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            )}
+            ) : (
+              <>
+                {/* ── Hero ── */}
+                <AccountsHero
+                  netWorth={netWorth}
+                  history={historyValues}
+                  deltaPercent={deltaPercent}
+                  deltaDays={30}
+                  totalAssets={totalAssets}
+                  assetCount={assetAccounts.length}
+                  totalDebts={totalDebts}
+                  debtCount={debtAccounts.length}
+                  balanceVisible={balanceVisible}
+                  formatCurrency={formatCurrency}
+                  formatCompact={formatCompact}
+                />
 
-            {/* Accounts List */}
-            <View style={styles.glassCard}>
-              {/* Assets section */}
-              {assetAccounts.length > 0 && (
-                <>
-                  <SectionHeader
-                    title="Assets"
-                    count={assetAccounts.length}
-                    total={totalAssets}
-                    expanded={expandedSection === 'assets'}
-                    onToggle={() =>
-                      setExpandedSection(expandedSection === 'assets' ? null : 'assets')
-                    }
-                    balanceVisible={balanceVisible}
-                    isDebt={false}
-                  />
-                  {expandedSection === 'assets' &&
-                    assetAccounts.map((a) => renderAccountRow(a))}
-                </>
-              )}
+                {/* ── Freshness chip ── */}
+                <View style={styles.freshness}>
+                  {lastSynced ? (
+                    <>
+                      <Ionicons name="checkmark-circle-outline" size={14} color={colors.success} />
+                      <Text style={styles.freshnessText}>Synced {relativeTime(lastSynced)}</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                      <Text style={styles.freshnessText}>Not synced yet</Text>
+                    </>
+                  )}
+                </View>
 
-              {assetAccounts.length > 0 && debtAccounts.length > 0 && (
-                <View style={styles.sectionDivider} />
-              )}
+                {/* ── Asset allocation ── */}
+                {allocationSegments.length > 1 && (
+                  <View style={{ marginTop: spacing.lg }}>
+                    <AllocationCard segments={allocationSegments} />
+                  </View>
+                )}
 
-              {/* Debts section */}
-              {debtAccounts.length > 0 && (
-                <>
-                  <SectionHeader
-                    title="Debts"
-                    count={debtAccounts.length}
-                    total={totalDebts}
-                    expanded={expandedSection === 'debts'}
-                    onToggle={() =>
-                      setExpandedSection(expandedSection === 'debts' ? null : 'debts')
-                    }
-                    balanceVisible={balanceVisible}
-                    isDebt={true}
-                  />
-                  {expandedSection === 'debts' &&
-                    debtAccounts.map((a) => renderAccountRow(a))}
-                </>
-              )}
-            </View>
+                {/* ── Assets ── */}
+                {assetAccounts.length > 0 && (
+                  <View style={{ marginTop: spacing.lg }}>
+                    <AccountSectionCard
+                      title="ASSETS"
+                      count={assetAccounts.length}
+                      total={totalAssets}
+                      isDebt={false}
+                      expanded={assetsExpanded}
+                      onToggle={() => setAssetsExpanded((v) => !v)}
+                      balanceVisible={balanceVisible}
+                    >
+                      {assetAccounts.map((a, i) => (
+                        <View key={a.id}>
+                          {i > 0 && <View style={styles.rowDivider} />}
+                          {renderRow(a, false)}
+                        </View>
+                      ))}
+                    </AccountSectionCard>
+                  </View>
+                )}
 
-            {/* Link another account CTA */}
-            <TouchableOpacity
-              style={styles.addAccountBtn}
-              activeOpacity={0.7}
-              onPress={() => router.push('/link-account')}
-            >
-              <Ionicons name="add-circle-outline" size={18} color="#a855f7" />
-              <Text style={styles.addAccountText}>Link New Account</Text>
-            </TouchableOpacity>
+                {/* ── Debts ── */}
+                {debtAccounts.length > 0 && (
+                  <View style={{ marginTop: spacing.lg }}>
+                    <AccountSectionCard
+                      title="DEBTS"
+                      count={debtAccounts.length}
+                      total={totalDebts}
+                      isDebt
+                      expanded={debtsExpanded}
+                      onToggle={() => setDebtsExpanded((v) => !v)}
+                      balanceVisible={balanceVisible}
+                    >
+                      {debtAccounts.map((a, i) => (
+                        <View key={a.id}>
+                          {i > 0 && <View style={styles.rowDivider} />}
+                          {renderRow(a, true)}
+                        </View>
+                      ))}
+                    </AccountSectionCard>
+                  </View>
+                )}
 
-            {/* Last synced */}
-            {accounts[0]?.updated_at && (
-              <Text style={styles.syncedText}>
-                Last synced {new Date(accounts[0].updated_at).toLocaleString()}
-              </Text>
+                {/* ── Link CTA ── */}
+                <TouchableOpacity
+                  style={styles.linkCta}
+                  activeOpacity={0.7}
+                  onPress={() => router.push('/link-account')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Link new account"
+                >
+                  <Ionicons name="add-circle-outline" size={18} color={colors.primary2} />
+                  <Text style={styles.linkCtaText}>Link New Account</Text>
+                </TouchableOpacity>
+              </>
             )}
           </ScrollView>
         )}
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
@@ -451,331 +574,232 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
   headerTitle: {
-    color: '#f8fafc',
-    fontSize: 20,
-    fontWeight: '700',
-    letterSpacing: -0.3,
+    ...typography.bodyBold,
+    color: colors.text,
+    flex: 1,
+    marginLeft: spacing.xs,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: spacing.xs,
   },
   headerIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  /* Loading */
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    color: '#64748b',
-    fontSize: 14,
-  },
-
-  /* Empty state */
-  emptyContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 40,
-  },
-  emptyIconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(168,85,247,0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  emptyTitle: {
-    color: '#f8fafc',
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  emptyText: {
-    color: '#64748b',
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  linkBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-  },
-  linkBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-
-  /* Scroll content */
-  scrollContent: {
-    padding: 20,
+  /* Scroll */
+  scroll: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
     paddingBottom: 120,
   },
 
-  /* Hero card */
-  heroCard: {
-    borderRadius: 20,
-    padding: 22,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.15)',
+  /* Cards */
+  card: {
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
   },
-  heroLabel: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.3,
-  },
-  heroAmount: {
-    fontSize: 34,
-    fontWeight: '800',
-    letterSpacing: -1,
-    marginTop: 6,
-  },
-  heroSub: {
-    color: 'rgba(255,255,255,0.35)',
-    fontSize: 12,
-    marginTop: 4,
-  },
-  heroSummaryRow: {
-    flexDirection: 'row',
-    marginTop: 18,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: 12,
-    padding: 14,
-    gap: 12,
-  },
-  heroSummaryItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  heroSummaryLabel: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 10,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  heroSummaryValue: {
-    fontSize: 17,
+  groupLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
     fontWeight: '700',
   },
-  heroSummaryDivider: {
-    width: 1,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+
+  /* Freshness chip */
+  freshness: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+  freshnessText: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
 
-  /* Glass card */
-  glassCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+  /* Allocation */
+  allocationBody: {
+    gap: spacing.md,
+    marginTop: spacing.md,
   },
-  cardTitle: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 14,
-  },
-
-  /* Allocation bar */
-  allocationBarContainer: {
-    gap: 12,
-  },
-  allocationBarTrack: {
+  allocationTrack: {
     height: 8,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: radius.sm,
+    backgroundColor: colors.glassMedium,
     flexDirection: 'row',
     overflow: 'hidden',
   },
   allocationLegend: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 14,
+    gap: spacing.md,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: spacing.xs,
   },
   legendDot: {
     width: 8,
     height: 8,
-    borderRadius: 4,
+    borderRadius: radius.full,
   },
   legendLabel: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 12,
+    ...typography.caption,
+    color: colors.textMuted,
   },
   legendPct: {
-    color: '#f8fafc',
-    fontSize: 12,
+    ...typography.caption,
+    color: colors.text,
     fontWeight: '600',
   },
 
-  /* Section header */
+  /* Section card */
   sectionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    justifyContent: 'space-between',
+    minHeight: 44,
   },
   sectionHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  sectionTitle: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: '600',
+    gap: spacing.sm,
   },
   countBadge: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 10,
-    paddingHorizontal: 7,
+    backgroundColor: colors.glassMedium,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
   countText: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 10,
+    ...typography.caption,
+    color: colors.textMuted,
     fontWeight: '600',
   },
   sectionTotal: {
-    fontSize: 15,
-    fontWeight: '700',
+    ...typography.bodyBold,
+    flexShrink: 0,
   },
-  sectionDivider: {
+  sectionBody: {
+    marginTop: spacing.xs,
+  },
+  rowDivider: {
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    marginVertical: 4,
+    backgroundColor: colors.borderLight,
   },
 
-  /* Account card */
-  accountCard: {
+  /* Skeleton row */
+  skelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.04)',
-  },
-  accountIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  accountInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  accountName: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  accountMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 3,
-  },
-  accountMeta: {
-    color: 'rgba(255,255,255,0.35)',
-    fontSize: 11,
-  },
-  subtypeBadge: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  subtypeText: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  accountBalanceCol: {
-    alignItems: 'flex-end',
-    minWidth: 80,
-  },
-  accountBalance: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  availableText: {
-    color: 'rgba(255,255,255,0.3)',
-    fontSize: 10,
-    marginTop: 2,
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
   },
 
-  /* Add account CTA */
-  addAccountBtn: {
+  /* Link CTA */
+  linkCta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 14,
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    minHeight: 44,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: 'rgba(168,85,247,0.3)',
-    backgroundColor: 'rgba(168,85,247,0.04)',
-    marginBottom: 16,
+    borderColor: colors.primary2,
+    backgroundColor: `${colors.primary2}0a`,
+    marginTop: spacing.lg,
   },
-  addAccountText: {
-    color: '#a855f7',
-    fontSize: 13,
-    fontWeight: '600',
+  linkCtaText: {
+    ...typography.smallBold,
+    color: colors.primary2,
   },
 
-  /* Synced text */
-  syncedText: {
-    color: 'rgba(255,255,255,0.2)',
-    fontSize: 11,
+  /* Empty state */
+  centerContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xxl,
+  },
+  emptyIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: radius.full,
+    backgroundColor: `${colors.primary2}1a`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  emptyTitle: {
+    ...typography.h3,
+    color: colors.text,
+    marginBottom: spacing.sm,
     textAlign: 'center',
+  },
+  emptyText: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+  },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radius.lg,
+    minHeight: 44,
+  },
+  primaryBtnText: {
+    ...typography.button,
+    color: colors.text,
+  },
+
+  /* Error state */
+  errorInner: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+  },
+  errorTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    textAlign: 'center',
+  },
+  errorText: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minHeight: 44,
+  },
+  retryText: {
+    ...typography.smallBold,
+    color: colors.primary2,
   },
 });

@@ -1,0 +1,31 @@
+{
+  "componentName": "AmountHero",
+  "description": "Large, semantically-tinted numeric hero — the primary input. Green for income, red for expense, with a sign prefix.",
+  "platform": "react-native",
+  "props": {
+    "value": { "type": "string", "required": true, "description": "Raw numeric string" },
+    "onChangeText": { "type": "function", "required": true, "description": "(v: string) => void" },
+    "type": { "type": "'expense' | 'income'", "required": true, "description": "Drives color + sign prefix" },
+    "error": { "type": "string", "required": false, "description": "Inline validation hint, e.g. 'Enter a valid number'" }
+  },
+  "variants": ["expense", "income"],
+  "states": ["empty", "filled", "invalid"],
+  "layout": {
+    "card": "glassEffects.glassFloating",
+    "padding": "spacing.xl",
+    "align": "center"
+  },
+  "tokens": {
+    "label": { "text": "typography.caption", "color": "colors.textMuted", "content": "AMOUNT" },
+    "valueExpense": { "type": "typography.h1", "color": "colors.error", "prefix": "− $" },
+    "valueIncome": { "type": "typography.h1", "color": "colors.success", "prefix": "+ $" },
+    "placeholder": { "content": "$0.00", "color": "colors.textMuted" },
+    "errorHint": { "icon": "alert-circle-outline", "color": "colors.error", "text": "typography.caption" }
+  },
+  "behavior": "Hidden numeric TextInput drives a large display. adjustsFontSizeToFit + minimumFontScale ~0.6 shrinks past ~10 chars. Whole card tappable to focus.",
+  "accessibility": {
+    "label": "Transaction amount",
+    "keyboardType": "numeric",
+    "colorIndependent": "Sign prefix (−/+) conveys direction alongside color; error pairs icon + word"
+  }
+}

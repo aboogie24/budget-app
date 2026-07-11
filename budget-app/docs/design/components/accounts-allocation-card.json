@@ -1,0 +1,30 @@
+{
+  "componentName": "AccountsAllocationCard",
+  "description": "Retokenized asset-allocation card: a segmented horizontal bar of asset-type proportions plus a wrapping dot+label+percent legend. Renders only when there is more than one asset type.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "segments": {
+      "type": "{ label: string; pct: number; color: string }[]",
+      "required": true,
+      "description": "Per-asset-type share; color comes from the type token map (info/success/textMuted...)"
+    }
+  },
+  "renderGuard": "segments.length > 1",
+  "states": ["default", "loading"],
+  "layout": {
+    "card": "glassEffects.glass, radius.lg, padding spacing.md",
+    "track": { "height": 8, "radius": "radius.sm", "background": "colors.glassMedium", "endsRoundedOnly": true },
+    "legend": { "flexDirection": "row", "flexWrap": "wrap", "gap": "spacing.md" },
+    "legendDot": 8
+  },
+  "tokens": {
+    "groupLabel": "typography.caption uppercase, colors.textMuted",
+    "legendLabel": "typography.caption, colors.textMuted",
+    "legendPct": "typography.caption, colors.text, weight 600"
+  },
+  "accessibility": {
+    "role": "image",
+    "label": "Asset allocation: {segments.map(s => `${s.label} ${s.pct} percent`).join(', ')}."
+  }
+}

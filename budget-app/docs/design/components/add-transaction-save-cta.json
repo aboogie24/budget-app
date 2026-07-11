@@ -1,0 +1,31 @@
+{
+  "componentName": "SaveCTA",
+  "description": "Sticky, keyboard-aware primary button pinned to the footer. Disabled until the form is valid; shows an inline loading label while saving.",
+  "platform": "react-native",
+  "props": {
+    "isValid": { "type": "boolean", "required": true, "description": "amount finite && category selected && (not monthly-expense || dueDay 1-31)" },
+    "saving": { "type": "boolean", "required": true },
+    "onPress": { "type": "function", "required": true },
+    "disabledReason": { "type": "string", "required": false, "description": "SR-announced reason, e.g. 'enter an amount and pick a category'" }
+  },
+  "variants": ["default"],
+  "states": ["disabled", "default", "loading", "pressed"],
+  "layout": {
+    "footer": { "paddingHorizontal": "spacing.lg", "paddingBottomExtra": "spacing.md + safeAreaInset", "topHairline": "colors.borderLight" },
+    "button": { "gradient": "gradients.primaryGradient", "radius": "radius.lg", "paddingVertical": "spacing.lg", "minHeight": 44, "direction": "row", "justify": "center", "gap": "spacing.sm" }
+  },
+  "tokens": {
+    "label": { "type": "typography.button", "color": "#fff", "content": "Save" },
+    "icon": { "name": "arrow-forward", "color": "#fff" },
+    "loading": { "label": "Saving…", "spinner": "ActivityIndicator #fff" },
+    "disabled": { "opacity": 0.5 }
+  },
+  "behavior": "Wrapped in KeyboardAvoidingView so it stays above the keyboard. On success: successHaptic() + router.back(). On failure: errorHaptic() + show InlineErrorCard, re-enable. Replaces all Alert.alert validation with proactive disabled state.",
+  "accessibility": {
+    "role": "button",
+    "label": "Save transaction",
+    "state": "accessibilityState={{ disabled: !isValid || saving }}",
+    "disabledHint": "Announces disabledReason when invalid",
+    "minTarget": "≥44pt"
+  }
+}

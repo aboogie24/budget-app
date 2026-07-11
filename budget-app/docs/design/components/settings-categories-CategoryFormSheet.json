@@ -1,0 +1,68 @@
+{
+  "componentName": "CategoryFormSheet",
+  "description": "Bottom-sheet modal for adding/editing a category or subcategory. A pure re-skin of the existing editModal — same name/color/icon fields, same live preview, same handleSaveEdit validation and Alerts. Tokenizes surface, inputs, and CTA to the shared form-sheet recipe (matches SavingsGoalFormSheet / priorities-form-sheet).",
+  "platform": "react-native",
+  "props": {
+    "visible": { "type": "boolean", "required": true, "description": "editModal" },
+    "editData": { "type": "EditData | null", "required": true, "description": "{ name, color, icon, isNew, isSubcategory }" },
+    "saving": { "type": "boolean", "required": true, "description": "editSaving" },
+    "onChange": { "type": "(patch: Partial<EditData>) => void", "required": true },
+    "onSave": { "type": "function", "required": true, "description": "handleSaveEdit" },
+    "onClose": { "type": "function", "required": true }
+  },
+  "titleAndCta": {
+    "title": "editData.isNew ? (isSubcategory ? 'Add Subcategory' : 'Add Category') : 'Edit Category'",
+    "cta": "editData.isNew ? 'Create' : 'Save Changes'"
+  },
+  "layout": {
+    "presentation": "bottom sheet, Modal animationType 'slide', transparent",
+    "backdrop": "rgba(0,0,0,0.6) scrim",
+    "sheetSurface": "colors.surface2",
+    "sheetBorder": "colors.borderGlass",
+    "sheetRadius": "radius.xl (top corners)",
+    "sheetPadding": "spacing.xl",
+    "maxHeight": "85%",
+    "keyboardAvoidance": "wrap in KeyboardAvoidingView (behavior 'padding' iOS) — MISSING today, add it"
+  },
+  "content": {
+    "title": { "type": "typography.h3", "color": "colors.text" },
+    "close": { "icon": "close", "size": 22, "color": "colors.textMuted", "chip": "colors.glassMedium", "touchTarget": 44 },
+    "fieldLabel": { "type": "typography.smallBold", "color": "colors.textMuted" },
+    "nameInput": {
+      "fill": "colors.glassLight", "border": "1px colors.borderGlass", "radius": "radius.md",
+      "padding": { "horizontal": "spacing.md", "vertical": "spacing.md" },
+      "text": "typography.body colors.text", "placeholderColor": "colors.textMuted",
+      "autoFocus": "editData.isNew"
+    },
+    "colorGrid": {
+      "swatch": { "size": 32, "radius": "radius.md", "fill": "PRESET_COLORS[i] (data literals, kept)" },
+      "selected": { "ring": "2px colors.text" }
+    },
+    "iconScroller": {
+      "orientation": "horizontal",
+      "option": { "size": 42, "radius": "radius.md", "fill": "colors.glassLight", "border": "colors.borderGlass", "icon": "colors.textMuted" },
+      "selected": { "border": "editData.color", "fill": "editData.color @ 12%", "icon": "editData.color" }
+    },
+    "preview": {
+      "card": "glassEffects.glass", "radius": "radius.lg",
+      "iconChip": "editData.color @ 12% fill, resolveIcon(editData.icon) in editData.color",
+      "name": { "type": "typography.bodyBold", "color": "colors.text", "fallback": "'Category Name'" }
+    },
+    "cta": {
+      "gradient": "gradients.primaryGradient", "radius": "radius.lg", "paddingVertical": "spacing.lg",
+      "label": "typography.button colors.text", "loading": "ActivityIndicator colors.text when saving",
+      "disabled": "saving (opacity 0.5)"
+    }
+  },
+  "states": ["create-parent", "create-subcategory", "edit", "saving", "validation-error (Alert, kept)"],
+  "accessibility": {
+    "role": "dialog",
+    "label": "{title} form",
+    "closeLabel": "Close",
+    "focus": "name field on open",
+    "swatchLabel": "{color} color, {selected|not selected}",
+    "iconLabel": "{iconKey} icon, {selected|not selected}",
+    "ctaLabel": "{isNew ? 'Create category' : 'Save changes'}"
+  },
+  "developerNotes": "Re-skin only — keep editData state, handleSaveEdit, and all Alert validation exactly. Swap #0f0a1e→colors.surface2, saveBtn #7c3aed→gradients.primaryGradient, scrim 0.7→0.6. PRESET_COLORS stay literal (user data). System categories never open this sheet (Alert, unchanged)."
+}

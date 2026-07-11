@@ -1,0 +1,27 @@
+{
+  "componentName": "FrameworkProgressBar",
+  "description": "Shared thin progress bar used by the criteria card (level-colored) and the plan cards (success-colored). Track + rounded fill, no magic numbers.",
+  "platform": "react-native",
+  "spec": "budget-app/docs/design/specs/framework-redesign.md#7-tier-3--level-criteria-checklist",
+  "props": {
+    "percent": { "type": "number", "required": true, "description": "Fill percent 0-100 (clamped)." },
+    "color": { "type": "string", "required": true, "description": "Fill color token. 'level' contexts pass the level's token color; plan contexts pass colors.success." }
+  },
+  "variants": ["level", "success"],
+  "states": ["default"],
+  "layout": {
+    "height": 6,
+    "radius": "radius.full",
+    "overflow": "hidden"
+  },
+  "tokens": {
+    "track": "colors.glassLight",
+    "fillLevel": "level token color (§3)",
+    "fillPlan": "colors.success"
+  },
+  "accessibility": {
+    "role": "progressbar",
+    "label": "{percent} percent",
+    "note": "Bar is always paired with a text value nearby (e.g. '3 of 5 criteria met') so it is never the sole carrier of meaning."
+  }
+}

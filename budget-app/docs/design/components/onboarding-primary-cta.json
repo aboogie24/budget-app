@@ -1,0 +1,37 @@
+{
+  "componentName": "OnboardingPrimaryCta",
+  "description": "The single shared full-width gradient primary button used by every onboarding step, replacing four copies of the inline gradient button.",
+  "platform": "react-native",
+  "props": {
+    "label": { "type": "string", "required": true, "description": "Button label (e.g. 'Get Started', 'Send Invite', 'Connect a bank', \"Let's Go!\")" },
+    "onPress": { "type": "function", "required": true, "description": "Advance / action handler" },
+    "loading": { "type": "boolean", "default": false, "description": "In-flight: swaps content for ActivityIndicator, disables press" },
+    "loadingLabel": { "type": "string", "required": false, "description": "Optional in-flight label ('Sending…', 'Connecting…')" },
+    "disabled": { "type": "boolean", "default": false, "description": "Opacity 0.5, no press" },
+    "iconLeading": { "type": "string", "required": false, "description": "Ionicons name shown before the label" },
+    "iconTrailing": { "type": "string", "required": false, "description": "Ionicons name shown after the label (e.g. arrow-forward, rocket-outline)" }
+  },
+  "variants": ["default"],
+  "states": ["default", "pressed", "loading", "disabled"],
+  "layout": {
+    "width": "100%",
+    "minHeight": 52,
+    "radius": "radius.lg",
+    "gradient": "gradients.primaryGradient",
+    "gap": "spacing.sm",
+    "overflow": "hidden"
+  },
+  "tokens": {
+    "fill": "gradients.primaryGradient",
+    "text": "typography.button / colors.text",
+    "icon": "colors.text",
+    "spinner": "colors.text",
+    "pressAnimation": "animation.fast"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{label}",
+    "state": "{ disabled, busy: loading }",
+    "minTarget": "52pt (>=44)"
+  }
+}

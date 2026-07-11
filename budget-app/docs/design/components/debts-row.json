@@ -1,0 +1,54 @@
+{
+  "componentName": "DebtRow",
+  "description": "Expandable list row for a single debt: progress ring + icon, name, bucket badge, balance, percent paid, progress bar, and an expandable detail panel with stats and actions.",
+  "platform": "react-native",
+  "surface": "glassEffects.glass",
+  "props": {
+    "debt": { "type": "Debt", "required": true, "description": "Debt record (name, balance, apr, min_payment, due_day, strategy, is_shared, debt_category, liability_type)" },
+    "expanded": { "type": "boolean", "required": true, "description": "Whether the detail panel is open" },
+    "billExists": { "type": "boolean", "required": true, "description": "Whether a linked bill exists (toggles View Bill vs Create Bill + Link Bill)" },
+    "onToggle": { "type": "function", "required": true, "description": "Expand/collapse handler" },
+    "onMakePayment": { "type": "function", "required": true },
+    "onEditDetails": { "type": "function", "required": true },
+    "onBillAction": { "type": "function", "required": true },
+    "onLinkBill": { "type": "function", "required": true },
+    "onToggleCategory": { "type": "function", "required": true }
+  },
+  "bucket": {
+    "attack": { "icon": "flame", "label": "ATTACK", "color": "colors.error" },
+    "structured": { "icon": "shield-checkmark", "label": "STRUCTURED", "color": "colors.info" }
+  },
+  "tokens": {
+    "card": "glassEffects.glass",
+    "radius": "radius.lg",
+    "border": "colors.borderGlass",
+    "marginBottom": "spacing.sm",
+    "rowPadding": "spacing.md",
+    "name": "typography.smallBold / colors.text",
+    "balance": "typography.bodyBold / colors.text",
+    "subtitle": "typography.caption / colors.textMuted",
+    "chevron": "colors.textDark",
+    "ringTrack": "colors.glassMedium",
+    "ringStroke": "bucket color (error/info); colors.error when overdue",
+    "progressBarTrack": "colors.glassMedium",
+    "progressBarFill": "bucket-color gradient",
+    "statBox": "glassEffects.glass with colors.glassLight fill / radius.md",
+    "primaryAction": "gradients.primaryGradient",
+    "paymentGradient": "gradients.primaryGradient",
+    "billChip": "colors.info on info@12%",
+    "linkChip": "colors.primary2 on primary@12%"
+  },
+  "variants": ["attack", "structured", "overdue"],
+  "states": ["default", "pressed", "expanded", "loading", "overdue"],
+  "layout": {
+    "ringSize": 42,
+    "progressBarHeight": 4,
+    "expandDuration": "animation.medium"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {Attack|Structured}, balance {balance}, {percent} percent paid, {Shared|Personal}",
+    "hint": "Double tap to expand details",
+    "colorIndependence": "bucket conveyed by icon + uppercase word + color; overdue adds [OVERDUE] label"
+  }
+}

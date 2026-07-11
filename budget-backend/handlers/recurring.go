@@ -111,14 +111,28 @@ func RunRecurringSync() (int, error) {
 	totalCreated := 0
 
 	for _, tmpl := range templates {
-		// Find the most recent generated occurrence for this template.
+		// The note actually written for this template's occurrences. A custom
+		// template note (e.g. "Rent") overrides the synthetic recurring tag.
+		note := "recurring:" + tmpl.ID
+		if tmpl.Note != "" {
+			note = tmpl.Note
+		}
+
+		// Find the most recent already-generated occurrence, matched by the SAME
+		// identity the dedupe index uses (user, type, amount, note). The old query
+		// matched only the 'recurring:<id>' note prefix, so templates with a custom
+		// note were never found — making every run re-generate (and collide with)
+		// all prior occurrences on transactions_manual_dedupe_idx.
 		var lastDate time.Time
 		err := dbClient.QueryRow(`
-			SELECT COALESCE(MAX(date), $2)
+			SELECT COALESCE(MAX(date), $1)
 			FROM transactions
-			WHERE note LIKE 'recurring:' || $1 || '%'
-			  AND source = 'recurring'
-		`, tmpl.ID, tmpl.Date).Scan(&lastDate)
+			WHERE source = 'recurring'
+			  AND user_id = $2
+			  AND type = $3
+			  AND amount = $4
+			  AND COALESCE(note, '') = $5
+		`, tmpl.Date, tmpl.UserID, tmpl.Type, tmpl.Amount, note).Scan(&lastDate)
 		if err != nil {
 			lastDate = tmpl.Date
 		}
@@ -128,10 +142,6 @@ func RunRecurringSync() (int, error) {
 		for !nextDate.After(today) {
 			txID := uuid.Must(uuid.NewV4()).String()
 			source := "recurring"
-			note := "recurring:" + tmpl.ID
-			if tmpl.Note != "" {
-				note = tmpl.Note
-			}
 
 			_, err := dbClient.Exec(`
 				INSERT INTO transactions (id, user_id, household_id, budget_id, category_id,

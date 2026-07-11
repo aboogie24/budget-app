@@ -10,16 +10,28 @@ import {
   Modal,
   ActivityIndicator,
   Switch,
+  RefreshControl,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton, SkeletonStack } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { BackButton } from '@/components/BackButton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  gradients,
+} from '@/utils/design-system';
 
 type Bill = {
   id: string;
@@ -58,16 +70,39 @@ type BillSuggestion = {
   sample_transaction_ids: string[];
 };
 
-const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: string; label: string }> = {
-  paid: { color: '#34d399', bg: 'rgba(52,211,153,0.12)', icon: 'checkmark', label: 'Paid' },
-  unpaid: { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)', icon: 'time-outline', label: 'Upcoming' },
-  overdue: { color: '#f87171', bg: 'rgba(248,113,113,0.12)', icon: 'warning-outline', label: 'Overdue' },
+type BillWithMeta = Bill & { _status: string; _owner: string };
+
+/* ── Status token map — icon + word + color (never color-only) ── */
+const STATUS_CONFIG: Record<
+  string,
+  { color: string; tint: string; icon: string; label: string }
+> = {
+  paid: {
+    color: colors.success,
+    tint: 'rgba(34,197,94,0.12)',
+    icon: 'checkmark',
+    label: 'PAID',
+  },
+  unpaid: {
+    color: colors.warning,
+    tint: 'rgba(234,179,8,0.12)',
+    icon: 'time-outline',
+    label: 'DUE',
+  },
+  overdue: {
+    color: colors.error,
+    tint: 'rgba(239,68,68,0.12)',
+    icon: 'warning-outline',
+    label: 'OVERDUE',
+  },
 };
 
+/* ── Owner glyph — shared couples-attribution convention ──
+   Partner A → primary2, Partner B → info, shared/joint → neutral textMuted. */
 const OWNER_COLORS: Record<string, string> = {
-  You: '#a855f7',
-  Partner: '#ec4899',
-  Joint: '#06b6d4',
+  You: colors.primary2,
+  Partner: colors.info,
+  Joint: colors.textMuted,
 };
 
 const FREQUENCY_OPTIONS = [
@@ -78,12 +113,15 @@ const FREQUENCY_OPTIONS = [
   { label: 'Yearly', value: 'yearly' },
 ];
 
-/* ---- Progress Ring Component ---- */
+const SUGGESTIONS_VISIBLE_CAP = 5;
+
+/* ---- Progress Ring (colocated: shared ProgressRing can't render a custom
+   count/label center, only a percentage). Fed token colors so it's tokenized. ---- */
 function ProgressRing({
   percent,
   size = 64,
   strokeWidth = 5,
-  color = '#34d399',
+  color = colors.success,
 }: {
   percent: number;
   size?: number;
@@ -100,7 +138,7 @@ function ProgressRing({
         cy={size / 2}
         r={r}
         fill="none"
-        stroke="rgba(255,255,255,0.08)"
+        stroke={colors.borderLight}
         strokeWidth={strokeWidth}
       />
       <Circle
@@ -120,13 +158,13 @@ function ProgressRing({
   );
 }
 
-/* ---- Owner Dot Component ---- */
+/* ---- Owner Dot ---- */
 function OwnerDot({ owner }: { owner?: string }) {
-  const color = OWNER_COLORS[owner || ''] || 'rgba(255,255,255,0.35)';
+  const color = OWNER_COLORS[owner || ''] || colors.textMuted;
   return <View style={[styles.ownerDot, { backgroundColor: color }]} />;
 }
 
-/* ---- Bill Status Helper ---- */
+/* ---- Bill Status Helper (unchanged) ---- */
 function getBillStatus(bill: Bill): string {
   if (bill.status === 'paid') return 'paid';
   const today = new Date().getDate();
@@ -134,15 +172,36 @@ function getBillStatus(bill: Bill): string {
   return 'unpaid';
 }
 
-/* ---- Bill Owner Helper ---- */
+/* ---- Bill Owner Helper (unchanged) ---- */
 function getBillOwner(bill: Bill): string {
   if (bill.owner) return bill.owner;
   if (bill.is_shared) return 'Joint';
   return 'You';
 }
 
-/* ---- Timeline Component ---- */
-function BillTimeline({ bills }: { bills: Bill[] }) {
+function ordinalSuffix(day: number): string {
+  if (day >= 11 && day <= 13) return 'th';
+  switch (day % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
+}
+
+const fmt = (v: number) =>
+  '$' +
+  Math.abs(v).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+/* ---- Timeline (retokenized, capability unchanged) ---- */
+function BillTimeline({ bills }: { bills: BillWithMeta[] }) {
   const today = new Date().getDate();
   const monthName = new Date().toLocaleString('en-US', { month: 'long' });
   const sorted = [...bills].sort((a, b) => a.due_day - b.due_day);
@@ -151,64 +210,46 @@ function BillTimeline({ bills }: { bills: Bill[] }) {
   return (
     <View style={styles.glassCard}>
       <View style={styles.timelineHeader}>
-        <Text style={styles.timelineTitleText}>
-          {monthName} Timeline
-        </Text>
-        <Text style={styles.timelineToday}>
-          Today: {ordinalSuffix(today)}
-        </Text>
+        <Text style={styles.timelineTitleText}>{monthName} TIMELINE</Text>
+        <Text style={styles.timelineToday}>Today: {ordinalSuffix(today)}</Text>
       </View>
 
-      {/* Timeline bar area */}
       <View style={styles.timelineBarArea}>
-        {/* Track background */}
         <View style={styles.timelineTrack} />
 
-        {/* Progress fill */}
         <LinearGradient
-          colors={['#7c3aed', '#a855f7']}
+          colors={gradients.primaryGradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={[styles.timelineProgress, { width: `${progressPercent}%` }]}
         />
 
-        {/* Bill dots */}
         {sorted.map((b) => {
-          const status = getBillStatus(b);
-          const statusColor = STATUS_CONFIG[status].color;
+          const statusColor = STATUS_CONFIG[b._status].color;
           const leftPercent = ((b.due_day - 1) / 30) * 100;
           return (
             <View
               key={b.id}
               style={[
                 styles.timelineDot,
-                {
-                  left: `${leftPercent}%`,
-                  backgroundColor: statusColor,
-                },
+                { left: `${leftPercent}%`, backgroundColor: statusColor },
               ]}
             />
           );
         })}
 
-        {/* Today marker */}
-        <View
-          style={[
-            styles.todayMarker,
-            { left: `${progressPercent}%` },
-          ]}
-        />
+        <View style={[styles.todayMarker, { left: `${progressPercent}%` }]} />
       </View>
 
-      {/* Legend */}
+      {/* Legend — icon + word (status never color-only) */}
       <View style={styles.timelineLegend}>
         {[
-          { color: '#34d399', label: 'Paid' },
-          { color: '#fbbf24', label: 'Upcoming' },
-          { color: '#f87171', label: 'Overdue' },
+          { color: colors.success, icon: 'checkmark', label: 'Paid' },
+          { color: colors.warning, icon: 'time-outline', label: 'Upcoming' },
+          { color: colors.error, icon: 'warning-outline', label: 'Overdue' },
         ].map((l) => (
           <View key={l.label} style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: l.color }]} />
+            <Ionicons name={l.icon as any} size={11} color={l.color} />
             <Text style={styles.legendText}>{l.label}</Text>
           </View>
         ))}
@@ -217,16 +258,134 @@ function BillTimeline({ bills }: { bills: Bill[] }) {
   );
 }
 
+/* ---- Bill Row (core — actual vs projected, mirrors CalendarEventRow) ---- */
+function BillRow({
+  bill,
+  categoryName,
+  onEdit,
+  onMarkPaid,
+  onDelete,
+}: {
+  bill: BillWithMeta;
+  categoryName?: string;
+  onEdit: () => void;
+  onMarkPaid: () => void;
+  onDelete: () => void;
+}) {
+  const status = STATUS_CONFIG[bill._status];
+  const isPaid = bill._status === 'paid';
+  const isOverdue = bill._status === 'overdue';
+  const amountColor = isPaid
+    ? colors.accent
+    : isOverdue
+      ? colors.error
+      : colors.warning;
+
+  const a11yStatus = isPaid ? 'paid' : isOverdue ? 'overdue' : 'upcoming bill';
+  const a11yLabel = `${bill.name}, ${a11yStatus}, ${fmt(bill.amount_due)}${
+    bill.is_autopay ? ', autopay' : ''
+  }${bill.debt_account_id ? ', linked to debt' : ''}, due ${bill.due_day}${ordinalSuffix(
+    bill.due_day,
+  )}`;
+
+  return (
+    <TouchableOpacity
+      style={[styles.card, isPaid ? styles.cardActual : styles.cardProjected]}
+      onPress={onEdit}
+      activeOpacity={0.7}
+      accessibilityLabel={a11yLabel}
+      accessibilityHint="Double tap to edit."
+    >
+      <View style={styles.cardHeader}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={styles.cardNameRow}>
+            <OwnerDot owner={bill._owner} />
+            <Text
+              style={[styles.cardTitle, !isPaid && styles.projectedText]}
+              numberOfLines={1}
+            >
+              {bill.name}
+            </Text>
+            {bill.is_autopay && (
+              <View style={styles.autoBadge}>
+                <Ionicons name="flash" size={9} color={colors.info} />
+                <Text style={styles.autoBadgeText}>AUTO</Text>
+              </View>
+            )}
+            {bill.debt_account_id && (
+              <View style={styles.debtBadge}>
+                <Ionicons name="link" size={9} color={colors.primary2} />
+                <Text style={styles.debtBadgeText}>DEBT</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.cardDetails}>
+            <Text style={styles.detailText}>
+              {isPaid ? 'Paid' : 'Due'} {bill.due_day}
+              {ordinalSuffix(bill.due_day)}
+            </Text>
+            {bill.payee ? <Text style={styles.detailText}>{bill.payee}</Text> : null}
+            {categoryName ? <Text style={styles.detailText}>{categoryName}</Text> : null}
+          </View>
+        </View>
+
+        <Text style={[styles.cardAmount, { color: amountColor }]}>
+          {isPaid ? '' : '~'}
+          {fmt(bill.amount_due)}
+        </Text>
+      </View>
+
+      <View style={styles.cardFooter}>
+        <View style={[styles.statusChip, { backgroundColor: status.tint }]}>
+          <Ionicons name={status.icon as any} size={12} color={status.color} />
+          <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+        </View>
+
+        <View style={styles.rowActions}>
+          {!isPaid && (
+            <TouchableOpacity
+              style={styles.payBtn}
+              onPress={(e) => {
+                e.stopPropagation?.();
+                onMarkPaid();
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              accessibilityLabel={`Mark ${bill.name} paid`}
+            >
+              <Ionicons name="checkmark" size={12} color={colors.success} />
+              <Text style={styles.payBtnText}>Mark Paid</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.deleteBtn}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              onDelete();
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={`Delete ${bill.name}`}
+          >
+            <Ionicons name="trash-outline" size={14} color={colors.error} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 /* ---- Main Screen ---- */
 export default function BillsScreen() {
-  const router = useRouter();
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [suggestions, setSuggestions] = useState<BillSuggestion[]>([]);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
 
@@ -260,6 +419,7 @@ export default function BillsScreen() {
       setError('Failed to load bills');
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
     }
   }, []);
 
@@ -300,6 +460,12 @@ export default function BillsScreen() {
     loadSuggestions();
   }, [loadBills, loadDropdownData, loadSuggestions]);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([loadBills(), loadDropdownData(), loadSuggestions()]);
+    setRefreshing(false);
+  }, [loadBills, loadDropdownData, loadSuggestions]);
+
   const handleAcceptSuggestion = async (s: BillSuggestion) => {
     const userId = await api.getUserId();
     if (!userId) return;
@@ -325,7 +491,9 @@ export default function BillsScreen() {
           ? `Created "${s.display_name}" and marked ${back} past period${back !== 1 ? 's' : ''} as paid.`
           : `Created "${s.display_name}".`,
       );
-      setSuggestions((prev) => prev.filter((x) => x.merchant_normalized !== s.merchant_normalized));
+      setSuggestions((prev) =>
+        prev.filter((x) => x.merchant_normalized !== s.merchant_normalized),
+      );
       loadBills();
     } catch (e) {
       console.error('Accept suggestion error:', e);
@@ -339,7 +507,9 @@ export default function BillsScreen() {
     const userId = await api.getUserId();
     if (!userId) return;
     // Optimistic: drop immediately, fire-and-forget the request.
-    setSuggestions((prev) => prev.filter((x) => x.merchant_normalized !== s.merchant_normalized));
+    setSuggestions((prev) =>
+      prev.filter((x) => x.merchant_normalized !== s.merchant_normalized),
+    );
     try {
       await api.post(`/auth/bills/suggestions/dismiss?user_id=${userId}`, {
         merchant_normalized: s.merchant_normalized,
@@ -469,11 +639,14 @@ export default function BillsScreen() {
     try {
       const result = await api.post<{ count: number; detected: any[] }>(
         `/auth/bills/auto-detect?user_id=${userId}`,
-        undefined
+        undefined,
       );
       const count = result?.count ?? 0;
       if (count > 0) {
-        Alert.alert('Auto-Detect', `Matched ${count} bill payment(s) from your bank transactions.`);
+        Alert.alert(
+          'Auto-Detect',
+          `Matched ${count} bill payment(s) from your bank transactions.`,
+        );
         loadBills();
       } else {
         Alert.alert('Auto-Detect', 'No matching bank transactions found for unpaid bills.');
@@ -489,7 +662,7 @@ export default function BillsScreen() {
   };
 
   // Computed values
-  const billsWithStatus = bills.map((b) => ({
+  const billsWithStatus: BillWithMeta[] = bills.map((b) => ({
     ...b,
     _status: getBillStatus(b),
     _owner: getBillOwner(b),
@@ -502,6 +675,9 @@ export default function BillsScreen() {
     .reduce((s, b) => s + (b.amount_due || 0), 0);
   const unpaidAmount = totalDue - paidAmount;
   const overdueCount = billsWithStatus.filter((b) => b._status === 'overdue').length;
+  const overdueAmount = billsWithStatus
+    .filter((b) => b._status === 'overdue')
+    .reduce((s, b) => s + (b.amount_due || 0), 0);
   const upcomingCount = billsWithStatus.filter((b) => b._status === 'unpaid').length;
   const paidPct = bills.length > 0 ? Math.round((paidCount / bills.length) * 100) : 0;
 
@@ -510,10 +686,30 @@ export default function BillsScreen() {
       ? billsWithStatus
       : billsWithStatus.filter((b) => b._status === filter);
 
-  const fmt = (v: number) =>
-    '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Grouped view (only when filter = All): Overdue → Upcoming → Paid.
+  const groupedBills: { key: string; label: string; items: BillWithMeta[] }[] =
+    filter === 'all'
+      ? [
+          {
+            key: 'overdue',
+            label: 'OVERDUE',
+            items: billsWithStatus.filter((b) => b._status === 'overdue'),
+          },
+          {
+            key: 'unpaid',
+            label: 'UPCOMING',
+            items: billsWithStatus.filter((b) => b._status === 'unpaid'),
+          },
+          {
+            key: 'paid',
+            label: 'PAID',
+            items: billsWithStatus.filter((b) => b._status === 'paid'),
+          },
+        ].filter((g) => g.items.length > 0)
+      : [{ key: filter, label: '', items: filteredBills }];
 
   const getCategoryName = (id?: string) => categories.find((c) => c.id === id)?.name;
+  const getBillCategory = (b: Bill) => b.category_name || getCategoryName(b.category_id);
   const getDebtName = (id?: string) => debts.find((d) => d.id === id)?.name;
   const getFrequencyLabel = (val: string) =>
     FREQUENCY_OPTIONS.find((f) => f.value === val)?.label || val;
@@ -525,8 +721,78 @@ export default function BillsScreen() {
     { key: 'overdue', label: 'Overdue', count: overdueCount },
   ];
 
+  const showSkeleton = loading && !loadedOnce;
+  const visibleSuggestions = showAllSuggestions
+    ? suggestions
+    : suggestions.slice(0, SUGGESTIONS_VISIBLE_CAP);
+
+  const openAdd = () => {
+    resetForm();
+    setShowForm(true);
+  };
+
+  const renderSuggestionsCard = () => (
+    <View style={styles.suggestionsSection}>
+      <View style={styles.suggestionsHeader}>
+        <Ionicons name="sparkles-outline" size={14} color={colors.warning} />
+        <Text style={styles.suggestionsTitle}>SUGGESTED BILLS ({suggestions.length})</Text>
+      </View>
+      {visibleSuggestions.map((s) => {
+        const isAccepting = acceptingId === s.merchant_normalized;
+        const amtLabel = `${s.amount_variance === 'approximate' ? '~' : ''}${fmt(s.amount)}`;
+        return (
+          <View key={s.merchant_normalized} style={styles.suggestionCard}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.suggestionName} numberOfLines={1}>
+                {s.display_name}
+              </Text>
+              <Text style={styles.suggestionMeta} numberOfLines={1}>
+                {amtLabel} · {s.frequency} · {s.occurrence_count} charges
+                {s.category_name ? ` · ${s.category_name}` : ''}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.suggestionAddBtn, isAccepting && { opacity: 0.5 }]}
+              onPress={() => handleAcceptSuggestion(s)}
+              disabled={isAccepting}
+              accessibilityLabel={`Add ${s.display_name} as a bill`}
+            >
+              {isAccepting ? (
+                <ActivityIndicator size="small" color={colors.success} />
+              ) : (
+                <Ionicons name="add" size={16} color={colors.success} />
+              )}
+              <Text style={styles.suggestionAddText}>Add</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.suggestionDismissBtn}
+              onPress={() => handleDismissSuggestion(s)}
+              disabled={isAccepting}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel={`Dismiss ${s.display_name} suggestion`}
+            >
+              <Ionicons name="close" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        );
+      })}
+      {suggestions.length > SUGGESTIONS_VISIBLE_CAP && (
+        <TouchableOpacity
+          style={styles.showMoreBtn}
+          onPress={() => setShowAllSuggestions((v) => !v)}
+        >
+          <Text style={styles.showMoreText}>
+            {showAllSuggestions
+              ? 'Show less'
+              : `Show ${suggestions.length - SUGGESTIONS_VISIBLE_CAP} more`}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
   return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
         {/* Header */}
         <View style={styles.headerRow}>
@@ -534,192 +800,61 @@ export default function BillsScreen() {
             <BackButton fallback="/(tabs)/goals" />
             <Text style={styles.headerTitle}>Bills</Text>
           </View>
-          <TouchableOpacity
-            onPress={() => {
-              resetForm();
-              setShowForm(true);
-            }}
-          >
-            <LinearGradient
-              colors={['#7c3aed', '#a855f7']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.addButton}
+          <View style={styles.headerRight}>
+            {loading && loadedOnce && !refreshing && (
+              <ActivityIndicator color={colors.primary2} size="small" />
+            )}
+            <TouchableOpacity
+              onPress={openAdd}
+              accessibilityLabel="Add bill"
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Ionicons name="add" size={18} color="#fff" />
-            </LinearGradient>
-          </TouchableOpacity>
+              <LinearGradient
+                colors={gradients.primaryGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.addButton}
+              >
+                <Ionicons name="add" size={22} color={colors.text} />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 }}>
-          {/* Summary Hero Card */}
-          <View style={styles.heroCard}>
-            <View style={styles.heroContent}>
-              {/* Progress Ring */}
-              <View style={styles.ringContainer}>
-                <ProgressRing percent={paidPct} size={64} strokeWidth={5} color="#34d399" />
-                <View style={styles.ringCenter}>
-                  <Text style={styles.ringCount}>{paidCount}</Text>
-                  <Text style={styles.ringLabel}>of {bills.length}</Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary2}
+            />
+          }
+        >
+          {showSkeleton ? (
+            /* ── Loading skeleton — holds layout ── */
+            <View style={{ gap: spacing.lg }}>
+              <View style={styles.heroCard}>
+                <View style={styles.heroContent}>
+                  <Skeleton width={64} height={64} borderRadius={radius.full} />
+                  <View style={{ flex: 1 }}>
+                    <SkeletonStack count={2} height={14} />
+                  </View>
                 </View>
               </View>
-
-              {/* Right side: Total Due + breakdown */}
-              <View style={{ flex: 1 }}>
-                <Text style={styles.totalDueLabel}>Total Due</Text>
-                <Text style={styles.totalDueAmount}>
-                  {fmt(totalDue)}
-                  <Text style={styles.totalDuePeriod}>/mo</Text>
-                </Text>
-
-                <View style={styles.heroBreakdown}>
-                  <View>
-                    <Text style={styles.breakdownLabel}>Paid</Text>
-                    <Text style={[styles.breakdownValue, { color: '#34d399' }]}>
-                      {fmt(paidAmount)}
-                    </Text>
-                  </View>
-                  <View>
-                    <Text style={styles.breakdownLabel}>Remaining</Text>
-                    <Text style={[styles.breakdownValue, { color: '#fbbf24' }]}>
-                      {fmt(unpaidAmount)}
-                    </Text>
-                  </View>
-                  {overdueCount > 0 && (
-                    <View>
-                      <Text style={styles.breakdownLabel}>Overdue</Text>
-                      <Text style={[styles.breakdownValue, { color: '#f87171' }]}>
-                        {overdueCount}
-                      </Text>
-                    </View>
-                  )}
+              <View style={styles.skeletonTabsRow}>
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton key={i} width={72} height={32} borderRadius={radius.md} />
+                ))}
+              </View>
+              {[0, 1, 2, 3].map((i) => (
+                <View key={i} style={[styles.card, styles.cardActual, { minHeight: 72 }]}>
+                  <SkeletonStack count={2} height={12} />
                 </View>
-              </View>
+              ))}
             </View>
-          </View>
-
-          {/* Timeline */}
-          {bills.length > 0 && <BillTimeline bills={billsWithStatus} />}
-
-          {/* Auto-detect Button */}
-          <TouchableOpacity style={styles.autoDetectBtn} onPress={handleAutoDetect} disabled={detecting}>
-            {detecting ? (
-              <ActivityIndicator size="small" color="#60a5fa" />
-            ) : (
-              <Ionicons name="scan-outline" size={16} color="#60a5fa" />
-            )}
-            <Text style={styles.autoDetectText}>
-              {detecting ? 'Scanning...' : 'Auto-detect from bank'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Suggested Bills (from recurring bank transactions) */}
-          {suggestions.length > 0 && (
-            <View style={styles.suggestionsSection}>
-              <View style={styles.suggestionsHeader}>
-                <Ionicons name="sparkles-outline" size={14} color="#f59e0b" />
-                <Text style={styles.suggestionsTitle}>
-                  Suggested bills ({suggestions.length})
-                </Text>
-              </View>
-              {suggestions.map((s) => {
-                const isAccepting = acceptingId === s.merchant_normalized;
-                const amtLabel = `$${s.amount.toFixed(2)}${s.amount_variance === 'approximate' ? ' (avg)' : ''}`;
-                return (
-                  <View key={s.merchant_normalized} style={styles.suggestionCard}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.suggestionName} numberOfLines={1}>
-                        {s.display_name}
-                      </Text>
-                      <Text style={styles.suggestionMeta}>
-                        {amtLabel} · {s.frequency} · {s.occurrence_count} past charges
-                        {s.category_name ? ` · ${s.category_name}` : ''}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.suggestionAddBtn, isAccepting && { opacity: 0.5 }]}
-                      onPress={() => handleAcceptSuggestion(s)}
-                      disabled={isAccepting}
-                    >
-                      {isAccepting ? (
-                        <ActivityIndicator size="small" color="#34d399" />
-                      ) : (
-                        <Ionicons name="add" size={16} color="#34d399" />
-                      )}
-                      <Text style={styles.suggestionAddText}>Add</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.suggestionDismissBtn}
-                      onPress={() => handleDismissSuggestion(s)}
-                      disabled={isAccepting}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="close" size={16} color="#94a3b8" />
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-
-          {/* Filter Tabs */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginBottom: 14 }}
-            contentContainerStyle={{ gap: 8 }}
-          >
-            {filterTabs.map((f) => {
-              const isActive = filter === f.key;
-              return (
-                <TouchableOpacity
-                  key={f.key}
-                  onPress={() => setFilter(f.key)}
-                  style={[
-                    styles.filterTab,
-                    isActive && styles.filterTabActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.filterTabText,
-                      isActive && styles.filterTabTextActive,
-                    ]}
-                  >
-                    {f.label}
-                  </Text>
-                  <View
-                    style={[
-                      styles.filterBadge,
-                      isActive && styles.filterBadgeActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.filterBadgeText,
-                        isActive && styles.filterBadgeTextActive,
-                      ]}
-                    >
-                      {f.count}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {/* Owner Legend */}
-          <View style={styles.ownerLegend}>
-            {['You', 'Partner', 'Joint'].map((o) => (
-              <View key={o} style={styles.legendItem}>
-                <OwnerDot owner={o} />
-                <Text style={styles.ownerLegendText}>{o}</Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Bill List */}
-          {error && (
+          ) : error ? (
             <ErrorState
               title="Something went wrong"
               message={error}
@@ -729,121 +864,193 @@ export default function BillsScreen() {
                 loadBills();
               }}
             />
-          )}
-
-          {!error && loading ? (
-            <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : !error && bills.length === 0 ? (
-            <EmptyState
-              icon="document-text-outline"
-              title="No bills tracked"
-              description="Add your first bill to start tracking recurring payments"
-              actionLabel="Add Bill"
-              onAction={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            />
+          ) : bills.length === 0 ? (
+            /* ── Empty state (suggestions still surface above if present) ── */
+            <>
+              {suggestions.length > 0 && renderSuggestionsCard()}
+              <EmptyState
+                icon="document-text-outline"
+                title="No bills tracked"
+                description="Add your first bill to start tracking recurring payments"
+                actionLabel="Add Bill"
+                onAction={openAdd}
+              />
+            </>
           ) : (
-            filteredBills.map((b) => {
-              const status = STATUS_CONFIG[b._status];
-              const owner = b._owner;
-              return (
-                <TouchableOpacity key={b.id} style={styles.card} onPress={() => openEdit(b)}>
-                  {/* Top row: owner dot + name + badges + amount */}
-                  <View style={styles.cardHeader}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <View style={styles.cardNameRow}>
-                        <OwnerDot owner={owner} />
-                        <Text style={styles.cardTitle} numberOfLines={1}>
-                          {b.name}
-                        </Text>
-                        {b.is_autopay && (
-                          <View style={styles.badge}>
-                            <Ionicons name="flash" size={9} color="#60a5fa" />
-                            <Text style={styles.badgeText}>Auto</Text>
-                          </View>
-                        )}
-                        {b.debt_account_id && (
-                          <View style={[styles.badge, { backgroundColor: 'rgba(236,72,153,0.12)' }]}>
-                            <Ionicons name="link" size={9} color="#f472b6" />
-                            <Text style={[styles.badgeText, { color: '#f472b6' }]}>Debt</Text>
-                          </View>
-                        )}
-                      </View>
-
-                      {/* Details row */}
-                      <View style={styles.cardDetails}>
-                        <Text style={styles.detailText}>
-                          Due {b.due_day}
-                          {ordinalSuffix(b.due_day)}
-                        </Text>
-                        {b.payee ? <Text style={styles.detailText}>{b.payee}</Text> : null}
-                        {(b.category_name || getCategoryName(b.category_id)) ? (
-                          <Text style={styles.detailText}>
-                            {b.category_name || getCategoryName(b.category_id)}
-                          </Text>
-                        ) : null}
-                      </View>
+            <>
+              {/* ── Summary hero — committed vs upcoming split ── */}
+              <View style={styles.heroCard}>
+                <View style={styles.heroContent}>
+                  <View style={styles.ringContainer}>
+                    <ProgressRing percent={paidPct} size={64} strokeWidth={5} color={colors.success} />
+                    <View style={styles.ringCenter}>
+                      <Text style={styles.ringCount}>{paidCount}</Text>
+                      <Text style={styles.ringLabel}>of {bills.length}</Text>
                     </View>
-                    <Text style={styles.cardAmount}>{fmt(b.amount_due)}</Text>
                   </View>
 
-                  {/* Footer: status chip + actions */}
-                  <View style={styles.cardFooter}>
-                    <View style={[styles.statusChip, { backgroundColor: status.bg }]}>
-                      <Ionicons name={status.icon as any} size={12} color={status.color} />
-                      <Text style={[styles.statusText, { color: status.color }]}>
-                        {status.label}
-                      </Text>
+                  <View
+                    style={{ flex: 1 }}
+                    accessibilityLabel={`${paidCount} of ${bills.length} bills paid. Total due ${fmt(
+                      totalDue,
+                    )} per month. Paid ${fmt(paidAmount)}. Due ${fmt(unpaidAmount)}.${
+                      overdueCount > 0
+                        ? ` ${overdueCount} overdue, ${fmt(overdueAmount)}.`
+                        : ''
+                    }`}
+                  >
+                    <Text style={styles.totalDueLabel}>TOTAL DUE</Text>
+                    <Text style={styles.totalDueAmount}>
+                      {fmt(totalDue)}
+                      <Text style={styles.totalDuePeriod}> /mo</Text>
+                    </Text>
+
+                    <View style={styles.heroSplit}>
+                      <View style={styles.splitItem}>
+                        <View style={styles.splitSwatchSolid} />
+                        <Text style={styles.splitLabel}>Paid</Text>
+                        <Text style={[styles.splitValue, { color: colors.success }]}>
+                          {fmt(paidAmount)}
+                        </Text>
+                      </View>
+                      <View style={styles.splitItem}>
+                        <View style={styles.splitSwatchDashed} />
+                        <Text style={styles.splitLabel}>Due</Text>
+                        <Text style={[styles.splitValue, { color: colors.warning }]}>
+                          {fmt(unpaidAmount)}
+                        </Text>
+                      </View>
                     </View>
 
-                    <View style={{ flexDirection: 'row', gap: 6 }}>
-                      {b._status !== 'paid' && (
-                        <TouchableOpacity
-                          style={styles.payBtn}
-                          onPress={(e) => {
-                            e.stopPropagation?.();
-                            handleMarkPaid(b);
-                          }}
-                        >
-                          <Ionicons name="checkmark" size={12} color="#34d399" />
-                          <Text style={styles.payBtnText}>Mark Paid</Text>
-                        </TouchableOpacity>
-                      )}
-                      <TouchableOpacity
-                        style={styles.deleteBtn}
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          handleDelete(b.id);
-                        }}
+                    {overdueCount > 0 && (
+                      <View style={styles.overdueLine}>
+                        <Ionicons name="warning-outline" size={13} color={colors.error} />
+                        <Text style={styles.overdueText}>
+                          {overdueCount} overdue · {fmt(overdueAmount)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </View>
+
+              {/* ── Timeline ── */}
+              {bills.length > 0 && <BillTimeline bills={billsWithStatus} />}
+
+              {/* ── Filter tabs ── */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterTabsRow}
+              >
+                {filterTabs.map((f) => {
+                  const isActive = filter === f.key;
+                  return (
+                    <TouchableOpacity
+                      key={f.key}
+                      onPress={() => setFilter(f.key)}
+                      style={[styles.filterTab, isActive && styles.filterTabActive]}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: isActive }}
+                      accessibilityLabel={`${f.label}, ${f.count}`}
+                    >
+                      <Text
+                        style={[styles.filterTabText, isActive && styles.filterTabTextActive]}
                       >
-                        <Ionicons name="trash-outline" size={12} color="#f87171" />
-                      </TouchableOpacity>
-                    </View>
+                        {f.label}
+                      </Text>
+                      <View style={[styles.filterBadge, isActive && styles.filterBadgeActive]}>
+                        <Text
+                          style={[
+                            styles.filterBadgeText,
+                            isActive && styles.filterBadgeTextActive,
+                          ]}
+                        >
+                          {f.count}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* ── Tools: auto-detect + suggestions ── */}
+              <TouchableOpacity
+                style={styles.autoDetectBtn}
+                onPress={handleAutoDetect}
+                disabled={detecting}
+                accessibilityLabel="Auto-detect bills from bank"
+              >
+                {detecting ? (
+                  <ActivityIndicator size="small" color={colors.info} />
+                ) : (
+                  <Ionicons name="scan-outline" size={16} color={colors.info} />
+                )}
+                <Text style={styles.autoDetectText}>
+                  {detecting ? 'Scanning…' : 'Auto-detect from bank'}
+                </Text>
+              </TouchableOpacity>
+
+              {suggestions.length > 0 && renderSuggestionsCard()}
+
+              {/* ── Inline owner legend ── */}
+              <View style={styles.ownerLegend}>
+                {['You', 'Partner', 'Joint'].map((o) => (
+                  <View key={o} style={styles.legendItem}>
+                    <OwnerDot owner={o} />
+                    <Text style={styles.ownerLegendText}>{o}</Text>
                   </View>
-                </TouchableOpacity>
-              );
-            })
+                ))}
+              </View>
+
+              {/* ── Bill list (grouped when All, flat otherwise) ── */}
+              {filteredBills.length === 0 ? (
+                <View style={styles.emptyFilter}>
+                  <Ionicons name="funnel-outline" size={20} color={colors.textDark} />
+                  <Text style={styles.emptyFilterText}>No bills in this filter</Text>
+                </View>
+              ) : (
+                groupedBills.map((group) => (
+                  <View key={group.key}>
+                    {group.label ? (
+                      <Text style={styles.groupLabel}>── {group.label}</Text>
+                    ) : null}
+                    {group.items.map((b) => (
+                      <BillRow
+                        key={b.id}
+                        bill={b}
+                        categoryName={getBillCategory(b)}
+                        onEdit={() => openEdit(b)}
+                        onMarkPaid={() => handleMarkPaid(b)}
+                        onDelete={() => handleDelete(b.id)}
+                      />
+                    ))}
+                  </View>
+                ))
+              )}
+            </>
           )}
         </ScrollView>
 
         {/* Add/Edit Modal */}
         <Modal visible={showForm} animationType="slide" transparent>
-          <View style={styles.modalBackdrop}>
+          <KeyboardAvoidingView
+            style={styles.modalBackdrop}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
             <View style={styles.modalContent}>
-              <ScrollView>
+              <ScrollView keyboardShouldPersistTaps="handled">
                 <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    {editing ? 'Edit Bill' : 'Add Bill'}
-                  </Text>
+                  <Text style={styles.modalTitle}>{editing ? 'Edit Bill' : 'Add Bill'}</Text>
                   <TouchableOpacity
                     onPress={() => {
                       setShowForm(false);
                       resetForm();
                     }}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    accessibilityLabel="Close"
                   >
-                    <Ionicons name="close" size={24} color="#cbd5e1" />
+                    <Ionicons name="close" size={24} color={colors.textMuted} />
                   </TouchableOpacity>
                 </View>
 
@@ -851,7 +1058,7 @@ export default function BillsScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g. Rent, Netflix, Car Payment"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.textMuted}
                   value={name}
                   onChangeText={setName}
                 />
@@ -860,7 +1067,7 @@ export default function BillsScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="$0.00"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.textMuted}
                   keyboardType="numeric"
                   value={amountDue}
                   onChangeText={setAmountDue}
@@ -870,7 +1077,7 @@ export default function BillsScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="15"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.textMuted}
                   keyboardType="numeric"
                   value={dueDay}
                   onChangeText={setDueDay}
@@ -882,14 +1089,14 @@ export default function BillsScreen() {
                   onPress={() => setShowFrequencyPicker(true)}
                 >
                   <Text style={styles.pickerBtnText}>{getFrequencyLabel(frequency)}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#94a3b8" />
+                  <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
                 </TouchableOpacity>
 
                 <Text style={styles.label}>Payee</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="e.g. Landlord, Netflix Inc."
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.textMuted}
                   value={payee}
                   onChangeText={setPayee}
                 />
@@ -899,10 +1106,8 @@ export default function BillsScreen() {
                   style={styles.pickerBtn}
                   onPress={() => setShowCategoryPicker(true)}
                 >
-                  <Text style={styles.pickerBtnText}>
-                    {getCategoryName(categoryId) || 'None'}
-                  </Text>
-                  <Ionicons name="chevron-down" size={16} color="#94a3b8" />
+                  <Text style={styles.pickerBtnText}>{getCategoryName(categoryId) || 'None'}</Text>
+                  <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
                 </TouchableOpacity>
 
                 <Text style={styles.label}>Linked Debt Account</Text>
@@ -910,10 +1115,8 @@ export default function BillsScreen() {
                   style={styles.pickerBtn}
                   onPress={() => setShowDebtPicker(true)}
                 >
-                  <Text style={styles.pickerBtnText}>
-                    {getDebtName(debtAccountId) || 'None'}
-                  </Text>
-                  <Ionicons name="chevron-down" size={16} color="#94a3b8" />
+                  <Text style={styles.pickerBtnText}>{getDebtName(debtAccountId) || 'None'}</Text>
+                  <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
                 </TouchableOpacity>
 
                 <View style={styles.switchRow}>
@@ -921,8 +1124,8 @@ export default function BillsScreen() {
                   <Switch
                     value={isAutopay}
                     onValueChange={setIsAutopay}
-                    trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(96,165,250,0.4)' }}
-                    thumbColor={isAutopay ? '#60a5fa' : '#94a3b8'}
+                    trackColor={{ false: colors.glassMedium, true: 'rgba(59,130,246,0.4)' }}
+                    thumbColor={isAutopay ? colors.info : colors.textMuted}
                   />
                 </View>
 
@@ -931,14 +1134,14 @@ export default function BillsScreen() {
                   <Switch
                     value={isShared}
                     onValueChange={setIsShared}
-                    trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(168,85,247,0.4)' }}
-                    thumbColor={isShared ? '#c084fc' : '#64748b'}
+                    trackColor={{ false: colors.glassMedium, true: 'rgba(168,85,247,0.4)' }}
+                    thumbColor={isShared ? colors.primary2 : colors.textMuted}
                   />
                 </View>
 
                 <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
                   <LinearGradient
-                    colors={['#a855f7', '#7c3aed']}
+                    colors={gradients.primaryGradient}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={styles.saveBtnInner}
@@ -1087,88 +1290,69 @@ export default function BillsScreen() {
                 </TouchableOpacity>
               )}
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
-function ordinalSuffix(day: number): string {
-  if (day >= 11 && day <= 13) return 'th';
-  switch (day % 10) {
-    case 1:
-      return 'st';
-    case 2:
-      return 'nd';
-    case 3:
-      return 'rd';
-    default:
-      return 'th';
-  }
-}
-
 const styles = StyleSheet.create({
+  /* ---- Scroll ---- */
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxxl * 2,
+    gap: spacing.lg,
+  },
+
   /* ---- Header ---- */
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: spacing.md,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
   headerTitle: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    color: colors.text,
+    ...typography.h3,
+    fontWeight: '800',
   },
   addButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   /* ---- Glass Card (shared) ---- */
   glassCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    padding: 16,
-    marginBottom: 16,
+    ...glassEffects.glass,
+    padding: spacing.lg,
   },
 
   /* ---- Summary Hero ---- */
   heroCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.2)',
-    backgroundColor: 'rgba(124,58,237,0.12)',
-    padding: 20,
-    marginBottom: 16,
+    ...glassEffects.glassFloating,
+    padding: spacing.xl,
+    borderRadius: radius.lg,
   },
   heroContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: spacing.lg,
   },
   ringContainer: {
     position: 'relative',
@@ -1186,43 +1370,74 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ringCount: {
-    color: '#fff',
-    fontSize: 16,
+    color: colors.text,
+    ...typography.bodyBold,
     fontWeight: '800',
   },
   ringLabel: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 8,
-  },
-  totalDueLabel: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    fontWeight: '500',
-  },
-  totalDueAmount: {
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: '800',
-    marginTop: 2,
-  },
-  totalDuePeriod: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.4)',
-    fontWeight: '400',
-  },
-  heroBreakdown: {
-    flexDirection: 'row',
-    gap: 16,
-    marginTop: 8,
-  },
-  breakdownLabel: {
-    color: 'rgba(255,255,255,0.35)',
+    color: colors.textMuted,
+    ...typography.caption,
     fontSize: 10,
   },
-  breakdownValue: {
-    fontSize: 13,
+  totalDueLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  totalDueAmount: {
+    color: colors.text,
+    ...typography.h2,
+    marginTop: spacing.xs / 2,
+  },
+  totalDuePeriod: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '400',
+  },
+  heroSplit: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+    marginTop: spacing.sm,
+    alignItems: 'center',
+  },
+  splitItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  splitSwatchSolid: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    backgroundColor: colors.success,
+  },
+  splitSwatchDashed: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.warning,
+    backgroundColor: 'transparent',
+  },
+  splitLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+  },
+  splitValue: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  overdueLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  overdueText: {
+    color: colors.error,
+    ...typography.caption,
     fontWeight: '700',
   },
 
@@ -1231,23 +1446,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: spacing.sm,
   },
   timelineTitleText: {
+    ...typography.smallBold,
     fontSize: 12,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.7)',
+    color: colors.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   timelineToday: {
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.35)',
+    ...typography.caption,
+    color: colors.textMuted,
   },
   timelineBarArea: {
     position: 'relative',
     height: 32,
-    marginBottom: 6,
+    marginBottom: spacing.xs,
   },
   timelineTrack: {
     position: 'absolute',
@@ -1255,7 +1470,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 3,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: colors.borderLight,
     borderRadius: 2,
   },
   timelineProgress: {
@@ -1272,7 +1487,7 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 7,
     borderWidth: 2,
-    borderColor: '#0f0a1e',
+    borderColor: colors.bg,
     marginLeft: -7,
   },
   todayMarker: {
@@ -1280,28 +1495,24 @@ const styles = StyleSheet.create({
     top: 2,
     width: 2,
     height: 22,
-    backgroundColor: '#a855f7',
+    backgroundColor: colors.primary2,
     borderRadius: 1,
     marginLeft: -1,
   },
   timelineLegend: {
     flexDirection: 'row',
-    gap: 12,
+    gap: spacing.md,
     justifyContent: 'center',
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-  },
-  legendDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    gap: spacing.xs,
   },
   legendText: {
-    fontSize: 9,
-    color: 'rgba(255,255,255,0.4)',
+    ...typography.caption,
+    fontSize: 11,
+    color: colors.textMuted,
   },
 
   /* ---- Auto-detect ---- */
@@ -1309,130 +1520,140 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(96,165,250,0.08)',
-    borderRadius: 12,
-    paddingVertical: 10,
-    marginBottom: 16,
+    gap: spacing.sm,
+    backgroundColor: 'rgba(59,130,246,0.08)',
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.15)',
+    borderColor: 'rgba(59,130,246,0.15)',
+    minHeight: 44,
   },
   autoDetectText: {
-    color: '#60a5fa',
+    color: colors.info,
+    ...typography.smallBold,
     fontWeight: '700',
-    fontSize: 13,
   },
 
   /* ---- Suggested Bills ---- */
   suggestionsSection: {
-    marginBottom: 18,
-    padding: 12,
-    borderRadius: 14,
-    backgroundColor: 'rgba(245,158,11,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(245,158,11,0.18)',
+    ...glassEffects.glass,
+    padding: spacing.md,
+    borderColor: 'rgba(234,179,8,0.18)',
   },
   suggestionsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 10,
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
   },
   suggestionsTitle: {
-    color: '#f59e0b',
+    color: colors.warning,
+    ...typography.smallBold,
     fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
   suggestionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    marginBottom: 6,
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.glassLight,
+    marginBottom: spacing.xs,
   },
   suggestionName: {
-    color: '#f8fafc',
-    fontWeight: '700',
-    fontSize: 14,
+    color: colors.text,
+    ...typography.smallBold,
   },
   suggestionMeta: {
-    color: '#94a3b8',
-    fontSize: 11,
+    color: colors.textMuted,
+    ...typography.caption,
     marginTop: 2,
   },
   suggestionAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: 'rgba(52,211,153,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(52,211,153,0.3)',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    minHeight: 44,
   },
   suggestionAddText: {
-    color: '#34d399',
+    color: colors.success,
+    ...typography.caption,
     fontWeight: '700',
-    fontSize: 12,
   },
   suggestionDismissBtn: {
-    padding: 4,
+    padding: spacing.xs,
+  },
+  showMoreBtn: {
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  showMoreText: {
+    color: colors.textMuted,
+    ...typography.caption,
+    fontWeight: '700',
   },
 
   /* ---- Filter Tabs ---- */
+  filterTabsRow: {
+    gap: spacing.sm,
+    paddingRight: spacing.lg,
+  },
   filterTab: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassLight,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: colors.borderGlass,
+    minHeight: 44,
   },
   filterTabActive: {
-    backgroundColor: 'rgba(168,85,247,0.2)',
-    borderColor: 'rgba(168,85,247,0.4)',
+    backgroundColor: 'rgba(124,58,237,0.2)',
+    borderColor: 'rgba(124,58,237,0.4)',
   },
   filterTabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.5)',
+    ...typography.smallBold,
+    fontSize: 13,
+    color: colors.textMuted,
   },
   filterTabTextActive: {
-    color: '#a855f7',
+    color: colors.primary2,
   },
   filterBadge: {
-    borderRadius: 6,
-    paddingHorizontal: 5,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.xs + 1,
     paddingVertical: 1,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: colors.glassMedium,
   },
   filterBadgeActive: {
-    backgroundColor: 'rgba(168,85,247,0.15)',
+    backgroundColor: 'rgba(124,58,237,0.18)',
   },
   filterBadgeText: {
-    fontSize: 10,
+    ...typography.caption,
+    fontSize: 11,
     fontWeight: '700',
-    color: 'rgba(255,255,255,0.3)',
+    color: colors.textMuted,
   },
   filterBadgeTextActive: {
-    color: '#a855f7',
+    color: colors.primary2,
   },
 
   /* ---- Owner Legend ---- */
   ownerLegend: {
     flexDirection: 'row',
-    gap: 14,
-    marginBottom: 10,
-    paddingLeft: 4,
+    gap: spacing.md,
+    paddingLeft: spacing.xs,
+    marginBottom: -spacing.sm,
   },
   ownerDot: {
     width: 8,
@@ -1440,19 +1661,37 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   ownerLegendText: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.4)',
+    ...typography.caption,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+
+  /* ---- Group label ---- */
+  groupLabel: {
+    color: colors.textDark,
+    ...typography.caption,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+    marginTop: spacing.xs,
   },
 
   /* ---- Bill Cards ---- */
   card: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 16,
-    padding: 14,
-    paddingHorizontal: 16,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    minHeight: 72,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    marginBottom: 8,
+  },
+  cardActual: {
+    backgroundColor: colors.glassLight,
+    borderColor: colors.borderGlass,
+  },
+  cardProjected: {
+    backgroundColor: 'transparent',
+    borderColor: colors.borderGlass,
+    borderStyle: 'dashed',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -1462,85 +1701,130 @@ const styles = StyleSheet.create({
   cardNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: spacing.xs,
     flexWrap: 'wrap',
   },
   cardTitle: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
+    color: colors.text,
+    ...typography.smallBold,
     flexShrink: 1,
   },
+  projectedText: {
+    opacity: 0.85,
+  },
   cardAmount: {
-    color: '#c084fc',
+    ...typography.bodyBold,
     fontWeight: '800',
-    fontSize: 16,
-    marginLeft: 8,
+    marginLeft: spacing.sm,
     flexShrink: 0,
   },
-  badge: {
+  autoBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: 'rgba(96,165,250,0.12)',
-    borderRadius: 6,
-    paddingHorizontal: 6,
+    backgroundColor: 'rgba(59,130,246,0.12)',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.xs + 1,
     paddingVertical: 2,
   },
-  badgeText: {
-    color: '#60a5fa',
+  autoBadgeText: {
+    color: colors.info,
+    ...typography.caption,
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  debtBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(168,85,247,0.12)',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.xs + 1,
+    paddingVertical: 2,
+  },
+  debtBadgeText: {
+    color: colors.primary2,
+    ...typography.caption,
+    fontSize: 10,
+    fontWeight: '700',
   },
   cardDetails: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 4,
+    gap: spacing.sm,
+    marginTop: spacing.xs,
     flexWrap: 'wrap',
   },
   detailText: {
-    color: 'rgba(255,255,255,0.35)',
+    color: colors.textMuted,
+    ...typography.caption,
     fontSize: 11,
   },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: spacing.sm,
   },
   statusChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 10,
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
   },
   statusText: {
-    fontSize: 12,
+    ...typography.caption,
     fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  rowActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'center',
   },
   payBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(52,211,153,0.12)',
-    borderRadius: 10,
+    gap: spacing.xs,
+    paddingVertical: spacing.xs + 1,
+    paddingHorizontal: spacing.md,
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderRadius: radius.md,
   },
   payBtnText: {
-    color: '#34d399',
+    color: colors.success,
+    ...typography.caption,
     fontWeight: '700',
-    fontSize: 12,
   },
   deleteBtn: {
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    backgroundColor: 'rgba(248,113,113,0.08)',
-    borderRadius: 10,
+    paddingVertical: spacing.xs + 1,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: 'rgba(239,68,68,0.08)',
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  /* ---- Empty-filter notice ---- */
+  emptyFilter: {
+    ...glassEffects.glass,
+    padding: spacing.xl,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  emptyFilterText: {
+    color: colors.textMuted,
+    ...typography.small,
+    fontWeight: '600',
+  },
+
+  /* ---- Skeleton ---- */
+  skeletonTabsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
 
   /* ---- Modal Styles ---- */
@@ -1550,82 +1834,82 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    backgroundColor: colors.surface2,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.xl,
     maxHeight: '90%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
   modalTitle: {
-    color: '#f8fafc',
-    fontSize: 18,
+    color: colors.text,
+    ...typography.h3,
     fontWeight: '800',
   },
   label: {
-    color: '#e5e7eb',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 6,
-    marginTop: 12,
+    color: colors.text,
+    ...typography.smallBold,
+    marginBottom: spacing.xs + 2,
+    marginTop: spacing.md,
   },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#f8fafc',
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.md,
+    color: colors.text,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    fontSize: 15,
+    borderColor: colors.borderGlass,
+    ...typography.small,
+    minHeight: 44,
   },
   pickerBtn: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.borderGlass,
+    minHeight: 44,
   },
   pickerBtnText: {
-    color: '#f8fafc',
-    fontSize: 15,
+    color: colors.text,
+    ...typography.small,
   },
   switchRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 16,
+    marginTop: spacing.lg,
   },
   switchLabel: {
-    color: '#e5e7eb',
-    fontSize: 14,
-    fontWeight: '700',
+    color: colors.text,
+    ...typography.smallBold,
   },
   saveBtn: {
-    borderRadius: 14,
+    borderRadius: radius.lg,
     overflow: 'hidden',
-    marginTop: 20,
-    marginBottom: 20,
+    marginTop: spacing.xl,
+    marginBottom: spacing.xl,
   },
   saveBtnInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    minHeight: 52,
   },
   saveBtnText: {
-    color: '#fff',
+    color: colors.text,
+    ...typography.button,
     fontWeight: '800',
-    fontSize: 16,
   },
 
   /* ---- Picker Overlay ---- */
@@ -1636,33 +1920,35 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   pickerSheet: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    backgroundColor: colors.surface2,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.xl,
     maxHeight: '60%',
   },
   pickerSheetTitle: {
-    color: '#f8fafc',
-    fontSize: 16,
+    color: colors.text,
+    ...typography.bodyBold,
     fontWeight: '800',
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   pickerOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    marginBottom: 4,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md + 2,
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   pickerOptionActive: {
-    backgroundColor: 'rgba(168,85,247,0.18)',
+    backgroundColor: 'rgba(124,58,237,0.18)',
   },
   pickerOptionText: {
-    color: '#e5e7eb',
-    fontSize: 15,
+    color: colors.text,
+    ...typography.small,
   },
   pickerOptionTextActive: {
-    color: '#fff',
+    color: colors.text,
     fontWeight: '700',
   },
 });

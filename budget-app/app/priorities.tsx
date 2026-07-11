@@ -9,15 +9,28 @@ import {
   ScrollView,
   Modal,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { BackButton } from '@/components/BackButton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  gradients,
+  commonStyles,
+} from '@/utils/design-system';
 
 type Priority = {
   id: string;
@@ -29,6 +42,11 @@ type Priority = {
   is_shared: boolean;
 };
 
+// Rank-1 accent tints (12% on the semantic colors — kept out of the row logic).
+const RANK1_TINT = 'rgba(234,179,8,0.12)'; // colors.warning @ 12%
+const RANK_TINT = 'rgba(168,85,247,0.12)'; // colors.primary2 @ 12%
+const DISABLED_OPACITY = 0.35;
+
 export default function PrioritiesScreen() {
   const router = useRouter();
   const [priorities, setPriorities] = useState<Priority[]>([]);
@@ -36,6 +54,7 @@ export default function PrioritiesScreen() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Priority | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -68,11 +87,21 @@ export default function PrioritiesScreen() {
     setEditing(null);
   };
 
+  const openCreate = () => {
+    resetForm();
+    setShowForm(true);
+  };
+
   const openEdit = (p: Priority) => {
     setEditing(p);
     setTitle(p.title);
     setNotes(p.notes || '');
     setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    resetForm();
   };
 
   const handleSave = async () => {
@@ -95,6 +124,7 @@ export default function PrioritiesScreen() {
       is_shared: false,
     };
 
+    setSaving(true);
     try {
       if (editing) {
         await api.put(`/auth/priorities/${editing.id}`, payload);
@@ -107,6 +137,8 @@ export default function PrioritiesScreen() {
     } catch (e) {
       console.error('Save priority error:', e);
       Alert.alert('Error', 'Failed to save priority.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -147,244 +179,461 @@ export default function PrioritiesScreen() {
     }
   };
 
-  const rankColor = (rank: number) => {
-    if (rank === 1) return '#fbbf24';
-    if (rank === 2) return '#94a3b8';
-    if (rank === 3) return '#cd7f32';
-    return '#64748b';
+  // ── Header block (static — renders in every state) ──
+  const renderHeader = () => (
+    <>
+      <View style={styles.headerRow}>
+        <BackButton fallback="/(tabs)/goals" />
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          Financial Priorities
+        </Text>
+        <TouchableOpacity
+          style={styles.addBtn}
+          onPress={openCreate}
+          accessibilityRole="button"
+          accessibilityLabel="Add a priority"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="add-circle" size={28} color={colors.primary2} />
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.contextStrip}>
+        Rank what matters most so your spending stays aligned with your goals. Drag order with
+        the arrows.
+      </Text>
+    </>
+  );
+
+  // ── Loading skeleton card (layout-matched to a real PriorityCard) ──
+  const renderSkeletonCard = (key: number) => (
+    <View key={key} style={styles.card}>
+      <View style={styles.cardRow}>
+        <Skeleton width={40} height={40} borderRadius={radius.md} />
+        <View style={styles.cardBody}>
+          <Skeleton height={16} width="70%" />
+          <View style={{ height: spacing.sm }} />
+          <Skeleton height={12} width="45%" />
+        </View>
+      </View>
+      <View style={commonStyles.divider} />
+      <Skeleton height={12} width="30%" />
+    </View>
+  );
+
+  const renderPriorityCard = (p: Priority, index: number) => {
+    const isTop = p.rank === 1;
+    const upDisabled = index === 0;
+    const downDisabled = index === priorities.length - 1;
+    const accent = isTop ? colors.warning : colors.primary2;
+    const badgeFill = isTop ? RANK1_TINT : RANK_TINT;
+
+    const a11yLabel = `Priority ${p.rank}${isTop ? ', top priority' : ''}: ${p.title}.${
+      p.notes ? ` ${p.notes}.` : ''
+    }`;
+
+    return (
+      <View key={p.id} style={styles.card} accessible accessibilityLabel={a11yLabel}>
+        <View style={styles.cardRow}>
+          {/* Rank badge — number carries order; color is a supporting accent only */}
+          <View style={[styles.rankBadge, { backgroundColor: badgeFill, borderColor: accent }]}>
+            <Text style={[styles.rankText, { color: accent }]}>{p.rank}</Text>
+          </View>
+
+          {/* Body */}
+          <View style={styles.cardBody}>
+            <View style={styles.titleRow}>
+              <Text style={styles.cardTitle} numberOfLines={2}>
+                {p.title}
+              </Text>
+              {isTop && (
+                <View style={styles.topPill}>
+                  <Ionicons name="star" size={11} color={colors.warning} />
+                  <Text style={styles.topPillText}>TOP</Text>
+                </View>
+              )}
+            </View>
+            {p.notes ? (
+              <Text style={styles.notesText} numberOfLines={2}>
+                {p.notes}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Reorder control column */}
+          <View style={styles.reorderCol}>
+            <TouchableOpacity
+              onPress={() => moveItem(index, 'up')}
+              disabled={upDisabled}
+              style={styles.reorderBtn}
+              accessibilityRole="button"
+              accessibilityLabel={`Move ${p.title} up`}
+              accessibilityState={{ disabled: upDisabled }}
+              hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="chevron-up"
+                size={20}
+                color={upDisabled ? colors.textMuted : colors.text}
+                style={upDisabled ? { opacity: DISABLED_OPACITY } : undefined}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => moveItem(index, 'down')}
+              disabled={downDisabled}
+              style={styles.reorderBtn}
+              accessibilityRole="button"
+              accessibilityLabel={`Move ${p.title} down`}
+              accessibilityState={{ disabled: downDisabled }}
+              hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="chevron-down"
+                size={20}
+                color={downDisabled ? colors.textMuted : colors.text}
+                style={downDisabled ? { opacity: DISABLED_OPACITY } : undefined}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={commonStyles.divider} />
+
+        {/* Action row */}
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            onPress={() => openEdit(p)}
+            style={styles.actionBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${p.title}`}
+          >
+            <Ionicons name="pencil" size={14} color={colors.primary2} />
+            <Text style={styles.actionText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => handleDelete(p)}
+            style={styles.actionBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${p.title}`}
+            accessibilityHint="Double tap to remove this priority."
+          >
+            <Ionicons name="trash-outline" size={14} color={colors.error} />
+            <Text style={[styles.actionText, styles.removeText]}>Remove</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderContent = () => {
+    if (error) {
+      return (
+        <ErrorState
+          title="Couldn't load your priorities"
+          message="Check your connection and try again."
+          retryLabel="Retry"
+          onRetry={() => {
+            setError(null);
+            setLoading(true);
+            loadPriorities();
+          }}
+        />
+      );
+    }
+
+    if (loading) {
+      return (
+        <View>
+          {renderSkeletonCard(0)}
+          {renderSkeletonCard(1)}
+          {renderSkeletonCard(2)}
+        </View>
+      );
+    }
+
+    if (priorities.length === 0) {
+      return (
+        <EmptyState
+          icon="flag-outline"
+          title="No priorities set"
+          description="Define your financial priorities to stay focused on what matters most."
+          actionLabel="Add Priority"
+          onAction={openCreate}
+        />
+      );
+    }
+
+    return <View>{priorities.map((p, index) => renderPriorityCard(p, index))}</View>;
   };
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <BackButton fallback="/(tabs)/goals" />
-            <Text style={styles.headerTitle}>Financial Priorities</Text>
-            <TouchableOpacity
-              onPress={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            >
-              <Ionicons name="add-circle" size={28} color="#c084fc" />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.subtitle}>
-            Rank what matters most to keep your spending aligned with your goals.
-          </Text>
-
-          {error && (
-            <ErrorState
-              title="Something went wrong"
-              message={error}
-              onRetry={() => {
-                setError(null);
-                setLoading(true);
-                loadPriorities();
-              }}
-            />
-          )}
-
-          {!error && loading ? (
-            <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : !error && priorities.length === 0 ? (
-            <EmptyState
-              icon="flag-outline"
-              title="No priorities set"
-              description="Define your financial priorities to stay focused on what matters"
-              actionLabel="Add Priority"
-              onAction={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            />
-          ) : (
-            priorities.map((p, index) => (
-              <View key={p.id} style={styles.card}>
-                <View style={styles.cardRow}>
-                  <View style={[styles.rankBadge, { borderColor: rankColor(p.rank) }]}>
-                    <Text style={[styles.rankText, { color: rankColor(p.rank) }]}>
-                      #{p.rank}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.cardTitle}>{p.title}</Text>
-                    {p.notes ? <Text style={styles.notesText}>{p.notes}</Text> : null}
-                  </View>
-                  <View style={styles.actions}>
-                    <TouchableOpacity
-                      onPress={() => moveItem(index, 'up')}
-                      disabled={index === 0}
-                      style={{ opacity: index === 0 ? 0.3 : 1 }}
-                    >
-                      <Ionicons name="chevron-up" size={20} color="#cbd5e1" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => moveItem(index, 'down')}
-                      disabled={index === priorities.length - 1}
-                      style={{ opacity: index === priorities.length - 1 ? 0.3 : 1 }}
-                    >
-                      <Ionicons name="chevron-down" size={20} color="#cbd5e1" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={styles.cardActions}>
-                  <TouchableOpacity onPress={() => openEdit(p)} style={styles.actionBtn}>
-                    <Ionicons name="pencil" size={14} color="#c084fc" />
-                    <Text style={styles.actionText}>Edit</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleDelete(p)} style={styles.actionBtn}>
-                    <Ionicons name="trash-outline" size={14} color="#f472b6" />
-                    <Text style={[styles.actionText, { color: '#f472b6' }]}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
-          )}
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+        >
+          {renderHeader()}
+          <View style={styles.listWrap}>{renderContent()}</View>
         </ScrollView>
 
-        {/* Add/Edit Modal */}
-        <Modal visible={showForm} animationType="slide" transparent>
+        {/* Add/Edit bottom sheet */}
+        <Modal visible={showForm} animationType="slide" transparent onRequestClose={closeForm}>
           <View style={styles.modalBackdrop}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>
-                  {editing ? 'Edit Priority' : 'New Priority'}
-                </Text>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={styles.modalKav}
+            >
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>
+                    {editing ? 'Edit Priority' : 'New Priority'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={closeForm}
+                    style={styles.closeBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close"
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close" size={24} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.label}>Title</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. Pay off student loans"
+                  placeholderTextColor={colors.textMuted}
+                  value={title}
+                  onChangeText={setTitle}
+                />
+
+                <Text style={styles.label}>Notes (optional)</Text>
+                <TextInput
+                  style={[styles.input, styles.inputMultiline]}
+                  placeholder="Why is this important?"
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  value={notes}
+                  onChangeText={setNotes}
+                />
+
                 <TouchableOpacity
-                  onPress={() => {
-                    setShowForm(false);
-                    resetForm();
-                  }}
+                  onPress={handleSave}
+                  style={styles.saveBtn}
+                  disabled={saving}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={editing ? 'Update' : 'Add Priority'}
                 >
-                  <Ionicons name="close" size={24} color="#cbd5e1" />
+                  <LinearGradient
+                    colors={[...gradients.primaryGradient]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.saveBtnInner}
+                  >
+                    {saving ? (
+                      <ActivityIndicator color={colors.text} />
+                    ) : (
+                      <Text style={styles.saveBtnText}>
+                        {editing ? 'Update' : 'Add Priority'}
+                      </Text>
+                    )}
+                  </LinearGradient>
                 </TouchableOpacity>
               </View>
-
-              <Text style={styles.label}>Title</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Pay off student loans"
-                placeholderTextColor="#94a3b8"
-                value={title}
-                onChangeText={setTitle}
-              />
-
-              <Text style={styles.label}>Notes (optional)</Text>
-              <TextInput
-                style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
-                placeholder="Why is this important?"
-                placeholderTextColor="#94a3b8"
-                multiline
-                value={notes}
-                onChangeText={setNotes}
-              />
-
-              <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
-                <LinearGradient
-                  colors={['#a855f7', '#7c3aed']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.saveBtnInner}
-                >
-                  <Text style={styles.saveBtnText}>
-                    {editing ? 'Update' : 'Add Priority'}
-                  </Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
+            </KeyboardAvoidingView>
           </View>
         </Modal>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxxl + spacing.xxl,
+  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: spacing.sm,
   },
-  headerTitle: { color: '#f8fafc', fontSize: 20, fontWeight: '800' },
-  subtitle: { color: '#94a3b8', fontSize: 13, marginBottom: 16 },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+  headerTitle: {
+    ...typography.h3,
+    color: colors.text,
+    flex: 1,
+  },
+  addBtn: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    marginRight: -spacing.sm,
   },
+  contextStrip: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+  },
+  listWrap: {
+    marginTop: spacing.xl,
+  },
+
+  // Card
   card: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 10,
+    ...commonStyles.card,
   },
-  cardRow: { flexDirection: 'row', alignItems: 'center' },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
   rankBadge: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    borderWidth: 2,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    flexShrink: 0,
   },
-  rankText: { fontWeight: '800', fontSize: 14 },
-  cardTitle: { color: '#f8fafc', fontWeight: '700', fontSize: 15 },
-  notesText: { color: '#94a3b8', fontSize: 12, marginTop: 4 },
-  actions: { gap: 2 },
-  cardActions: { flexDirection: 'row', gap: 16, marginTop: 10 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  actionText: { color: '#c084fc', fontWeight: '700', fontSize: 13 },
-  emptyState: { alignItems: 'center', marginTop: 60, gap: 8 },
-  emptyText: { color: '#e5e7eb', fontWeight: '700', fontSize: 16 },
-  emptySubtext: { color: '#94a3b8', fontSize: 13, textAlign: 'center' },
+  rankText: {
+    ...typography.smallBold,
+  },
+  cardBody: {
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  cardTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    flexShrink: 1,
+  },
+  topPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+    backgroundColor: RANK1_TINT,
+  },
+  topPillText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.warning,
+  },
+  notesText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+
+  // Reorder column
+  reorderCol: {
+    flexShrink: 0,
+    marginLeft: spacing.sm,
+  },
+  reorderBtn: {
+    width: 44,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Action row
+  cardActions: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+  },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    minHeight: 44,
+  },
+  actionText: {
+    ...typography.smallBold,
+    color: colors.primary2,
+  },
+  removeText: {
+    color: colors.error,
+  },
+
+  // Modal / bottom sheet
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
+  modalKav: {
+    width: '100%',
+  },
   modalContent: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    backgroundColor: colors.surface2,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.lg,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
-  modalTitle: { color: '#f8fafc', fontSize: 18, fontWeight: '800' },
-  label: { color: '#e5e7eb', fontSize: 13, fontWeight: '700', marginBottom: 6, marginTop: 12 },
+  modalTitle: {
+    ...typography.h3,
+    color: colors.text,
+  },
+  closeBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: -spacing.sm,
+  },
+  label: {
+    ...typography.smallBold,
+    color: colors.textMuted,
+    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+  },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#f8fafc',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    fontSize: 15,
+    ...glassEffects.glass,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    color: colors.text,
+    ...typography.body,
   },
-  saveBtn: { borderRadius: 14, overflow: 'hidden', marginTop: 20, marginBottom: 20 },
+  inputMultiline: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  saveBtn: {
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    marginTop: spacing.xl,
+    marginBottom: spacing.lg,
+  },
   saveBtnInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    paddingVertical: spacing.lg,
   },
-  saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  saveBtnText: {
+    ...typography.button,
+    color: colors.text,
+  },
 });

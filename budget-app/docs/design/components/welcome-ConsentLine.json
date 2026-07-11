@@ -1,0 +1,23 @@
+{
+  "componentName": "WelcomeConsentLine",
+  "description": "Low-weight legal/consent line beneath the welcome screen CTAs. New, standard for an entry screen. 'By continuing you agree to our Terms & Privacy.' with the two nouns as tappable links.",
+  "platform": "react-native",
+  "designSystem": {
+    "typography": "typography.caption",
+    "color": "colors.textMuted",
+    "linkColor": "colors.primary2",
+    "align": "center",
+    "marginTop": "spacing.md (above bottom safe area)"
+  },
+  "props": {
+    "onTermsPress": { "type": "function", "required": false, "description": "Navigate to Terms; placeholder route if legal screens don't exist yet" },
+    "onPrivacyPress": { "type": "function", "required": false, "description": "Navigate to Privacy" }
+  },
+  "states": ["default"],
+  "accessibility": {
+    "touchTarget": "each link gets hitSlop to reach 44pt",
+    "termsLabel": "Terms of Service, link",
+    "privacyLabel": "Privacy Policy, link"
+  },
+  "developerNotes": "Coordinate link targets with the team; ship as colors.primary2 links with placeholder routes if legal screens don't exist yet."
+}

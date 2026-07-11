@@ -1,0 +1,31 @@
+{
+  "componentName": "StartDateField",
+  "description": "Reveal-on-tap start-date field. Replaces the always-mounted 150pt DateTimePicker spinner. Collapsed it looks like a CategoryRow; tapping reveals an inline spinner (iOS) or opens the native calendar dialog (Android).",
+  "platform": "react-native",
+  "props": {
+    "value": { "type": "Date", "required": true, "description": "Selected start date; defaults to today (new Date())" },
+    "onChange": { "type": "function", "required": true, "description": "(d: Date) => void" },
+    "open": { "type": "boolean", "required": true, "description": "Whether the inline iOS picker is revealed" },
+    "onToggle": { "type": "function", "required": true, "description": "Toggle open/closed (iOS) or launch the dialog (Android)" }
+  },
+  "variants": ["default"],
+  "states": ["collapsed", "open", "pressed"],
+  "layout": {
+    "label": { "type": "typography.smallBold", "color": "colors.text", "content": "Start date", "marginBottom": "spacing.sm" },
+    "row": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "paddingHorizontal": "spacing.md", "minHeight": 48, "direction": "row", "align": "center", "gap": "spacing.md" },
+    "picker": { "bg": "colors.glassLight", "border": "colors.borderGlass", "radius": "radius.md", "height": 150, "marginTop": "spacing.sm" }
+  },
+  "tokens": {
+    "leadingIcon": { "name": "calendar-outline", "color": "colors.textMuted" },
+    "dateText": { "type": "typography.body", "color": "colors.text", "format": "MMMM D, YYYY", "numberOfLines": 1 },
+    "chevron": { "name": "chevron-forward", "color": "colors.textDark", "rotatesToUpWhenOpen": true, "flexShrink": 0 }
+  },
+  "behavior": "iOS: onToggle reveals an inline DateTimePicker display='spinner' mounted only while open, inside the glass picker inset, fading in over animation.medium; collapses on next field tap or on scroll. Android: onToggle opens the native display='calendar' dialog; no inline spinner; the field label updates on dismiss. Chevron rotates up while open. Preserve existing handleDateChange semantics.",
+  "accessibility": {
+    "role": "button",
+    "label": "Start date, {formatted date}, opens date picker",
+    "minTarget": "48pt row",
+    "colorIndependent": "Open/closed conveyed by chevron rotation, not color",
+    "reducedMotion": "Reveal fade becomes instant under reduce-motion"
+  }
+}

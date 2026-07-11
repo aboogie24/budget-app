@@ -1,0 +1,46 @@
+{
+  "componentName": "FrameworkLevelHero",
+  "description": "The framework screen's signature hero: a circular progress ring whose stroke is the current level's token color, the level number centered, and the level name + percent complete below. The only card on the screen that floats (glassFloating).",
+  "platform": "react-native",
+  "spec": "budget-app/docs/design/specs/framework-redesign.md#5-tier-1--level-hero",
+  "props": {
+    "level": { "type": "number", "required": false, "description": "Current framework level 1-5. When null, renders the empty/onboarding variant." },
+    "levelName": { "type": "string", "required": false, "description": "Level display name, e.g. 'Build Security'. Falls back to LEVEL_NAMES[level-1]." },
+    "completedPct": { "type": "number", "required": true, "default": 0, "description": "Percent complete toward the next level, 0-100. Drives the ring sweep and the caption." },
+    "loading": { "type": "boolean", "default": false, "description": "Renders the skeleton hero (circle + two text-line skeletons)." },
+    "onGetStarted": { "type": "function", "required": false, "description": "CTA handler for the empty/onboarding variant." }
+  },
+  "variants": ["default", "empty", "loading"],
+  "states": ["default", "empty", "loading"],
+  "tokens": {
+    "card": "glassEffects.glassFloating",
+    "cardPadding": "spacing.xl",
+    "ringSize": 160,
+    "ringStrokeWidth": "spacing.md (12)",
+    "ringTrack": "colors.glassLight",
+    "ringProgress": "level token color (error|warning|info|success|primary2 by level 1-5)",
+    "percentInsideRing": "typography.small / colors.textMuted",
+    "levelNumber": "typography.h1 / level token color",
+    "levelLabel": "typography.caption / colors.textMuted",
+    "levelNameText": "typography.h3 / colors.text",
+    "percentCompleteText": "typography.small / colors.textMuted",
+    "emptyIcon": "compass-outline / colors.textDark",
+    "emptyTitle": "typography.h3 / colors.text",
+    "emptySubcopy": "typography.small / colors.textMuted",
+    "emptyCta": "gradients.primaryGradient / radius.md / typography.button"
+  },
+  "levelColorScale": {
+    "1": "colors.error",
+    "2": "colors.warning",
+    "3": "colors.info",
+    "4": "colors.success",
+    "5": "colors.primary2"
+  },
+  "accessibility": {
+    "role": "summary",
+    "label": "Level {level}, {levelName}, {completedPct} percent complete toward the next level.",
+    "emptyLabel": "Your CoupleFlow journey hasn't started yet. Add your income, debts, and savings to see your level.",
+    "colorIndependence": "Level identity conveyed by ring fill + number + name + 'LEVEL' label together, never color alone.",
+    "reducedMotion": "Ring renders at final stroke offset with no animated sweep."
+  }
+}

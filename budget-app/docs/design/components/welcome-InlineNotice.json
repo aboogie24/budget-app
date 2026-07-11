@@ -1,0 +1,26 @@
+{
+  "componentName": "WelcomeInlineNotice",
+  "description": "Non-destructive inline notice on the welcome screen (error state only). Surfaces a session-check/OAuth-availability failure above the CTAs without ever blanking the screen; the primary and secondary CTAs remain fully enabled beneath it. Replaces the old silent stock-photo failure.",
+  "platform": "react-native",
+  "designSystem": {
+    "surface": "glassEffects.glass",
+    "radius": "radius.md",
+    "padding": "spacing.md",
+    "layout": "row: icon + message + Retry text button",
+    "icon": { "name": "alert-circle-outline", "color": "colors.warning" },
+    "message": { "typography": "typography.small", "color": "colors.textMuted" },
+    "retry": { "typography": "typography.smallBold", "color": "colors.primary2" }
+  },
+  "props": {
+    "message": { "type": "string", "required": true, "default": "Couldn't check your session — you can still sign in below." },
+    "onRetry": { "type": "function", "required": false, "description": "Retry the failed check; optional" }
+  },
+  "states": ["default"],
+  "visibility": "Rendered only when a session/availability check fails; otherwise not mounted",
+  "accessibility": {
+    "role": "alert",
+    "colorIndependence": "warning color is paired with the alert-circle-outline icon AND the word 'Couldn't' — never color alone",
+    "touchTarget": "Retry gets hitSlop to reach 44pt",
+    "label": "Couldn't check your session. You can still sign in below."
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "componentName": "PropertyCard",
+  "description": "A single property row-card: home icon, address, optional shared chip, value with provenance chip, optional mortgage row, equity, and Refresh/Delete actions. Flat glass, subordinate to the portfolio headline.",
+  "platform": "react-native",
+  "surface": "glassEffects.glass (commonStyles.card)",
+  "props": {
+    "streetAddress": { "type": "string", "required": true },
+    "city": { "type": "string", "required": true },
+    "state": { "type": "string", "required": true },
+    "zipCode": { "type": "string", "required": true },
+    "value": { "type": "number", "required": true, "description": "effectiveValue = manual_value || zestimate || 0" },
+    "provenance": { "type": "'zestimate' | 'manual'", "required": true, "description": "isZestimate = !manual_value && !!zestimate" },
+    "lastFetchedAt": { "type": "string", "required": false, "description": "ISO timestamp; rendered as timeAgo suffix on the Zestimate chip" },
+    "debtName": { "type": "string", "required": false, "description": "Linked mortgage name; when present the mortgage row + divider render" },
+    "mortgageBalance": { "type": "number", "default": 0, "description": "debt_balance" },
+    "isShared": { "type": "boolean", "default": false, "description": "Shows the '◑ Shared' chip when true" },
+    "isRefreshing": { "type": "boolean", "default": false, "description": "Swaps the Refresh pill contents for a spinner; footprint reserved" },
+    "onPress": { "type": "function", "required": false, "description": "Open edit modal" },
+    "onRefresh": { "type": "function", "required": false, "description": "stopPropagation, then refresh value" },
+    "onDelete": { "type": "function", "required": false, "description": "stopPropagation, then destructive Alert" }
+  },
+  "derived": {
+    "equity": "value - mortgageBalance",
+    "equityColor": "getValueColor(equity)  (colors.success | colors.error, '-' prefix when negative)"
+  },
+  "layout": {
+    "padding": 16,
+    "radius": 16,
+    "iconChipSize": 40,
+    "iconChipRadius": "radius.md",
+    "actionPillMinHeight": 44,
+    "tapTargetMin": 44
+  },
+  "tokens": {
+    "iconChipFill": "`${colors.primary2}1f`",
+    "icon": "Ionicons home 18 / colors.primary2",
+    "street": "typography.smallBold / colors.text (numberOfLines 1)",
+    "address": "typography.caption / colors.textMuted (numberOfLines 1)",
+    "sharedChip": "`${colors.primary2}1f` fill, radius.full, typography.caption / colors.primary2",
+    "valueLabel": "typography.small / colors.textMuted",
+    "valueAmount": "typography.smallBold / colors.text",
+    "provenanceZestimate": "info-circle-outline + 'Zestimate · {timeAgo}', `${colors.info}1f` pill, typography.caption / colors.textMuted",
+    "provenanceManual": "create-outline + 'Manual', colors.glassLight pill, typography.caption / colors.textMuted",
+    "mortgageAmount": "typography.smallBold / colors.error (prefixed '-')",
+    "divider": "commonStyles.divider",
+    "equityLabel": "typography.smallBold / colors.text",
+    "equityValue": "typography.bodyBold / getValueColor(equity)",
+    "refreshPill": "`${colors.primary2}1f` fill, radius.md, refresh-outline 16 + typography.smallBold / colors.primary2",
+    "deletePill": "`${colors.error}1f` fill, radius.md, trash-outline 16 + typography.smallBold / colors.error"
+  },
+  "variants": ["withMortgage", "noMortgage (equity == value, mortgage row + divider hidden)", "zestimate", "manual", "shared", "negativeEquity"],
+  "states": ["default", "pressed", "refreshing", "overflow (long address/debt name truncate; amounts flexShrink:0)"],
+  "accessibility": {
+    "role": "button",
+    "label": "{streetAddress}, {city} {state}. Value {value}, {provenance}. Mortgage {debtName} {mortgageBalance}. Equity {equity}.{ Shared with partner.}",
+    "hint": "Double tap to edit",
+    "childLabels": {
+      "refresh": "Refresh value for {streetAddress}",
+      "delete": "Delete {streetAddress}"
+    }
+  }
+}

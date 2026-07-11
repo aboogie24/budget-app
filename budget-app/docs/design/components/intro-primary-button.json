@@ -1,0 +1,31 @@
+{
+  "componentName": "IntroPrimaryButton",
+  "description": "The single dominant call-to-action on the intro/welcome screen ('Get Started'). Gradient-filled, full-width.",
+  "platform": "react-native",
+  "props": {
+    "label": { "type": "string", "required": false, "default": "Get Started", "description": "Button label" },
+    "loading": { "type": "boolean", "default": false, "description": "Shows ActivityIndicator, hides label + arrow" },
+    "disabled": { "type": "boolean", "default": false, "description": "Dims to opacity 0.5 and blocks press (also true while a sibling auth action runs)" },
+    "onPress": { "type": "function", "required": true, "description": "Handler; wired to router.replace('/register') with Haptics.impactAsync(Light)" }
+  },
+  "variants": ["default"],
+  "states": ["default", "pressed", "loading", "disabled"],
+  "tokens": {
+    "fill": "gradients.primaryGradient",
+    "radius": "radius.lg",
+    "paddingVertical": "spacing.lg",
+    "gap": "spacing.sm",
+    "labelType": "typography.button",
+    "labelColor": "colors.text",
+    "iconColor": "colors.text",
+    "pressAnimation": "animation.fast",
+    "spinnerColor": "colors.text"
+  },
+  "layout": { "minHeight": 52, "fullWidth": true, "iconSize": 18, "icon": "arrow-forward" },
+  "accessibility": {
+    "role": "button",
+    "label": "Get started, create an account",
+    "busyState": "accessibilityState.busy = loading",
+    "minTarget": "44x44"
+  }
+}

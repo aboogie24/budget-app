@@ -1,0 +1,43 @@
+{
+  "componentName": "FrameworkMilestoneRow",
+  "description": "A tappable milestone row inside a plan card. Toggles reached/pending on press with an optimistic in-flight spinner. Leading status icon, title (strikethrough when reached), subtitle showing reached/target date, and an optional partner glyph.",
+  "platform": "react-native",
+  "spec": "budget-app/docs/design/specs/framework-redesign.md#9-tier-5--active-plans--milestones",
+  "props": {
+    "title": { "type": "string", "required": true, "description": "Milestone title." },
+    "status": { "type": "string", "required": true, "description": "'pending' | 'reached' | 'skipped'." },
+    "targetDate": { "type": "string", "required": false, "description": "ISO date — shown as 'Target {short date}' when pending." },
+    "reachedAt": { "type": "string", "required": false, "description": "ISO date — shown as 'Reached {short date}' when reached." },
+    "toggling": { "type": "boolean", "default": false, "description": "In-flight update; swaps the status icon for an ActivityIndicator." },
+    "partner": { "type": "object", "required": false, "description": "{ glyph: '◑'|'◐', color, name } — optional attribution glyph; omit for shared/unknown." },
+    "onPress": { "type": "function", "required": true, "description": "Toggle handler." }
+  },
+  "variants": ["default"],
+  "states": ["reached", "pending", "toggling", "disabled"],
+  "layout": {
+    "iconSize": 22,
+    "spinnerSlot": 24,
+    "verticalPadding": "spacing.md",
+    "topBorder": "1px colors.borderLight",
+    "minHeight": 44,
+    "titleLines": 1,
+    "controlFlexShrink": 0
+  },
+  "tokens": {
+    "iconReached": "checkmark-circle / colors.success",
+    "iconPending": "ellipse-outline / colors.textDark",
+    "spinner": "ActivityIndicator / colors.primary2",
+    "titleDefault": "typography.smallBold / colors.text",
+    "titleReached": "typography.smallBold / colors.textMuted / textDecorationLine line-through",
+    "subtitle": "typography.caption / colors.textMuted",
+    "partnerGlyphA": "◑ / colors.primary2",
+    "partnerGlyphB": "◐ / colors.info"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{title}, {status === 'reached' ? 'reached' : 'pending'}, {reached ? 'reached ' + reachedAt : 'target ' + targetDate}{, by {partner.name}}.",
+    "hint": "Double tap to toggle reached.",
+    "colorIndependence": "Reached vs pending conveyed by filled vs outline icon + strikethrough + 'Reached' vs 'Target' word, never color alone.",
+    "reducedMotion": "Instant icon swap on toggle; no scale animation."
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "componentName": "AddRuleSheet",
+  "description": "Bottom sheet for creating a category rule. Follows the shared form-sheet recipe: surface2 sheet, glass inputs, primaryGradient save. Content: type segmented control, match value input, category selector.",
+  "platform": "react-native",
+  "screen": "settings/category-rules",
+  "props": {
+    "visible": { "type": "boolean", "required": true },
+    "ruleType": { "type": "string", "required": true, "description": "'merchant' | 'keyword'" },
+    "matchValue": { "type": "string", "required": true },
+    "categoryId": { "type": "string", "required": true },
+    "categoryName": { "type": "string", "required": true },
+    "saving": { "type": "boolean", "default": false },
+    "onChangeType": { "type": "function", "required": true },
+    "onChangeMatch": { "type": "function", "required": true },
+    "onOpenCategoryPicker": { "type": "function", "required": true },
+    "onSave": { "type": "function", "required": true },
+    "onClose": { "type": "function", "required": true }
+  },
+  "states": ["default", "invalid", "saving"],
+  "tokens": {
+    "sheet": { "bg": "colors.surface2", "topRadius": "radius.xxl", "border": "colors.borderGlass", "maxHeight": "80%" },
+    "title": { "type": "typography.h3", "color": "colors.text" },
+    "closeButton": { "size": 44, "bg": "colors.glassMedium", "radius": "radius.md", "icon": "close", "iconColor": "colors.text" },
+    "fieldLabel": { "type": "typography.smallBold", "color": "colors.textMuted", "transform": "uppercase" },
+    "segmented": {
+      "option": { "bg": "colors.glassLight", "border": "colors.borderGlass", "radius": "radius.md" },
+      "active": { "bg": "colors.accent @12%", "border": "colors.accent @30%", "text": "colors.accent" },
+      "inactive": { "text": "colors.textDark" },
+      "labelType": "typography.smallBold",
+      "icons": { "merchant": "storefront-outline", "keyword": "text-outline" }
+    },
+    "input": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "text": "typography.body", "textColor": "colors.text", "placeholderColor": "colors.textDark" },
+    "inputHint": { "type": "typography.caption", "color": "colors.textDark" },
+    "categorySelector": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "iconSelected": "colors.primary2", "iconEmpty": "colors.textDark", "chevron": "colors.textDark" },
+    "saveButton": { "gradient": "gradients.primaryGradient", "radius": "radius.lg", "text": "typography.button", "textColor": "#fff", "disabledOpacity": 0.4 }
+  },
+  "validation": "Save disabled when !matchValue.trim() || !categoryId || saving. saving -> ActivityIndicator (permitted: in-sheet action, not screen load).",
+  "accessibility": {
+    "closeLabel": "Close",
+    "saveLabel": "Save rule",
+    "keyboard": "keyboardShouldPersistTaps=handled; input autoFocus",
+    "reducedMotion": "Fall back from slide to fade/none under reduce-motion"
+  }
+}

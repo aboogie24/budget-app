@@ -1,0 +1,38 @@
+{
+  "componentName": "InviteCard",
+  "description": "A single pending household invite: household identity, who invited you, expiry status, and the accept action. The invite code stays internal and is never rendered.",
+  "platform": "react-native",
+  "screen": "pending-invites",
+  "props": {
+    "householdName": { "type": "string", "required": true, "description": "Household display name; falls back to 'Household'." },
+    "inviterEmail": { "type": "string", "required": false, "description": "Email of the inviter; renders 'Invited by {email}' when present." },
+    "expiresAt": { "type": "string", "required": true, "description": "ISO 8601 expiry timestamp; drives the status chip and expired ghost bar." },
+    "expired": { "type": "boolean", "required": true, "description": "True when expiresAt is in the past; hides the CTA and shows the ghost bar." },
+    "accepting": { "type": "boolean", "default": false, "description": "True while this invite's accept request is in flight; CTA shows spinner and is disabled." },
+    "onAccept": { "type": "function", "required": true, "description": "Invoked on Accept & Join tap; triggers the existing confirm-dialog accept flow." }
+  },
+  "variants": ["active", "urgent", "expired"],
+  "states": ["default", "accepting", "expired"],
+  "layout": {
+    "surface": "glassEffects.glass (via commonStyles.card)",
+    "padding": "spacing.lg",
+    "gap": "spacing.md",
+    "marginBottom": "spacing.md",
+    "radius": "radius.lg",
+    "iconTile": { "size": 44, "radius": "radius.lg", "fill": "${colors.primary2}1f", "border": "${colors.primary2}33", "icon": "home", "iconSize": 20, "iconColor": "colors.primary2" },
+    "identityColumn": { "flex": 1, "name": "typography.bodyBold + colors.text (numberOfLines 1)", "inviter": "typography.small + colors.textMuted (numberOfLines 1)" }
+  },
+  "tokens": {
+    "card": "glassEffects.glass",
+    "border": "colors.borderGlass",
+    "nameText": "typography.bodyBold / colors.text",
+    "inviterText": "typography.small / colors.textMuted",
+    "expiredBar": { "borderStyle": "dashed", "border": "${colors.error}29", "fill": "${colors.error}14", "radius": "radius.lg", "paddingVertical": "spacing.md", "icon": "close-circle-outline", "iconColor": "colors.error", "text": "typography.smallBold / colors.error" }
+  },
+  "children": ["StatusChip", "AcceptButton"],
+  "accessibility": {
+    "role": "summary",
+    "label": "{householdName}, invited by {inviterEmail}, {statusWord}",
+    "notes": "Card reads as one node; the accept action carries its own button role and busy/disabled state. The raw invite code is never exposed to assistive tech."
+  }
+}

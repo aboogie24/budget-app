@@ -1,0 +1,46 @@
+{
+  "componentName": "AuthField",
+  "description": "Tokenized glass input row for the login/register screens. Email or password variant with focus, error, and disabled states.",
+  "platform": "react-native",
+  "props": {
+    "variant": { "type": "'email' | 'password'", "required": true, "description": "Selects icon, keyboard, secureTextEntry, and autoComplete" },
+    "value": { "type": "string", "required": true },
+    "onChangeText": { "type": "function", "required": true },
+    "placeholder": { "type": "string", "required": true },
+    "error": { "type": "boolean", "default": false, "description": "Applies error border + leading icon color; optionally renders helper" },
+    "helperText": { "type": "string", "required": false, "description": "Per-field error helper, caption/colors.error" },
+    "disabled": { "type": "boolean", "default": false, "description": "True while submitting; container to 0.6 opacity, non-editable" },
+    "showPassword": { "type": "boolean", "required": false, "description": "password variant only; controls secureTextEntry + eye icon" },
+    "onTogglePassword": { "type": "function", "required": false }
+  },
+  "variants": ["email", "password"],
+  "states": ["default", "focused", "error", "disabled"],
+  "tokens": {
+    "container": "glassEffects.glass",
+    "borderRadius": "radius.md",
+    "paddingHorizontal": "spacing.md",
+    "paddingVertical": "spacing.md",
+    "gap": "spacing.sm",
+    "minHeight": 48,
+    "borderDefault": "colors.borderGlass",
+    "borderFocused": "colors.primary2",
+    "borderError": "colors.error",
+    "leadingIconDefault": "colors.textMuted",
+    "leadingIconFocused": "colors.primary2",
+    "leadingIconError": "colors.error",
+    "inputText": "colors.text",
+    "inputType": "typography.body",
+    "placeholder": "colors.textDark",
+    "helperType": "typography.caption",
+    "helperColor": "colors.error"
+  },
+  "icons": { "email": "mail-outline", "password": "lock-closed-outline", "eyeOn": "eye-outline", "eyeOff": "eye-off-outline" },
+  "accessibility": {
+    "role": "none (TextInput)",
+    "label": "{Email|Password}",
+    "hint": "Enter your account email / Enter your password",
+    "eyeToggleLabel": "Show password / Hide password",
+    "eyeToggleRole": "button",
+    "eyeToggleTarget": "44x44 via hitSlop"
+  }
+}

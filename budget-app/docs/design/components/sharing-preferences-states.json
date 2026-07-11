@@ -1,0 +1,52 @@
+{
+  "componentName": "SharingPreferencesStates",
+  "description": "Non-happy-path state blocks for the Sharing Preferences screen: empty (no partner), load error, and save-error/save-success toasts. Tokenized against design-system.ts, consistent with the calendar/dashboard empty+error patterns.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/sharing-preferences-redesign.md#4",
+  "states": {
+    "empty": {
+      "detection": "householdMembers.length < 2",
+      "layout": "centered glass card (glassEffects.glass, radius.lg, padding spacing.xl, alignItems center, gap spacing.md)",
+      "icon": { "name": "people-outline", "size": 24, "color": "colors.textDark" },
+      "title": { "type": "typography.bodyBold", "color": "colors.text", "text": "No partner to share with yet" },
+      "body": { "type": "typography.small", "color": "colors.textMuted", "text": "Invite your partner to a household and you can choose exactly what they see here." },
+      "cta": { "label": "Invite a partner", "gradient": "gradients.primaryGradient", "radius": "radius.lg", "paddingVertical": "spacing.lg", "textType": "typography.button", "textColor": "colors.text", "route": "/household-setup" },
+      "saveFooter": "hidden in this state"
+    },
+    "loadError": {
+      "detection": "prefs GET failed (loadError flag)",
+      "layout": "inline glass card, header stays visible",
+      "icon": { "name": "alert-circle-outline", "size": 24, "color": "colors.error" },
+      "title": { "type": "typography.bodyBold", "color": "colors.text", "text": "Couldn't load your sharing settings" },
+      "body": { "type": "typography.small", "color": "colors.textMuted", "text": "We didn't want to show the wrong toggles." },
+      "retry": { "label": "Retry", "icon": "refresh", "textColor": "colors.primary2", "type": "typography.smallBold", "target": ">= 44pt", "action": "re-run load()" }
+    },
+    "saveError": {
+      "detection": "prefs POST failed",
+      "presentation": "inline footer toast (not native Alert)",
+      "color": "colors.error",
+      "text": "Couldn't save — tap to retry",
+      "note": "edited toggles retained; user's work not lost"
+    },
+    "saveSuccess": {
+      "detection": "prefs POST ok",
+      "presentation": "inline toast then router.back() (keep existing nav)",
+      "color": "colors.success",
+      "text": "Saved ✓",
+      "motion": "animation.fast; instant under reduce-motion"
+    }
+  },
+  "tokens": {
+    "colors": ["text", "textMuted", "textDark", "error", "success", "primary2", "glassLight", "borderGlass"],
+    "typography": ["bodyBold", "small", "smallBold", "button", "caption"],
+    "spacing": ["xl", "lg", "md"],
+    "radius": ["lg"],
+    "gradients": ["primaryGradient"],
+    "animation": ["fast"]
+  },
+  "accessibility": {
+    "colorIndependence": "each state pairs an icon + a text headline; toasts carry a word, never color-only",
+    "target": "Retry / CTA buttons >= 44pt",
+    "reducedMotion": "toast entrance instant under AccessibilityInfo.isReduceMotionEnabled"
+  }
+}

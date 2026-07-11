@@ -1,0 +1,40 @@
+{
+  "componentName": "OnboardingField",
+  "description": "Tokenized labeled text field for the onboarding invite step (partner email), replacing the bespoke opaque input.",
+  "platform": "react-native",
+  "props": {
+    "label": { "type": "string", "required": true, "description": "Uppercase caption label above the field (e.g. \"PARTNER'S EMAIL\")" },
+    "value": { "type": "string", "required": true },
+    "onChangeText": { "type": "function", "required": true },
+    "placeholder": { "type": "string", "required": false, "description": "e.g. partner@example.com" },
+    "keyboardType": { "type": "string", "required": false, "default": "email-address" },
+    "autoCapitalize": { "type": "string", "required": false, "default": "none" },
+    "editable": { "type": "boolean", "required": false, "default": true, "description": "false while an invite is in flight" },
+    "error": { "type": "boolean", "required": false, "default": false, "description": "Malformed-email state (optional client validation)" }
+  },
+  "variants": ["default"],
+  "states": ["default", "focused", "disabled", "error"],
+  "layout": {
+    "labelSpacing": "spacing.xs below label",
+    "container": "glassEffects.glass",
+    "radius": "radius.md",
+    "paddingHorizontal": "spacing.lg",
+    "paddingVertical": "spacing.md",
+    "minHeight": 48
+  },
+  "tokens": {
+    "label": "typography.caption (uppercase) / colors.textMuted",
+    "value": "typography.body / colors.text",
+    "placeholder": "colors.textDark",
+    "borderDefault": "colors.borderGlass",
+    "borderFocused": "colors.primary2",
+    "borderError": "colors.error",
+    "focusAnimation": "animation.fast"
+  },
+  "accessibility": {
+    "role": "none (native TextInput)",
+    "label": "{label}",
+    "minTarget": "48pt",
+    "note": "Label above the field carries meaning; placeholder is decorative (colors.textDark)"
+  }
+}

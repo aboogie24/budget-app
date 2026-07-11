@@ -1,0 +1,45 @@
+{
+  "componentName": "AccountRow",
+  "description": "A single linked-account row inside an AccountSectionCard. Implements the shared RecentActivity row contract (36px icon chip, smallBold name, caption subtitle, right-aligned amount).",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "reuses": ["RecentActivity row pattern"],
+  "props": {
+    "name": { "type": "string", "required": true },
+    "institutionName": { "type": "string", "required": false },
+    "mask": { "type": "string", "required": false, "description": "Last 4 digits; rendered as ••{mask}" },
+    "subtype": { "type": "string", "required": false, "description": "e.g. Checking, Credit Card" },
+    "type": { "type": "string", "required": true, "description": "depository | credit | loan | investment | other" },
+    "currentBalance": { "type": "number", "required": true },
+    "availableBalance": { "type": "number", "required": false, "description": "Shown as '{x} avail' when it differs from currentBalance" },
+    "isDebt": { "type": "boolean", "required": true, "description": "type is credit or loan" },
+    "balanceVisible": { "type": "boolean", "default": true },
+    "partner": { "type": "{ glyph: string; color: string; name: string } | null", "default": null, "description": "Optional ◑/◐ attribution glyph; null hides it (graceful degrade)" },
+    "onPress": { "type": "function", "required": false }
+  },
+  "variants": ["depository", "credit", "loan", "investment", "other"],
+  "states": ["default", "pressed", "hidden"],
+  "typeMap": {
+    "depository": { "icon": "wallet-outline", "color": "colors.info" },
+    "credit": { "icon": "card-outline", "color": "colors.error" },
+    "loan": { "icon": "document-text-outline", "color": "colors.warning" },
+    "investment": { "icon": "trending-up-outline", "color": "colors.success" },
+    "other": { "icon": "ellipsis-horizontal-outline", "color": "colors.textMuted" }
+  },
+  "layout": {
+    "row": { "flexDirection": "row", "gap": "spacing.md", "paddingVertical": "spacing.sm", "minHeight": 44 },
+    "iconChip": { "size": 36, "radius": "radius.md", "background": "`${typeColor}1f`" },
+    "amount": "flexShrink 0, alignItems flex-end"
+  },
+  "tokens": {
+    "name": "typography.smallBold, colors.text, numberOfLines 1",
+    "subtitle": "typography.caption, colors.textMuted, numberOfLines 1",
+    "balance": "typography.smallBold, colors.error if isDebt else typeColor",
+    "available": "typography.caption, colors.textMuted"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {subtype} at {institutionName}, {debt|balance} {currentBalance}{, available {availableBalance}}.",
+    "maskedLabel": "balance hidden"
+  }
+}

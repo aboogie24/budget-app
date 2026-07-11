@@ -14,6 +14,7 @@ import {
   UIManager,
   Modal,
   ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,8 +22,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../../utils/storage';
 import { api } from '../../utils/apiClient';
 import { v4 as uuidv4 } from 'uuid';
-import { router } from 'expo-router';
 import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  gradients,
+} from '@/utils/design-system';
+import { CategoryTypeToggle } from '@/components/settings-categories-CategoryTypeToggle';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -66,10 +79,15 @@ function resolveIcon(iconName?: string): keyof typeof Ionicons.glyphMap {
   return ICON_MAP[iconName] ?? (iconName as keyof typeof Ionicons.glyphMap) ?? 'pricetag-outline';
 }
 
+// Category-picker swatches are user-selectable DATA values, not UI chrome, so
+// they intentionally stay as literals. Indices 0–3 align with
+// colors.primary / success / error / info for brand cohesion.
 const PRESET_COLORS = [
-  '#7c3aed', '#22c55e', '#ef4444', '#3b82f6', '#06b6d4',
+  colors.primary, colors.success, colors.error, colors.info, '#06b6d4',
   '#f59e0b', '#ec4899', '#14b8a6', '#f97316', '#8b5cf6',
 ];
+
+const DEFAULT_CATEGORY_COLOR = colors.primary;
 
 type Category = {
   id: string;
@@ -99,6 +117,7 @@ export default function CategorySettings() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [ruleCounts, setRuleCounts] = useState<RuleCount>({});
   const [type, setType] = useState<'expense' | 'income'>('expense');
@@ -111,6 +130,7 @@ export default function CategorySettings() {
 
   const fetchData = useCallback(async () => {
     try {
+      setError(false);
       const user = await getCurrentUser();
       if (!user?.id) return;
       setUserId(user.id);
@@ -136,6 +156,7 @@ export default function CategorySettings() {
       setRuleCounts(counts);
     } catch (err) {
       console.error('Error fetching categories:', err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -153,6 +174,22 @@ export default function CategorySettings() {
 
   const filteredCategories = categories.filter((cat) => cat.type === type);
 
+  const isSystemCategory = (cat: Category) => cat.user_id === null || cat.user_id === undefined;
+
+  // Custom vs System breakdown (parents + their subcategories) for this type
+  const { customCount, systemCount } = filteredCategories.reduce(
+    (acc, cat) => {
+      const all = [cat, ...(cat.subcategories || [])];
+      for (const c of all) {
+        if (isSystemCategory(c)) acc.systemCount += 1;
+        else acc.customCount += 1;
+      }
+      return acc;
+    },
+    { customCount: 0, systemCount: 0 },
+  );
+  const totalCount = customCount + systemCount;
+
   const toggleExpand = (id: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setExpandedIds((prev) => {
@@ -163,8 +200,6 @@ export default function CategorySettings() {
     });
   };
 
-  const isSystemCategory = (cat: Category) => cat.user_id === null || cat.user_id === undefined;
-
   // Open edit modal for a category
   const openEdit = (cat: Category, isSubcategory = false) => {
     if (isSystemCategory(cat)) {
@@ -174,7 +209,7 @@ export default function CategorySettings() {
     setEditData({
       id: cat.id,
       name: cat.name,
-      color: cat.color || '#7c3aed',
+      color: cat.color || DEFAULT_CATEGORY_COLOR,
       icon: cat.icon || '',
       parent_id: cat.parent_id,
     });
@@ -186,7 +221,7 @@ export default function CategorySettings() {
     setEditData({
       id: uuidv4(),
       name: '',
-      color: '#7c3aed',
+      color: DEFAULT_CATEGORY_COLOR,
       icon: 'pricetag',
       isNew: true,
     });
@@ -198,13 +233,18 @@ export default function CategorySettings() {
     setEditData({
       id: uuidv4(),
       name: '',
-      color: '#7c3aed',
+      color: DEFAULT_CATEGORY_COLOR,
       icon: '',
       isNew: true,
       isSubcategory: true,
       parentId,
     });
     setEditModal(true);
+  };
+
+  const closeModal = () => {
+    setEditModal(false);
+    setEditData(null);
   };
 
   const handleSaveEdit = async () => {
@@ -296,10 +336,7 @@ export default function CategorySettings() {
     ]);
   };
 
-  const getRuleCount = (catId: string): number => {
-    let count = ruleCounts[catId] || 0;
-    return count;
-  };
+  const getRuleCount = (catId: string): number => ruleCounts[catId] || 0;
 
   const getTotalRuleCount = (cat: Category): number => {
     let total = getRuleCount(cat.id);
@@ -309,13 +346,19 @@ export default function CategorySettings() {
     return total;
   };
 
+  const HITSLOP = { top: 10, bottom: 10, left: 10, right: 10 };
+
   const renderParent = ({ item }: { item: Category }) => {
     const isExpanded = expandedIds.has(item.id);
-    const hasSubs = (item.subcategories || []).length > 0;
-    const iconColor = item.color || '#7c3aed';
+    const iconColor = item.color || DEFAULT_CATEGORY_COLOR;
     const subCount = (item.subcategories || []).length;
     const totalRules = getTotalRuleCount(item);
     const isSystem = isSystemCategory(item);
+
+    const a11yLabel =
+      `${item.name}, ${subCount} subcategor${subCount === 1 ? 'y' : 'ies'}` +
+      (totalRules > 0 ? `, ${totalRules} rule${totalRules === 1 ? '' : 's'}` : '') +
+      (isSystem ? ', System, locked' : '');
 
     return (
       <View style={styles.parentSection}>
@@ -325,45 +368,55 @@ export default function CategorySettings() {
           onPress={() => toggleExpand(item.id)}
           onLongPress={() => openEdit(item)}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={a11yLabel}
+          accessibilityHint={
+            isSystem
+              ? 'Double-tap to expand, locked'
+              : 'Double-tap to expand, long-press to edit'
+          }
         >
-          <View style={[styles.iconCircle, { backgroundColor: `${iconColor}22` }]}>
+          <View style={[styles.iconCircle, { backgroundColor: `${iconColor}1F` }]}>
             <Ionicons name={resolveIcon(item.icon)} size={20} color={iconColor} />
           </View>
           <View style={styles.parentInfo}>
-            <Text style={styles.parentName}>{item.name}</Text>
+            <Text style={styles.parentName} numberOfLines={1}>{item.name}</Text>
             <View style={styles.parentMeta}>
-              {subCount > 0 && (
-                <Text style={styles.metaText}>
-                  {subCount} sub{subCount !== 1 ? 's' : ''}
-                </Text>
-              )}
+              <Text style={styles.metaText}>
+                {subCount} sub{subCount !== 1 ? 's' : ''}
+              </Text>
               {totalRules > 0 && (
-                <View style={styles.ruleBadge}>
-                  <Ionicons name="git-branch-outline" size={10} color="#c084fc" />
-                  <Text style={styles.ruleBadgeText}>{totalRules}</Text>
-                </View>
-              )}
-              {isSystem && (
-                <View style={styles.systemBadge}>
-                  <Text style={styles.systemBadgeText}>System</Text>
-                </View>
+                <>
+                  <Text style={styles.metaDot}>·</Text>
+                  <View style={styles.ruleBadge}>
+                    <Ionicons name="git-branch-outline" size={11} color={colors.accent} />
+                    <Text style={styles.ruleBadgeText}>{totalRules}</Text>
+                  </View>
+                </>
               )}
             </View>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            {!isSystem && (
+          <View style={styles.rightCluster}>
+            {isSystem ? (
+              <View style={styles.systemBadge}>
+                <Ionicons name="lock-closed" size={11} color={colors.textMuted} />
+                <Text style={styles.systemBadgeText}>System</Text>
+              </View>
+            ) : (
               <TouchableOpacity
                 onPress={() => handleDeleteParent(item)}
                 style={styles.miniAction}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                hitSlop={HITSLOP}
+                accessibilityRole="button"
+                accessibilityLabel={`Delete ${item.name}`}
               >
-                <Ionicons name="trash-outline" size={14} color="#f87171" />
+                <Ionicons name="trash-outline" size={15} color={colors.error} />
               </TouchableOpacity>
             )}
             <Ionicons
               name={isExpanded ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color="#64748b"
+              size={18}
+              color={colors.textMuted}
             />
           </View>
         </TouchableOpacity>
@@ -382,29 +435,37 @@ export default function CategorySettings() {
                     style={styles.subRow}
                     onPress={() => openEdit(sub, true)}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      `${sub.name}` +
+                      (subRules > 0 ? `, ${subRules} rule${subRules === 1 ? '' : 's'}` : '') +
+                      (subIsSystem ? ', System' : '')
+                    }
                   >
-                    <View style={[styles.subIconCircle, { backgroundColor: `${subColor}18` }]}>
+                    <View style={[styles.subIconCircle, { backgroundColor: `${subColor}1F` }]}>
                       <Ionicons name={resolveIcon(sub.icon)} size={14} color={subColor} />
                     </View>
                     <Text style={styles.subName} numberOfLines={1}>{sub.name}</Text>
                     {subRules > 0 && (
                       <View style={styles.ruleBadgeSm}>
-                        <Ionicons name="git-branch-outline" size={9} color="#c084fc" />
+                        <Ionicons name="git-branch-outline" size={10} color={colors.accent} />
                         <Text style={styles.ruleBadgeTextSm}>{subRules}</Text>
                       </View>
                     )}
-                    {subIsSystem && (
+                    {subIsSystem ? (
                       <View style={styles.systemBadgeSm}>
-                        <Text style={styles.systemBadgeTextSm}>Sys</Text>
+                        <Ionicons name="lock-closed" size={10} color={colors.textMuted} />
+                        <Text style={styles.systemBadgeTextSm}>System</Text>
                       </View>
-                    )}
-                    {!subIsSystem && (
+                    ) : (
                       <TouchableOpacity
                         onPress={() => handleDeleteSubcategory(sub)}
                         style={styles.miniAction}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        hitSlop={HITSLOP}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete ${sub.name}`}
                       >
-                        <Ionicons name="trash-outline" size={13} color="#f87171" />
+                        <Ionicons name="trash-outline" size={14} color={colors.error} />
                       </TouchableOpacity>
                     )}
                   </TouchableOpacity>
@@ -416,9 +477,11 @@ export default function CategorySettings() {
             <TouchableOpacity
               style={styles.addSubBtn}
               onPress={() => openAddSubcategory(item.id)}
+              accessibilityRole="button"
+              accessibilityLabel="Add subcategory"
             >
-              <Ionicons name="add" size={16} color="#a855f7" />
-              <Text style={styles.addSubText}>Add Subcategory</Text>
+              <Ionicons name="add" size={16} color={colors.accent} />
+              <Text style={styles.addSubText}>Add subcategory</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -426,88 +489,147 @@ export default function CategorySettings() {
     );
   };
 
-  return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1 }}>
-        <FlatList
-          data={filteredCategories}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.container}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#a855f7"
-              colors={['#a855f7']}
+  const renderCountCard = () => (
+    <View style={styles.countCard}>
+      <Text style={styles.countBig}>{totalCount}</Text>
+      <Text style={styles.countLabel}>
+        {type} categor{totalCount === 1 ? 'y' : 'ies'}
+      </Text>
+      <View style={styles.breakdownRow}>
+        <View style={styles.breakdownItem}>
+          <Ionicons name="create-outline" size={13} color={colors.accent} />
+          <Text style={styles.breakdownCustom}>{customCount} custom</Text>
+        </View>
+        <Text style={styles.breakdownDot}>·</Text>
+        <View style={styles.breakdownItem}>
+          <Ionicons name="lock-closed" size={12} color={colors.textMuted} />
+          <Text style={styles.breakdownSystem}>{systemCount} system</Text>
+        </View>
+      </View>
+      <Text style={styles.affordanceHint}>Tap a category to expand · long-press to edit</Text>
+    </View>
+  );
+
+  const renderSkeleton = () => (
+    <View>
+      <Skeleton height={44} borderRadius={radius.full} style={{ marginBottom: spacing.lg }} />
+      {/* Headline card skeleton */}
+      <View style={[styles.countCard, { marginBottom: spacing.lg }]}>
+        <Skeleton width={64} height={30} borderRadius={radius.sm} style={{ marginBottom: spacing.sm }} />
+        <Skeleton width={150} height={14} style={{ marginBottom: spacing.md }} />
+        <Skeleton width={200} height={12} />
+      </View>
+      {/* Parent-row skeletons */}
+      {Array.from({ length: 6 }).map((_, i) => (
+        <View key={i} style={[styles.parentSection, styles.skeletonRow]}>
+          <Skeleton width={40} height={40} borderRadius={radius.md} />
+          <View style={styles.skeletonRowText}>
+            <Skeleton width="55%" height={15} style={{ marginBottom: spacing.sm }} />
+            <Skeleton width="35%" height={12} />
+          </View>
+          <Skeleton width={18} height={18} borderRadius={radius.sm} />
+        </View>
+      ))}
+    </View>
+  );
+
+  const renderListHeader = () => (
+    <View>
+      <View style={styles.toggleWrap}>
+        <CategoryTypeToggle value={type} onChange={setType} />
+      </View>
+      {!loading && !error && filteredCategories.length > 0 && renderCountCard()}
+    </View>
+  );
+
+  const renderBody = () => {
+    if (loading) {
+      return <View style={styles.container}>{renderSkeleton()}</View>;
+    }
+
+    return (
+      <FlatList
+        data={error ? [] : filteredCategories}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary2}
+            colors={[colors.primary2]}
+          />
+        }
+        ListHeaderComponent={renderListHeader}
+        renderItem={renderParent}
+        ListEmptyComponent={
+          error ? (
+            <ErrorState
+              title="Couldn't load categories"
+              message="Check your connection and try again."
+              retryLabel="Try Again"
+              onRetry={fetchData}
             />
-          }
-          ListHeaderComponent={
-            <>
-              {/* Header */}
-              <View style={styles.headerRow}>
-                <BackButton fallback="/(tabs)/settings" color="#c084fc" size={20} />
-                <Text style={styles.header}>Categories</Text>
-                <TouchableOpacity onPress={openAddParent} style={styles.addHeaderBtn}>
-                  <Ionicons name="add" size={22} color="#c084fc" />
-                </TouchableOpacity>
-              </View>
-
-              {/* Type toggle */}
-              <View style={styles.toggleRow}>
-                {(['expense', 'income'] as const).map((t) => (
-                  <TouchableOpacity
-                    key={t}
-                    style={[styles.toggle, type === t && styles.toggleActive]}
-                    onPress={() => setType(t)}
-                  >
-                    <Ionicons
-                      name={t === 'expense' ? 'cart-outline' : 'cash-outline'}
-                      size={16}
-                      color={type === t ? '#c084fc' : '#64748b'}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={type === t ? styles.toggleTextActive : styles.toggleText}>
-                      {t === 'expense' ? 'Expenses' : 'Income'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.sectionLabel}>
-                {filteredCategories.length} {type} categor{filteredCategories.length !== 1 ? 'ies' : 'y'}
-              </Text>
-              <Text style={styles.hint}>
-                Tap to expand, long-press to edit
-              </Text>
-            </>
-          }
-          renderItem={renderParent}
-          ListEmptyComponent={
-            loading ? (
-              <View style={styles.emptyState}>
-                <ActivityIndicator size="large" color="#a855f7" />
-                <Text style={styles.emptyText}>Loading categories...</Text>
-              </View>
-            ) : (
-              <View style={styles.emptyState}>
-                <Ionicons name="folder-open-outline" size={32} color="rgba(255,255,255,0.15)" />
-                <Text style={styles.emptyText}>No {type} categories yet</Text>
-              </View>
-            )
-          }
-          ListFooterComponent={
-            <TouchableOpacity style={styles.addCategoryBtn} onPress={openAddParent}>
-              <Ionicons name="add-circle-outline" size={20} color="#a855f7" />
+          ) : (
+            <EmptyState
+              icon="folder-open-outline"
+              title={`No ${type} categories yet`}
+              description={
+                type === 'income'
+                  ? 'Add one to start tagging money coming in.'
+                  : 'Add one to start organizing your spending.'
+              }
+              actionLabel="Add Category"
+              onAction={openAddParent}
+            />
+          )
+        }
+        ListFooterComponent={
+          !error && filteredCategories.length > 0 ? (
+            <TouchableOpacity
+              style={styles.addCategoryBtn}
+              onPress={openAddParent}
+              accessibilityRole="button"
+              accessibilityLabel="Add category"
+            >
+              <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
               <Text style={styles.addCategoryText}>Add Category</Text>
             </TouchableOpacity>
-          }
-        />
+          ) : null
+        }
+      />
+    );
+  };
 
-        {/* Edit / Add Modal */}
-        <Modal visible={editModal} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
+  return (
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }}>
+        {/* Fixed header (outside scroll) */}
+        <View style={styles.headerRow}>
+          <BackButton fallback="/(tabs)/settings" color={colors.accent} size={20} />
+          <Text style={styles.header}>Categories</Text>
+          <TouchableOpacity
+            onPress={openAddParent}
+            style={styles.addHeaderBtn}
+            hitSlop={HITSLOP}
+            accessibilityRole="button"
+            accessibilityLabel="Add category"
+          >
+            <Ionicons name="add" size={22} color={colors.accent} />
+          </TouchableOpacity>
+        </View>
+
+        {renderBody()}
+
+        {/* Add / Edit form sheet */}
+        <Modal visible={editModal} animationType="slide" transparent onRequestClose={closeModal}>
+          <KeyboardAvoidingView
+            style={styles.modalOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <View style={styles.modalContainer} accessibilityViewIsModal accessibilityRole="none">
+              <View style={styles.grabber} />
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
                   {editData?.isNew
@@ -517,26 +639,27 @@ export default function CategorySettings() {
                     : 'Edit Category'}
                 </Text>
                 <TouchableOpacity
-                  onPress={() => {
-                    setEditModal(false);
-                    setEditData(null);
-                  }}
+                  onPress={closeModal}
                   style={styles.closeBtn}
+                  hitSlop={HITSLOP}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
                 >
-                  <Ionicons name="close" size={22} color="#e5e7eb" />
+                  <Ionicons name="close" size={22} color={colors.textMuted} />
                 </TouchableOpacity>
               </View>
 
               <ScrollView
                 contentContainerStyle={styles.modalContent}
                 keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
               >
                 {/* Name */}
-                <Text style={styles.fieldLabel}>Name</Text>
+                <Text style={styles.fieldLabel}>NAME</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="Category name"
-                  placeholderTextColor="#475569"
+                  placeholderTextColor={colors.textMuted}
                   value={editData?.name ?? ''}
                   onChangeText={(v) =>
                     setEditData((prev) => (prev ? { ...prev, name: v } : prev))
@@ -545,25 +668,31 @@ export default function CategorySettings() {
                 />
 
                 {/* Color */}
-                <Text style={styles.fieldLabel}>Color</Text>
+                <Text style={styles.fieldLabel}>COLOR</Text>
                 <View style={styles.colorGrid}>
-                  {PRESET_COLORS.map((color) => (
-                    <TouchableOpacity
-                      key={color}
-                      onPress={() =>
-                        setEditData((prev) => (prev ? { ...prev, color } : prev))
-                      }
-                      style={[
-                        styles.colorSwatch,
-                        { backgroundColor: color },
-                        editData?.color === color && styles.colorSwatchActive,
-                      ]}
-                    />
-                  ))}
+                  {PRESET_COLORS.map((color) => {
+                    const selected = editData?.color === color;
+                    return (
+                      <TouchableOpacity
+                        key={color}
+                        onPress={() =>
+                          setEditData((prev) => (prev ? { ...prev, color } : prev))
+                        }
+                        style={[
+                          styles.colorSwatch,
+                          { backgroundColor: color },
+                          selected && styles.colorSwatchActive,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${color} color`}
+                        accessibilityState={{ selected }}
+                      />
+                    );
+                  })}
                 </View>
 
                 {/* Icon */}
-                <Text style={styles.fieldLabel}>Icon</Text>
+                <Text style={styles.fieldLabel}>ICON</Text>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -572,6 +701,7 @@ export default function CategorySettings() {
                   {AVAILABLE_ICONS.map((iconKey) => {
                     const iconName = ICON_MAP[iconKey];
                     const isSelected = editData?.icon === iconKey;
+                    const activeColor = editData?.color || DEFAULT_CATEGORY_COLOR;
                     return (
                       <TouchableOpacity
                         key={iconKey}
@@ -581,15 +711,17 @@ export default function CategorySettings() {
                         style={[
                           styles.iconOption,
                           isSelected && {
-                            borderColor: editData?.color || '#a855f7',
-                            backgroundColor: `${editData?.color || '#a855f7'}22`,
+                            borderColor: activeColor,
+                            backgroundColor: `${activeColor}1F`,
                           },
                         ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
                       >
                         <Ionicons
                           name={iconName}
                           size={20}
-                          color={isSelected ? editData?.color || '#a855f7' : '#64748b'}
+                          color={isSelected ? activeColor : colors.textMuted}
                         />
                       </TouchableOpacity>
                     );
@@ -597,189 +729,187 @@ export default function CategorySettings() {
                 </ScrollView>
 
                 {/* Preview */}
-                <View style={styles.previewSection}>
-                  <Text style={styles.fieldLabel}>Preview</Text>
-                  <View style={styles.previewRow}>
-                    <View
-                      style={[
-                        styles.iconCircle,
-                        { backgroundColor: `${editData?.color || '#7c3aed'}22` },
-                      ]}
-                    >
-                      <Ionicons
-                        name={resolveIcon(editData?.icon)}
-                        size={20}
-                        color={editData?.color || '#7c3aed'}
-                      />
-                    </View>
-                    <Text style={styles.previewName}>
-                      {editData?.name || 'Category Name'}
-                    </Text>
+                <Text style={styles.fieldLabel}>PREVIEW</Text>
+                <View style={styles.previewRow}>
+                  <View
+                    style={[
+                      styles.iconCircle,
+                      { backgroundColor: `${editData?.color || DEFAULT_CATEGORY_COLOR}1F` },
+                    ]}
+                  >
+                    <Ionicons
+                      name={resolveIcon(editData?.icon)}
+                      size={20}
+                      color={editData?.color || DEFAULT_CATEGORY_COLOR}
+                    />
                   </View>
+                  <Text style={styles.previewName} numberOfLines={1}>
+                    {editData?.name || 'Category Name'}
+                  </Text>
                 </View>
               </ScrollView>
 
               {/* Save button */}
               <View style={styles.modalFooter}>
                 <TouchableOpacity
-                  style={[styles.saveBtn, editSaving && { opacity: 0.5 }]}
                   onPress={handleSaveEdit}
                   disabled={editSaving}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={editData?.isNew ? 'Create' : 'Save changes'}
                 >
-                  {editSaving ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.saveBtnText}>
-                      {editData?.isNew ? 'Create' : 'Save Changes'}
-                    </Text>
-                  )}
+                  <LinearGradient
+                    colors={[...gradients.primaryGradient]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={[styles.saveBtn, editSaving && { opacity: 0.6 }]}
+                  >
+                    {editSaving ? (
+                      <ActivityIndicator size="small" color={colors.text} />
+                    ) : (
+                      <Text style={styles.saveBtnText}>
+                        {editData?.isNew ? 'Create' : 'Save Changes'}
+                      </Text>
+                    )}
+                  </LinearGradient>
                 </TouchableOpacity>
               </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16, paddingBottom: 48 },
+  container: { padding: spacing.lg, paddingBottom: spacing.xxxl },
 
   /* Header */
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  header: { fontSize: 20, fontWeight: '800', color: '#f8fafc' },
+  header: { ...typography.h3, color: colors.text },
   addHeaderBtn: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(168,85,247,0.12)',
+    borderRadius: radius.md,
+    backgroundColor: `${colors.primary2}1F`,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.3)',
+    borderColor: colors.borderGlass,
   },
 
   /* Toggle */
-  toggleRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
-  toggle: {
-    flex: 1,
+  toggleWrap: { marginBottom: spacing.lg },
+
+  /* Headline count card */
+  countCard: {
+    ...glassEffects.glassFloating,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  countBig: { ...typography.h2, color: colors.text },
+  countLabel: {
+    ...typography.small,
+    color: colors.textMuted,
+    textTransform: 'capitalize',
+    marginTop: spacing.xs,
+  },
+  breakdownRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
-  toggleActive: {
-    backgroundColor: 'rgba(192,132,252,0.12)',
-    borderColor: 'rgba(192,132,252,0.3)',
+  breakdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
-  toggleText: { color: '#64748b', fontWeight: '700' },
-  toggleTextActive: { color: '#c084fc', fontWeight: '800' },
-
-  sectionLabel: {
-    color: '#64748b',
-    fontSize: 11,
-    letterSpacing: 1.2,
-    fontWeight: '700',
-    marginBottom: 4,
-    textTransform: 'uppercase',
-  },
-  hint: {
-    color: '#475569',
-    fontSize: 12,
-    marginBottom: 14,
+  breakdownCustom: { ...typography.smallBold, color: colors.text },
+  breakdownSystem: { ...typography.small, color: colors.textMuted },
+  breakdownDot: { color: colors.textDark, fontSize: 14 },
+  affordanceHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
   },
 
   /* Parent section */
   parentSection: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 10,
-    overflow: 'hidden',
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    marginBottom: spacing.md,
   },
+  skeletonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  skeletonRowText: { flex: 1 },
   parentRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
-    gap: 12,
+    padding: spacing.md,
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
   },
   iconCircle: {
     width: 40,
     height: 40,
-    borderRadius: 12,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  parentInfo: {
-    flex: 1,
-  },
-  parentName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#f8fafc',
-  },
+  parentInfo: { flex: 1 },
+  parentName: { ...typography.bodyBold, color: colors.text },
   parentMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 3,
+    gap: spacing.xs,
+    marginTop: 2,
   },
-  metaText: {
-    color: '#64748b',
-    fontSize: 12,
-    fontWeight: '600',
+  metaText: { ...typography.caption, color: colors.textMuted },
+  metaDot: { color: colors.textDark, fontSize: 12 },
+  rightCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexShrink: 0,
   },
   ruleBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: 'rgba(192,132,252,0.12)',
+    backgroundColor: `${colors.primary2}1F`,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: radius.sm,
   },
-  ruleBadgeText: {
-    color: '#c084fc',
-    fontSize: 10,
-    fontWeight: '700',
-  },
+  ruleBadgeText: { ...typography.caption, color: colors.accent, fontWeight: '700' },
   systemBadge: {
-    backgroundColor: 'rgba(100,116,139,0.2)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.glassMedium,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
   },
-  systemBadgeText: {
-    color: '#94a3b8',
-    fontSize: 10,
-    fontWeight: '600',
-  },
+  systemBadgeText: { ...typography.caption, color: colors.textMuted, fontWeight: '600' },
   miniAction: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    backgroundColor: colors.glassLight,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -787,223 +917,191 @@ const styles = StyleSheet.create({
   /* Subcategories */
   subsContainer: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-    paddingVertical: 4,
+    borderTopColor: colors.borderLight,
+    paddingVertical: spacing.xs,
   },
   subRowWrapper: {
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.04)',
+    borderBottomColor: colors.borderLight,
   },
   subRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    paddingLeft: 56,
-    gap: 10,
+    paddingVertical: spacing.sm,
+    paddingRight: spacing.lg,
+    paddingLeft: spacing.xxl + spacing.xl,
+    gap: spacing.md,
   },
   subIconCircle: {
     width: 30,
     height: 30,
-    borderRadius: 8,
+    borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  subName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#cbd5e1',
-  },
+  subName: { ...typography.small, color: colors.text, flex: 1 },
   ruleBadgeSm: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    backgroundColor: 'rgba(192,132,252,0.1)',
+    backgroundColor: `${colors.primary2}1F`,
     paddingHorizontal: 5,
     paddingVertical: 1,
-    borderRadius: 5,
+    borderRadius: radius.sm,
   },
-  ruleBadgeTextSm: {
-    color: '#c084fc',
-    fontSize: 9,
-    fontWeight: '700',
-  },
+  ruleBadgeTextSm: { ...typography.caption, color: colors.accent, fontWeight: '700' },
   systemBadgeSm: {
-    backgroundColor: 'rgba(100,116,139,0.15)',
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.glassMedium,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
   },
-  systemBadgeTextSm: {
-    color: '#94a3b8',
-    fontSize: 9,
-    fontWeight: '600',
-  },
+  systemBadgeTextSm: { ...typography.caption, color: colors.textMuted, fontWeight: '600' },
   addSubBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    marginHorizontal: 14,
-    marginVertical: 6,
-    borderRadius: 10,
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginVertical: spacing.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: 'rgba(168,85,247,0.25)',
-    backgroundColor: 'rgba(168,85,247,0.06)',
+    borderColor: colors.borderGlass,
+    backgroundColor: `${colors.primary2}14`,
   },
-  addSubText: {
-    color: '#a855f7',
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  addSubText: { ...typography.smallBold, color: colors.accent },
 
   /* Add category bottom button */
   addCategoryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    backgroundColor: 'rgba(168,85,247,0.12)',
-    borderRadius: 14,
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    backgroundColor: `${colors.primary2}1F`,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.3)',
-    marginTop: 16,
+    borderColor: colors.borderGlass,
+    marginTop: spacing.lg,
   },
-  addCategoryText: {
-    color: '#a855f7',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-
-  /* Empty */
-  emptyState: { alignItems: 'center', paddingVertical: 40, gap: 10 },
-  emptyText: { color: 'rgba(255,255,255,0.3)', fontSize: 14, fontWeight: '600' },
+  addCategoryText: { ...typography.smallBold, color: colors.accent },
 
   /* Modal */
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
   modalContainer: {
-    backgroundColor: '#0f0a1e',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: colors.surface2,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
     maxHeight: '85%',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.borderGlass,
     borderBottomWidth: 0,
+    paddingTop: spacing.sm,
+  },
+  grabber: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: radius.full,
+    backgroundColor: colors.glassStrong,
+    marginBottom: spacing.sm,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 12,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#f8fafc',
-  },
+  modalTitle: { ...typography.h3, color: colors.text },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassMedium,
     alignItems: 'center',
     justifyContent: 'center',
   },
   modalContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    gap: 4,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.lg,
   },
   fieldLabel: {
-    color: '#94a3b8',
-    fontWeight: '700',
-    fontSize: 13,
-    marginBottom: 6,
-    marginTop: 12,
+    ...typography.smallBold,
+    color: colors.textMuted,
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+    marginTop: spacing.lg,
   },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    ...typography.body,
+    backgroundColor: colors.glassLight,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#f8fafc',
-    fontSize: 15,
+    borderColor: colors.borderGlass,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    color: colors.text,
   },
   colorGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 4,
+    gap: spacing.md,
   },
   colorSwatch: {
     width: 32,
     height: 32,
-    borderRadius: 10,
+    borderRadius: radius.md,
     borderWidth: 2,
     borderColor: 'transparent',
   },
   colorSwatchActive: {
-    borderColor: '#fff',
+    borderColor: colors.text,
   },
   iconGrid: {
-    gap: 8,
-    paddingVertical: 4,
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   iconOption: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassLight,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  previewSection: {
-    marginTop: 8,
+    borderColor: colors.borderGlass,
   },
   previewRow: {
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    gap: spacing.md,
+    padding: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
-  previewName: {
-    color: '#f8fafc',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  previewName: { ...typography.bodyBold, color: colors.text, flex: 1 },
   modalFooter: {
-    paddingHorizontal: 20,
-    paddingBottom: 36,
-    paddingTop: 8,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
+    paddingTop: spacing.md,
   },
   saveBtn: {
-    backgroundColor: '#7c3aed',
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '800',
-  },
+  saveBtnText: { ...typography.button, color: colors.text, fontWeight: '700' },
 });

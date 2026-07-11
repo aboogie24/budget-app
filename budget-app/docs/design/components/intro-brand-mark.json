@@ -1,0 +1,28 @@
+{
+  "componentName": "IntroBrandMark",
+  "description": "The CoupleFlow logo lockup for the intro screen: overlapping glass 'halo' circles + wordmark 'Couple ♥ Flow'. Retires the off-palette pink; all-purple, tokenized.",
+  "platform": "react-native",
+  "props": {
+    "size": { "type": "string", "default": "lg", "enum": ["lg"], "description": "Wordmark uses typography.h1; halo circles ~100px" }
+  },
+  "variants": ["default"],
+  "states": ["static"],
+  "tokens": {
+    "wordmarkType": "typography.h1",
+    "coupleColor": "colors.primary2",
+    "flowColor": "colors.primary2",
+    "heartColor": "colors.accent",
+    "heartIcon": "heart",
+    "heartSize": 28,
+    "haloLeftFill": "`${colors.primary2}2e`",
+    "haloRightFill": "`${colors.accent}2e`",
+    "haloRadius": "radius.full",
+    "gap": "spacing.xs"
+  },
+  "notes": "Pink #ec4899 / rgba(236,72,153,*) is retired. Heart = colors.accent (#c084fc, lightest purple) so it still pops in-palette. Two halo circles overlap ~40px, symbolizing the shared household.",
+  "accessibility": {
+    "role": "image",
+    "label": "CoupleFlow",
+    "haloCircles": "accessibilityElementsHidden (decorative)"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "componentName": "GoalsSectionHeader",
+  "description": "Expand/collapse header for the Assets and Debts sections in the Accounts card on the Finances (goals tab) screen. Tokenized replacement for the inline SectionHeader. Chevron + title + count badge + section total.",
+  "platform": "react-native",
+  "props": {
+    "title": { "type": "string", "required": true, "description": "'Assets' | 'Debts'" },
+    "total": { "type": "number", "required": true, "description": "Signed; assets positive, debts negative" },
+    "count": { "type": "number", "required": true },
+    "expanded": { "type": "boolean", "required": true },
+    "balanceVisible": { "type": "boolean", "default": true },
+    "onToggle": { "type": "function", "required": true }
+  },
+  "tokens": {
+    "chevron": "chevron-down (expanded) / chevron-forward (collapsed), colors.textMuted",
+    "title": "typography.smallBold / colors.text",
+    "countBadge": "colors.glassMedium fill, radius.full, count typography.caption / colors.textMuted",
+    "totalPositive": "typography.smallBold / colors.success",
+    "totalNegative": "typography.smallBold / colors.error",
+    "verticalPadding": "spacing.md (ensures >= 44pt row)"
+  },
+  "states": ["expanded", "collapsed", "pressed", "masked"],
+  "accessibility": {
+    "role": "button",
+    "label": "{title}, {count} accounts, total {total}. {Expanded|Collapsed}. Double tap to toggle.",
+    "touchTarget": ">= 44pt tall"
+  }
+}

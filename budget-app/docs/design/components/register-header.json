@@ -1,0 +1,24 @@
+{
+  "componentName": "RegisterHeader",
+  "description": "Standard screen header for the register screen matching the reference (calendar/dashboard) chrome: BackButton on the left, centered CoupleFlow brand lockup, 40pt right spacer to keep the lockup optically centered.",
+  "platform": "react-native",
+  "props": {},
+  "variants": ["default"],
+  "states": ["default"],
+  "composition": {
+    "left": "<BackButton fallback=\"/login\" />",
+    "center": "brand lockup: 'Couple' (colors.primary2) + heart icon (BRAND_PINK, size 16) + 'Flow' (BRAND_PINK), typography.bodyBold, gap spacing.xs",
+    "right": "View width 40 (spacer)"
+  },
+  "tokens": {
+    "container": "commonStyles.header (row, space-between, align center, marginBottom spacing.xl)",
+    "coupleTextColor": "colors.primary2",
+    "flowTextColor": "BRAND_PINK (#ec4899 — brand literal, not in design-system; see spec §9)",
+    "lockupType": "typography.bodyBold"
+  },
+  "accessibility": {
+    "backButtonLabel": "Back to log in",
+    "lockupRole": "header",
+    "lockupLabel": "CoupleFlow"
+  }
+}

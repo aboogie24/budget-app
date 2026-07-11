@@ -1,0 +1,37 @@
+{
+  "componentName": "MilestoneRow",
+  "description": "A milestone in a plan's detail view. Whole row taps to edit; a leading status toggle (its own tap zone) cycles reached↔pending. Status is icon + word + color.",
+  "platform": "react-native",
+  "props": {
+    "milestone": { "type": "Milestone", "required": true, "description": "id, title, target_amount?, target_date?, status" },
+    "onToggle": { "type": "function", "required": true, "description": "Cycle status (handleMilestoneStatus): reached↔pending" },
+    "onEdit": { "type": "function", "required": true, "description": "Open edit-milestone sheet (openEditMilestone)" }
+  },
+  "variants": ["pending", "reached", "skipped"],
+  "states": ["default", "pressed"],
+  "statusVisual": {
+    "reached": { "icon": "checkmark-circle", "token": "colors.success", "word": "Reached" },
+    "pending": { "icon": "ellipse-outline", "token": "colors.textMuted", "word": "Pending" },
+    "skipped": { "icon": "close-circle", "token": "colors.error", "word": "Skipped" }
+  },
+  "tokens": {
+    "title": "typography.smallBold / colors.text",
+    "amount": "typography.caption / colors.textMuted (fmt)",
+    "date": "typography.caption / colors.textMuted ('Target: ' + formatDate)",
+    "wordChip": "word in state color, background = state color at 12%, radius.sm",
+    "divider": "colors.borderLight",
+    "toggleTapZone": ">=44x44 via hitSlop"
+  },
+  "completionTrack": {
+    "description": "Rendered once above the rows: reached/total fill",
+    "track": "colors.glassMedium / height 6 / radius.full",
+    "fill": "gradients.primaryGradient",
+    "omitWhen": "total === 0"
+  },
+  "layout": { "minHeight": 44 },
+  "accessibility": {
+    "toggleLabel": "Mark {title} {reached|not reached}",
+    "rowLabel": "{title}, {statusWord}{, target {amount}}{, target date {date}}.",
+    "rowHint": "Double tap to edit"
+  }
+}

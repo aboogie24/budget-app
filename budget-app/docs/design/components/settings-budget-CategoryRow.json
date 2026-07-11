@@ -1,0 +1,54 @@
+{
+  "componentName": "CategoryRow",
+  "description": "Tier-2 flat glass row for one budget category, tappable to expand an inline editor (monthly limit, group, rollover, delete). Committed categories render solid; untracked (no limit) render ghosted with a dashed left edge and the word 'No limit'. Reuses the budget-tab-CategoryBudgetRow grammar.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-budget-redesign.md#4.3",
+  "surface": "glassEffects.glass",
+  "props": {
+    "category": { "type": "Category", "required": true, "description": "{ id, name, type, color?, limit_amount?, rollover_enabled?, budget_id? }" },
+    "budgetOptions": { "type": "BudgetGroup[]", "required": true, "description": "Groups matching the category's type; None is always the first segmented option" },
+    "expanded": { "type": "boolean", "default": false, "description": "Whether the inline editor is open; recommend only one open at a time via a parent expandedId" },
+    "onToggleExpand": { "type": "function", "required": true, "description": "(id: string) => void" },
+    "onUpdate": { "type": "function", "required": true, "description": "(updates: Partial<Category>) => void — wraps existing updateCategory" },
+    "onDelete": { "type": "function", "required": true, "description": "() => void — wraps existing deleteCategory (keeps Alert.alert confirm)" }
+  },
+  "collapsed": {
+    "iconChip": { "size": 36, "radius": "radius.md", "fill": "${category.color}20", "border": "${category.color}40", "glyph": "cart-outline | cash-outline (by type)", "glyphColor": "category.color || colors.primary2" },
+    "name": { "type": "typography.smallBold", "color": "colors.text", "numberOfLines": 1 },
+    "subtitle": { "type": "typography.caption", "color": "colors.textMuted", "format": "{group || 'No group'}{ · Rollover if enabled}" },
+    "trailingCommitted": { "format": "{formatCurrency(limit)}/mo", "type": "typography.smallBold", "color": "colors.text", "flexShrink": 0 },
+    "trailingUntracked": { "text": "No limit", "type": "typography.caption", "color": "colors.textMuted" },
+    "rolloverBadge": { "when": "rollover_enabled", "size": 24, "radius": "radius.sm", "fill": "${colors.primary2}1f", "glyph": "refresh", "glyphColor": "colors.primary2" },
+    "chevron": { "name": "chevron-forward", "openName": "chevron-down", "color": "colors.textMuted", "rotateAnim": "animation.fast" }
+  },
+  "ghostedTreatment": {
+    "when": "!limit_amount",
+    "leftBorder": { "style": "dashed", "color": "colors.borderGlass" },
+    "words": ["No limit", "Tap to set a limit"],
+    "note": "fill-style + word + tint; never color alone"
+  },
+  "expandedEditor": {
+    "limit": { "control": "TextInput", "keyboardType": "numeric", "align": "right", "placeholder": "$0", "fill": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "commit": "onEndEditing -> onUpdate({ limit_amount })" },
+    "group": { "control": "segmented", "options": "['None', ...budgetOptions]", "wrap": true, "active": { "fill": "${colors.primary2}1f", "text": "colors.primary2" }, "inactive": { "fill": "colors.glassLight", "text": "colors.textMuted" }, "commit": "onPress -> onUpdate({ budget_id })" },
+    "rollover": { "control": "Switch", "track": { "true": "colors.primary2", "false": "colors.glassMedium" }, "thumb": "colors.text", "commit": "onValueChange -> onUpdate({ rollover_enabled })" },
+    "delete": { "control": "text button", "glyph": "trash-outline", "label": "Delete category", "color": "colors.error", "action": "onDelete (keeps Alert confirm)" }
+  },
+  "variants": ["committed", "untracked", "expanded"],
+  "states": ["default", "pressed", "expanded", "editingLimit"],
+  "tokens": {
+    "colors": ["text", "textMuted", "textDark", "primary2", "error", "glassLight", "glassMedium", "borderGlass"],
+    "typography": ["smallBold", "small", "caption"],
+    "spacing": ["lg", "md", "sm", "xs"],
+    "radius": ["lg", "md", "sm"],
+    "glass": ["glass"]
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {amount or 'no limit set'}, {group}, rollover {on|off}, double tap to edit",
+    "deleteLabel": "Delete {name}",
+    "switchRole": "switch — whole row is the target, not just the thumb",
+    "target": "row >= 44pt; swatches/segments >= 44pt hit area",
+    "colorIndependence": "committed vs untracked = solid vs dashed + word; rollover = icon + word + color; delete = icon + word + error",
+    "reducedMotion": "expand/collapse and chevron rotate become instant"
+  }
+}

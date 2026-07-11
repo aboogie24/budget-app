@@ -1,0 +1,38 @@
+{
+  "componentName": "HouseholdSetupStates",
+  "description": "Loading skeleton and error notice for the household-setup screen, matching the calendar redesign's skeleton block + noticeCard conventions.",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "reuses": ["components/Skeleton.tsx", "components/GradientBackground.tsx"],
+  "states": {
+    "loading": {
+      "condition": "loading && !loadedOnce",
+      "container": { "paddingHorizontal": "spacing.lg", "gap": "spacing.md" },
+      "skeletons": [
+        { "height": 120, "borderRadius": "radius.xl", "role": "hero" },
+        { "height": 12, "width": 96, "borderRadius": "radius.sm", "role": "group label" },
+        { "height": 92, "borderRadius": "radius.lg", "role": "members / create" },
+        { "height": 88, "borderRadius": "radius.lg", "role": "invite" },
+        { "height": 64, "borderRadius": "radius.md", "role": "manage" }
+      ],
+      "note": "Header renders immediately (static title). Do not show during background refresh."
+    },
+    "backgroundRefresh": {
+      "condition": "focus reload with data already present",
+      "treatment": "ActivityIndicator size=small color=colors.primary2 in header right slot; content stays; no skeleton"
+    },
+    "error": {
+      "condition": "household fetch failed for a non-404 reason (explicit errored flag)",
+      "surface": "glassEffects.glass (noticeCard, centered)",
+      "icon": { "name": "alert-circle-outline", "size": 22, "color": "colors.error" },
+      "title": { "text": "Couldn't load your household", "style": "typography.smallBold", "color": "colors.text" },
+      "sub": { "text": "Check your connection and try again.", "style": "typography.caption", "color": "colors.textMuted" },
+      "retry": { "text": "Retry", "color": "colors.primary2", "onPress": "loadData" },
+      "note": "A 404 / no-household response is NOT an error — it routes to no-household Mode B, never here."
+    }
+  },
+  "accessibility": {
+    "error": { "label": "Couldn't load your household. Retry.", "retryRole": "button" },
+    "reducedMotion": "Skeleton pulse becomes a static colors.glassMedium block when reduce-motion is enabled"
+  }
+}

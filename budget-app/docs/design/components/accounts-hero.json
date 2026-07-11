@@ -1,0 +1,41 @@
+{
+  "componentName": "AccountsHero",
+  "description": "Net-worth headline card for the Accounts screen. The single floating card (glassFloating). Shows net worth, a 30-day sparkline + delta chip, and an Assets vs Debts split summary.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "reuses": ["Sparkline", "GradientBackground (screen-level)"],
+  "props": {
+    "netWorth": { "type": "number", "required": true, "description": "Assets minus debts, in dollars" },
+    "history": { "type": "number[]", "required": true, "description": "Time-ordered net-worth snapshots for the Sparkline; <2 points renders the Sparkline placeholder" },
+    "deltaPercent": { "type": "number | null", "required": true, "description": "First-vs-last percent change over the window; null hides the delta chip" },
+    "deltaDays": { "type": "number", "default": 30, "description": "Window length label for the delta chip" },
+    "totalAssets": { "type": "number", "required": true },
+    "assetCount": { "type": "number", "required": true },
+    "totalDebts": { "type": "number", "required": true },
+    "debtCount": { "type": "number", "required": true },
+    "balanceVisible": { "type": "boolean", "default": true, "description": "When false, currency values render as bullets and delta % masks" }
+  },
+  "variants": ["default", "negative"],
+  "states": ["default", "loading", "hidden"],
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "sparkline": { "width": 100, "height": 44 },
+    "splitSummary": { "surface": "colors.glassLight", "radius": "radius.md", "padding": "spacing.md", "dividerColor": "colors.borderLight" }
+  },
+  "tokens": {
+    "label": "typography.caption uppercase, colors.textMuted",
+    "amount": "typography.h1, colors.text (colors.error when netWorth < 0)",
+    "deltaUp": "colors.success",
+    "deltaDown": "colors.error",
+    "assetsValue": "typography.bodyBold, colors.success",
+    "debtsValue": "typography.bodyBold, colors.error"
+  },
+  "accessibility": {
+    "role": "summary",
+    "label": "Net worth {netWorth}, {up|down} {deltaPercent} percent over {deltaDays} days. Assets {totalAssets}, debts {totalDebts}.",
+    "maskedLabel": "Balances hidden",
+    "note": "Delta encoded by arrow (up/down) + word + percent, not color alone."
+  }
+}

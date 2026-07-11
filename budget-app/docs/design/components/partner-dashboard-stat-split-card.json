@@ -1,0 +1,47 @@
+{
+  "componentName": "StatSplitCard",
+  "description": "Reusable two-column stat card used by the Partner Dashboard for both Tier-2 (Combined Cash Flow: income vs expenses + net) and Tier-3 (Debt & Savings: debt vs savings-progress + savings bar). Flat glass, subordinate to the headline.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "columns": {
+      "type": "array",
+      "required": true,
+      "description": "Exactly 2 columns: [{ icon, iconTint, label, value, valueColor }]. iconTint is `${semanticToken}1a`."
+    },
+    "footer": {
+      "type": "object",
+      "required": false,
+      "description": "Below-divider content. Either { kind: 'net', label, value, valueColor } or { kind: 'progressBar', label, currentText, targetText, percent, fillColor }."
+    }
+  },
+  "variants": ["cashflow", "debtSavings"],
+  "states": ["default", "loading", "goalMet"],
+  "layout": {
+    "surface": "glassEffects.glass",
+    "cardStyle": "commonStyles.card",
+    "columnRow": "commonStyles.flexRow + gap spacing.md",
+    "iconChip": "44x44, radius.md",
+    "divider": "commonStyles.divider",
+    "progressBar": { "height": "spacing.sm", "radius": "radius.full", "track": "colors.glassLight" }
+  },
+  "tokens": {
+    "incomeIcon": "arrow-down-circle-outline / colors.success / tint `${colors.success}1a`",
+    "expenseIcon": "arrow-up-circle-outline / colors.error / tint `${colors.error}1a`",
+    "debtIcon": "document-text-outline / colors.warning / tint `${colors.warning}1a`",
+    "savingsIcon": "wallet-outline / colors.primary2 / tint `${colors.primary2}1a`",
+    "columnLabel": "typography.caption / colors.textMuted",
+    "columnValue": "typography.bodyBold",
+    "netValue": "typography.h3 / getValueColor(value), prefix +/-",
+    "progressFill": "colors.primary (colors.success when percent >= 100)",
+    "progressLabels": "typography.caption; current colors.text, target colors.textMuted"
+  },
+  "accessibility": {
+    "role": "summary",
+    "labelCashflow": "Total income {in}. Total expenses {out}. Net cash flow {sign} {net}.",
+    "labelDebtSavings": "Total debt {debt}. Savings progress {pct} percent. Saved {current} of {target}.",
+    "colorIndependent": "distinct icons per column + text labels; net carries +/- prefix; goal-met shown by the % label, not color alone",
+    "touchTargets": "if columns deep-link, each column >= 44pt tall",
+    "reducedMotion": "progress-bar grow-in uses animation.fast, instant under reduce-motion"
+  }
+}

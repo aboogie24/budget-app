@@ -1,12 +1,29 @@
-import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, type Href } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  commonStyles,
+  getValueColor,
+} from '@/utils/design-system';
 
 type HouseholdSummary = {
   household_id: string;
@@ -21,15 +38,36 @@ type HouseholdSummary = {
   savings_progress: number;
 };
 
+type Member = { user_id: string; full_name: string; role?: string };
+
+// Fixed cross-screen partner glyph mapping (mirrors dashboard/calendar):
+// first partner → ◑ / primary2, second → ◐ / info.
+type PartnerChip = { glyph: string; color: string; name: string };
+
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
+
+// "+$1,860.00" / "−$4,560.00" — explicit sign prefix so status never relies on color alone.
+const formatSigned = (amount: number) => {
+  const sign = amount >= 0 ? '+' : '−';
+  return `${sign}${formatCurrency(Math.abs(amount || 0))}`;
+};
+
 export default function PartnerDashboardScreen() {
   const router = useRouter();
   const [householdData, setHouseholdData] = useState<HouseholdSummary | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadHouseholdData = useCallback(async () => {
     try {
-      setLoading(true);
+      // First load shows the skeleton; subsequent focus refetches show the
+      // header spinner instead of blanking the whole screen.
+      if (loadedOnce) setRefreshing(true);
+      else setLoading(true);
       setError(null);
 
       const user = await getCurrentUser();
@@ -39,7 +77,7 @@ export default function PartnerDashboardScreen() {
       }
 
       // Fetch household info first
-      const householdInfo = await api.get(`/auth/households/me`, { user_id: user.id });
+      const householdInfo = await api.get<any>(`/auth/households/me`, { user_id: user.id });
       const householdID = householdInfo?.household_id;
 
       if (!householdID) {
@@ -47,16 +85,32 @@ export default function PartnerDashboardScreen() {
         return;
       }
 
+      // Reuse the member identities already on the household payload for the
+      // partner chips (same source the home dashboard uses). Degrades silently.
+      let rawMembers = householdInfo?.members;
+      if (typeof rawMembers === 'string') {
+        try {
+          rawMembers = JSON.parse(rawMembers);
+        } catch {
+          rawMembers = undefined;
+        }
+      }
+      setMembers(Array.isArray(rawMembers) ? (rawMembers as Member[]) : []);
+
       // Fetch household summary with the household ID
-      const summary = await api.get(`/auth/households/summary`, { household_id: householdID });
+      const summary = await api.get<HouseholdSummary>(`/auth/households/summary`, {
+        household_id: householdID,
+      });
       setHouseholdData(summary);
     } catch (err) {
       console.error('Load household data error:', err);
       setError('Error loading household data');
     } finally {
       setLoading(false);
+      setRefreshing(false);
+      setLoadedOnce(true);
     }
-  }, []);
+  }, [loadedOnce]);
 
   useFocusEffect(
     useCallback(() => {
@@ -64,391 +118,673 @@ export default function PartnerDashboardScreen() {
     }, [loadHouseholdData])
   );
 
-  if (loading) {
+  const partnerChips = useMemo<PartnerChip[]>(() => {
+    const palette = [
+      { glyph: '◑', color: colors.primary2 },
+      { glyph: '◐', color: colors.info },
+    ];
+    return members.slice(0, 2).map((m, i) => ({
+      glyph: palette[i].glyph,
+      color: palette[i].color,
+      name: (m.full_name || 'Partner').split(' ')[0],
+    }));
+  }, [members]);
+
+  const isSolo = (householdData?.member_count ?? 0) < 2;
+
+  const isEmpty =
+    !!householdData &&
+    householdData.total_income === 0 &&
+    householdData.total_expenses === 0 &&
+    householdData.total_debt === 0 &&
+    householdData.total_savings_target === 0;
+
+  // ── Header (always real — never blanks) ──
+  const renderHeader = () => (
+    <View style={commonStyles.header}>
+      <BackButton fallback="/(tabs)/dashboard" color={colors.text} />
+      <Text style={styles.headerTitle} numberOfLines={1}>
+        Partner Dashboard
+      </Text>
+      {refreshing ? (
+        <View style={styles.headerRightSlot}>
+          <ActivityIndicator size="small" color={colors.primary2} />
+        </View>
+      ) : (
+        <TouchableOpacity
+          onPress={() => router.push('/settings')}
+          style={styles.headerRightSlot}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+        >
+          <Ionicons name="settings-outline" size={24} color={colors.text} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  const go = (href: Href) => () => router.push(href);
+
+  const actions: {
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    label: string;
+    href: Href;
+  }[] = [
+    { icon: 'add-circle-outline', label: 'Add Transaction', href: '/add-transaction' },
+    { icon: 'pie-chart-outline', label: 'View Budgets', href: '/(tabs)/budget' },
+    { icon: 'flag-outline', label: 'Savings Goals', href: '/(tabs)/goals' },
+    { icon: 'analytics-outline', label: 'My Dashboard', href: '/(tabs)/dashboard' },
+  ];
+
+  const renderQuickActions = () => (
+    <>
+      <Text style={styles.groupLabel}>QUICK ACTIONS</Text>
+      <View style={styles.actionsGrid}>
+        {actions.map((a) => (
+          <TouchableOpacity
+            key={a.label}
+            style={styles.actionButton}
+            onPress={go(a.href)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={a.label}
+            accessibilityHint="Double tap to open."
+          >
+            <Ionicons name={a.icon} size={28} color={colors.primary2} />
+            <Text style={styles.actionLabel}>{a.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </>
+  );
+
+  // ── LOADING (first load only): layout-matched skeleton ──
+  if (loading && !loadedOnce) {
     return (
-      <LinearGradient colors={['#0f172a', '#1a1040', '#0f172a']} style={styles.container}>
-        <SafeAreaView style={styles.safe}>
-          <View style={styles.centerContent}>
-            <ActivityIndicator size="large" color="#a855f7" />
-          </View>
+      <GradientBackground variant="bgDarkPurple">
+        <SafeAreaView style={commonStyles.safeContainer}>
+          <ScrollView contentContainerStyle={styles.scroll}>
+            {renderHeader()}
+
+            {/* Tier 1 — headline shell */}
+            <View style={[styles.headlineCard, styles.cardPad]}>
+              <View style={styles.headlineTopRow}>
+                <Skeleton width={160} height={22} borderRadius={radius.sm} />
+                <Skeleton width={56} height={32} borderRadius={radius.md} />
+              </View>
+              <Skeleton width={120} height={14} borderRadius={radius.sm} style={{ marginTop: spacing.md }} />
+              <Skeleton width={200} height={36} borderRadius={radius.md} style={{ marginTop: spacing.sm }} />
+              <Skeleton width={160} height={14} borderRadius={radius.sm} style={{ marginTop: spacing.sm }} />
+            </View>
+
+            {/* Tier 2 shell */}
+            <Skeleton width={140} height={12} borderRadius={radius.sm} style={styles.groupLabelSkeleton} />
+            <View style={[styles.card, styles.cardPad]}>
+              <View style={styles.statRow}>
+                <Skeleton width={90} height={44} borderRadius={radius.md} />
+                <Skeleton width={90} height={44} borderRadius={radius.md} />
+              </View>
+              <View style={commonStyles.divider} />
+              <Skeleton width={180} height={20} borderRadius={radius.sm} />
+            </View>
+
+            {/* Tier 3 shell */}
+            <Skeleton width={120} height={12} borderRadius={radius.sm} style={styles.groupLabelSkeleton} />
+            <View style={[styles.card, styles.cardPad]}>
+              <View style={styles.statRow}>
+                <Skeleton width={90} height={44} borderRadius={radius.md} />
+                <Skeleton width={90} height={44} borderRadius={radius.md} />
+              </View>
+              <View style={commonStyles.divider} />
+              <Skeleton width="100%" height={spacing.sm} borderRadius={radius.full} />
+            </View>
+
+            {/* Tier 4 shell */}
+            <Skeleton width={120} height={12} borderRadius={radius.sm} style={styles.groupLabelSkeleton} />
+            <View style={styles.actionsGrid}>
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton key={i} width="47%" height={72} borderRadius={radius.md} />
+              ))}
+            </View>
+          </ScrollView>
         </SafeAreaView>
-      </LinearGradient>
+      </GradientBackground>
     );
   }
 
+  // ── ERROR (non-blanking; header preserved) ──
   if (error || !householdData) {
     return (
-      <LinearGradient colors={['#0f172a', '#1a1040', '#0f172a']} style={styles.container}>
-        <SafeAreaView style={styles.safe}>
+      <GradientBackground variant="bgDarkPurple">
+        <SafeAreaView style={commonStyles.safeContainer}>
           <ScrollView contentContainerStyle={styles.scroll}>
-            <View style={styles.header}>
-              <BackButton fallback="/(tabs)/dashboard" />
-              <Text style={styles.title}>Partner Dashboard</Text>
-              <View style={{ width: 24 }} />
-            </View>
-
-            <View style={styles.errorState}>
-              <Ionicons name="alert-circle-outline" size={48} color="#ef4444" />
-              <Text style={styles.errorText}>{error || 'Unable to load data'}</Text>
-              <TouchableOpacity style={styles.retryButton} onPress={loadHouseholdData}>
+            {renderHeader()}
+            <View style={[styles.card, styles.stateCard]}>
+              <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+              <Text style={styles.stateTitle}>Couldn&apos;t load your household</Text>
+              <Text style={styles.stateMessage}>
+                {error === 'User not authenticated'
+                  ? 'Please sign in again to see your household.'
+                  : 'Something went wrong fetching the summary.'}
+              </Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={loadHouseholdData}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Try again"
+              >
                 <Text style={styles.retryButtonText}>Try Again</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
         </SafeAreaView>
-      </LinearGradient>
+      </GradientBackground>
     );
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount);
-  };
+  const {
+    household_name,
+    member_count,
+    total_income,
+    total_expenses,
+    net_cash_flow,
+    total_debt,
+    total_savings_target,
+    total_savings_current,
+    savings_progress,
+  } = householdData;
 
-  return (
-    <LinearGradient colors={['#0f172a', '#1a1040', '#0f172a']} style={styles.container}>
-      <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.scroll}>
-          {/* Header */}
-          <View style={styles.header}>
-            <BackButton fallback="/(tabs)/dashboard" />
-            <Text style={styles.title}>Partner Dashboard</Text>
-            <TouchableOpacity onPress={() => router.push('/settings')}>
-              <Ionicons name="settings-outline" size={24} color="#f8fafc" />
-            </TouchableOpacity>
-          </View>
+  // ── EMPTY (new household — onboarding voice, keep Quick Actions) ──
+  if (isEmpty) {
+    return (
+      <GradientBackground variant="bgDarkPurple">
+        <SafeAreaView style={commonStyles.safeContainer}>
+          <ScrollView contentContainerStyle={styles.scroll}>
+            {renderHeader()}
 
-          {/* Household Header Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View>
-                <Text style={styles.cardTitle}>{householdData.household_name}</Text>
-                <Text style={styles.cardSubtitle}>{householdData.member_count} members</Text>
+            {/* Tier 1 — onboarding headline */}
+            <View style={[styles.headlineCard, styles.cardPad]}>
+              <View style={styles.headlineTopRow}>
+                <Text style={styles.householdName} numberOfLines={1}>
+                  {household_name}
+                </Text>
+                <View style={styles.memberBadge}>
+                  <Ionicons name="people" size={16} color={colors.primary2} />
+                  <Text style={styles.memberBadgeText}>{Math.max(member_count, 1)}</Text>
+                </View>
               </View>
+
+              <View style={styles.setupChip}>
+                <Ionicons name="information-circle-outline" size={14} color={colors.primary2} />
+                <Text style={styles.setupChipText}>SET UP</Text>
+              </View>
+              <Text style={styles.emptyBody}>
+                You&apos;re all set up together — link an account or add a transaction to see your
+                household come to life.
+              </Text>
+
+              <TouchableOpacity
+                style={styles.primaryCta}
+                onPress={go('/add-transaction')}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Link an account"
+              >
+                <Text style={styles.primaryCtaText}>Link an account</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Single friendly empty card */}
+            <View style={[styles.card, styles.stateCard]}>
+              <Ionicons name="home-outline" size={44} color={colors.textDark} />
+              <Text style={styles.stateTitle}>Nothing to show yet</Text>
+              <Text style={styles.stateMessage}>
+                Your combined cash flow, debt, and savings fill in here as money starts moving.
+              </Text>
+            </View>
+
+            {renderQuickActions()}
+          </ScrollView>
+        </SafeAreaView>
+      </GradientBackground>
+    );
+  }
+
+  const savedFraction = `${formatCurrency(total_savings_current)} / ${formatCurrency(total_savings_target)}`;
+  const goalMet = savings_progress >= 100;
+
+  // ── DEFAULT / POPULATED ──
+  return (
+    <GradientBackground variant="bgDarkPurple">
+      <SafeAreaView style={commonStyles.safeContainer}>
+        <ScrollView contentContainerStyle={styles.scroll}>
+          {renderHeader()}
+
+          {/* ───── TIER 1 — Household Headline (only floating card, only h1) ───── */}
+          <View
+            style={[styles.headlineCard, styles.cardPad]}
+            accessible
+            accessibilityLabel={`${household_name}, ${member_count} members. ${
+              isSolo ? 'This month' : 'Together this month'
+            }, combined cash flow ${net_cash_flow >= 0 ? 'positive' : 'negative'} ${formatCurrency(
+              Math.abs(net_cash_flow)
+            )}. ${formatCurrency(total_income)} in, ${formatCurrency(total_expenses)} out.`}
+          >
+            <View style={styles.headlineTopRow}>
+              <Text style={styles.householdName} numberOfLines={1}>
+                {household_name}
+              </Text>
               <View style={styles.memberBadge}>
-                <Ionicons name="people" size={20} color="#a855f7" />
+                <Ionicons name="people" size={16} color={colors.primary2} />
+                <Text style={styles.memberBadgeText}>{Math.max(member_count, 1)}</Text>
               </View>
             </View>
+
+            <Text style={styles.contextLabel}>{isSolo ? 'This month' : 'Together this month'}</Text>
+
+            <Text
+              style={[styles.hero, { color: getValueColor(net_cash_flow) }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
+              {formatSigned(net_cash_flow)}
+            </Text>
+
+            <Text style={styles.heroSub}>
+              {formatCurrency(total_income)} in  −  {formatCurrency(total_expenses)} out
+            </Text>
+
+            {!isSolo && partnerChips.length > 0 && (
+              <View style={styles.chipsRow}>
+                {partnerChips.map((c) => (
+                  <View key={c.name + c.glyph} style={styles.partnerChip}>
+                    <Text style={[styles.partnerGlyph, { color: c.color }]}>{c.glyph}</Text>
+                    <Text style={styles.partnerName}>{c.name}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
 
-          {/* Cash Flow Section */}
-          <View style={styles.sectionLabel}>
-            <Text style={styles.sectionTitle}>Combined Cash Flow</Text>
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.row}>
-              <View style={styles.col}>
-                <View style={[styles.stat, styles.incomeIcon]}>
-                  <Ionicons name="arrow-down-circle-outline" size={24} color="#22c55e" />
+          {/* ───── TIER 2 — Combined Cash Flow (proof) ───── */}
+          <Text style={styles.groupLabel}>COMBINED CASH FLOW</Text>
+          <View
+            style={[styles.card, styles.cardPad]}
+            accessible
+            accessibilityLabel={`Total income ${formatCurrency(
+              total_income
+            )}. Total expenses ${formatCurrency(total_expenses)}. Net cash flow ${
+              net_cash_flow >= 0 ? 'positive' : 'negative'
+            } ${formatCurrency(Math.abs(net_cash_flow))}.`}
+          >
+            <View style={styles.statRow}>
+              <View style={styles.statCol}>
+                <View style={[styles.iconChip, { backgroundColor: `${colors.success}1a` }]}>
+                  <Ionicons name="arrow-down-circle-outline" size={24} color={colors.success} />
                 </View>
                 <Text style={styles.statLabel}>Total Income</Text>
-                <Text style={[styles.statValue, { color: '#22c55e' }]}>
-                  {formatCurrency(householdData.total_income)}
+                <Text style={[styles.statValue, { color: colors.success }]}>
+                  {formatCurrency(total_income)}
                 </Text>
               </View>
-              <View style={styles.col}>
-                <View style={[styles.stat, styles.expenseIcon]}>
-                  <Ionicons name="arrow-up-circle-outline" size={24} color="#ef4444" />
+              <View style={styles.statCol}>
+                <View style={[styles.iconChip, { backgroundColor: `${colors.error}1a` }]}>
+                  <Ionicons name="arrow-up-circle-outline" size={24} color={colors.error} />
                 </View>
                 <Text style={styles.statLabel}>Total Expenses</Text>
-                <Text style={[styles.statValue, { color: '#ef4444' }]}>
-                  {formatCurrency(householdData.total_expenses)}
+                <Text style={[styles.statValue, { color: colors.error }]}>
+                  {formatCurrency(total_expenses)}
                 </Text>
               </View>
             </View>
 
-            <View style={styles.divider} />
+            <View style={commonStyles.divider} />
 
-            <View style={styles.netCashFlow}>
+            <View style={styles.netRow}>
               <Text style={styles.netLabel}>Net Cash Flow</Text>
-              <Text style={[styles.netValue, householdData.net_cash_flow >= 0 ? { color: '#22c55e' } : { color: '#ef4444' }]}>
-                {formatCurrency(householdData.net_cash_flow)}
+              <Text style={[styles.netValue, { color: getValueColor(net_cash_flow) }]}>
+                {formatSigned(net_cash_flow)}
               </Text>
             </View>
           </View>
 
-          {/* Debt Section */}
-          <View style={styles.sectionLabel}>
-            <Text style={styles.sectionTitle}>Debt & Savings</Text>
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.row}>
-              <View style={styles.col}>
-                <View style={[styles.stat, styles.debtIcon]}>
-                  <Ionicons name="document-text-outline" size={24} color="#f59e0b" />
+          {/* ───── TIER 3 — Debt & Savings ───── */}
+          <Text style={styles.groupLabel}>DEBT &amp; SAVINGS</Text>
+          <View
+            style={[styles.card, styles.cardPad]}
+            accessible
+            accessibilityLabel={`Total debt ${formatCurrency(
+              total_debt
+            )}. Savings progress ${savings_progress.toFixed(1)} percent. Saved ${formatCurrency(
+              total_savings_current
+            )} of ${formatCurrency(total_savings_target)}.`}
+          >
+            <View style={styles.statRow}>
+              <View style={styles.statCol}>
+                <View style={[styles.iconChip, { backgroundColor: `${colors.warning}1a` }]}>
+                  <Ionicons name="document-text-outline" size={24} color={colors.warning} />
                 </View>
                 <Text style={styles.statLabel}>Total Debt</Text>
-                <Text style={styles.statValue}>{formatCurrency(householdData.total_debt)}</Text>
+                <Text style={styles.statValue}>{formatCurrency(total_debt)}</Text>
               </View>
-              <View style={styles.col}>
-                <View style={[styles.stat, styles.savingsIcon]}>
-                  <Ionicons name="wallet-outline" size={24} color="#8b5cf6" />
+              <View style={styles.statCol}>
+                <View style={[styles.iconChip, { backgroundColor: `${colors.primary2}1a` }]}>
+                  <Ionicons name="wallet-outline" size={24} color={colors.primary2} />
                 </View>
                 <Text style={styles.statLabel}>Savings Progress</Text>
-                <Text style={styles.statValue}>{householdData.savings_progress.toFixed(1)}%</Text>
+                <Text style={styles.statValue}>{savings_progress.toFixed(1)}%</Text>
               </View>
             </View>
 
-            <View style={styles.divider} />
+            <View style={commonStyles.divider} />
 
-            <View style={styles.savingsBar}>
-              <View style={styles.savingsBarLabel}>
+            <View style={styles.savingsBlock}>
+              <View style={styles.savingsLabelRow}>
                 <Text style={styles.savingsLabel}>Saved</Text>
                 <Text style={styles.savingsAmount}>
-                  {formatCurrency(householdData.total_savings_current)} / {formatCurrency(householdData.total_savings_target)}
+                  {formatCurrency(total_savings_current)}
+                  <Text style={styles.savingsTarget}> / {formatCurrency(total_savings_target)}</Text>
                 </Text>
               </View>
-              <View style={styles.progressBarContainer}>
+              <View style={styles.progressTrack}>
                 <View
                   style={[
-                    styles.progressBar,
-                    { width: `${Math.min(householdData.savings_progress, 100)}%` },
+                    styles.progressFill,
+                    {
+                      width: `${Math.min(savings_progress, 100)}%`,
+                      backgroundColor: goalMet ? colors.success : colors.primary,
+                    },
                   ]}
                 />
               </View>
             </View>
           </View>
 
-          {/* Quick Actions */}
-          <View style={styles.sectionLabel}>
-            <Text style={styles.sectionTitle}>Quick Actions</Text>
-          </View>
+          {/* ───── TIER 4 — Quick Actions ───── */}
+          {renderQuickActions()}
 
-          <View style={styles.actionsGrid}>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push('/add-transaction')}
-            >
-              <Ionicons name="add-circle-outline" size={28} color="#a855f7" />
-              <Text style={styles.actionLabel}>Add Transaction</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push('/(tabs)/budget')}
-            >
-              <Ionicons name="pie-chart-outline" size={28} color="#a855f7" />
-              <Text style={styles.actionLabel}>View Budgets</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push('/(tabs)/goals')}
-            >
-              <Ionicons name="flag-outline" size={28} color="#a855f7" />
-              <Text style={styles.actionLabel}>Savings Goals</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push('/(tabs)/dashboard')}
-            >
-              <Ionicons name="analytics-outline" size={28} color="#a855f7" />
-              <Text style={styles.actionLabel}>My Dashboard</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ height: 24 }} />
+          <View style={{ height: spacing.xl }} />
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  safe: { flex: 1 },
-  scroll: { padding: 20 },
-  centerContent: {
+  scroll: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+
+  // Header
+  headerTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
     flex: 1,
+    textAlign: 'center',
+  },
+  headerRightSlot: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#f8fafc',
+
+  // Shared card padding + generic glass card
+  cardPad: {
+    padding: spacing.xl,
   },
   card: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    ...glassEffects.glass,
+    marginBottom: spacing.md,
   },
-  cardHeader: {
+
+  // Tier 1 — headline (the only floating card)
+  headlineCard: {
+    ...glassEffects.glassFloating,
+    borderRadius: radius.xl,
+    marginBottom: spacing.xl,
+  },
+  headlineTopRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#f8fafc',
-  },
-  cardSubtitle: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginTop: 4,
+  householdName: {
+    ...typography.h3,
+    color: colors.text,
+    flexShrink: 1,
   },
   memberBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: 'rgba(168, 85, 247, 0.1)',
-    justifyContent: 'center',
+    flexShrink: 0,
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.xs,
+    minHeight: 32,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: `${colors.primary2}1a`,
   },
-  sectionLabel: {
-    marginTop: 20,
-    marginBottom: 12,
+  memberBadgeText: {
+    ...typography.smallBold,
+    color: colors.text,
   },
-  sectionTitle: {
+  contextLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.md,
+  },
+  hero: {
+    ...typography.h1,
+    marginTop: spacing.xs,
+    minHeight: 40,
+  },
+  heroSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  chipsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.md,
+    marginTop: spacing.md,
+  },
+  partnerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  partnerGlyph: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#cbd5e1',
+  },
+  partnerName: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+
+  // Group labels (matches home dashboard)
+  groupLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    marginBottom: spacing.sm,
   },
-  row: {
+  groupLabelSkeleton: {
+    marginBottom: spacing.sm,
+    marginTop: spacing.sm,
+  },
+
+  // Stat columns (Tier 2 & 3)
+  statRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
+    gap: spacing.md,
   },
-  col: {
+  statCol: {
     flex: 1,
     alignItems: 'center',
   },
-  stat: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
+  iconChip: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
     alignItems: 'center',
-    marginBottom: 8,
-  },
-  incomeIcon: {
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-  },
-  expenseIcon: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-  },
-  debtIcon: {
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-  },
-  savingsIcon: {
-    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
   },
   statLabel: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginBottom: 4,
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+    textAlign: 'center',
   },
   statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#f8fafc',
+    ...typography.bodyBold,
+    color: colors.text,
   },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    marginVertical: 16,
-  },
-  netCashFlow: {
-    alignItems: 'center',
-  },
-  netLabel: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginBottom: 4,
-  },
-  netValue: {
-    fontSize: 24,
-    fontWeight: '800',
-  },
-  savingsBar: {
-    gap: 12,
-  },
-  savingsBarLabel: {
+
+  // Tier 2 — net line
+  netRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
+  netLabel: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  netValue: {
+    ...typography.h3,
+  },
+
+  // Tier 3 — savings bar
+  savingsBlock: {
+    gap: spacing.sm,
+  },
+  savingsLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   savingsLabel: {
-    fontSize: 12,
-    color: '#94a3b8',
+    ...typography.caption,
+    color: colors.textMuted,
   },
   savingsAmount: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#f8fafc',
+    ...typography.caption,
+    color: colors.text,
   },
-  progressBarContainer: {
-    height: 8,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 4,
+  savingsTarget: {
+    color: colors.textMuted,
+  },
+  progressTrack: {
+    height: spacing.sm,
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.full,
     overflow: 'hidden',
   },
-  progressBar: {
+  progressFill: {
     height: '100%',
-    backgroundColor: 'rgba(168, 85, 247, 0.8)',
-    borderRadius: 4,
+    borderRadius: radius.full,
   },
+
+  // Tier 4 — quick actions
   actionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: spacing.md,
   },
   actionButton: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    gap: 8,
-  },
-  actionLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#f8fafc',
-    textAlign: 'center',
-  },
-  errorState: {
+    ...glassEffects.glass,
+    flexGrow: 1,
+    minWidth: '47%',
+    minHeight: 64,
+    borderRadius: radius.md,
+    padding: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
-    gap: 16,
+    gap: spacing.sm,
   },
-  errorText: {
-    fontSize: 14,
-    color: '#ef4444',
+  actionLabel: {
+    ...typography.smallBold,
+    color: colors.text,
     textAlign: 'center',
   },
+
+  // Empty state
+  setupChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: `${colors.primary2}1a`,
+  },
+  setupChipText: {
+    ...typography.caption,
+    color: colors.primary2,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  emptyBody: {
+    ...typography.small,
+    color: colors.text,
+    marginTop: spacing.md,
+  },
+  primaryCta: {
+    marginTop: spacing.lg,
+    minHeight: 44,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+  },
+  primaryCtaText: {
+    ...typography.button,
+    color: colors.text,
+  },
+
+  // Shared state card (empty "nothing yet" + error)
+  stateCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    gap: spacing.md,
+  },
+  stateTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    textAlign: 'center',
+  },
+  stateMessage: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: spacing.md,
+  },
   retryButton: {
-    backgroundColor: 'rgba(168, 85, 247, 0.2)',
-    borderColor: '#a855f7',
+    marginTop: spacing.sm,
+    minHeight: 44,
+    borderRadius: radius.sm,
     borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginTop: 8,
+    borderColor: colors.primary2,
+    backgroundColor: `${colors.primary2}33`,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   retryButtonText: {
-    color: '#a855f7',
-    fontWeight: '600',
-    fontSize: 14,
+    ...typography.smallBold,
+    color: colors.primary2,
   },
 });

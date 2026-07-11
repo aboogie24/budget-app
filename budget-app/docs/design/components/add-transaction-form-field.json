@@ -1,0 +1,34 @@
+{
+  "componentName": "FormField",
+  "description": "Labeled text input on a glass inset. Replaces the bespoke LabeledInput. Used for Name and Due day.",
+  "platform": "react-native",
+  "props": {
+    "label": { "type": "string", "required": true, "description": "Field label" },
+    "icon": { "type": "keyof Ionicons.glyphMap", "required": true, "description": "Leading icon, e.g. text-outline / calendar-outline" },
+    "value": { "type": "string", "required": true },
+    "onChangeText": { "type": "function", "required": true },
+    "placeholder": { "type": "string", "required": false },
+    "keyboardType": { "type": "'default' | 'numeric'", "required": false, "default": "default" },
+    "error": { "type": "string", "required": false, "description": "Inline color-independent hint" }
+  },
+  "variants": ["text", "numeric"],
+  "states": ["default", "focused", "filled", "error"],
+  "layout": {
+    "label": { "type": "typography.smallBold", "color": "colors.text", "marginBottom": "spacing.sm" },
+    "inputRow": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "paddingHorizontal": "spacing.md", "minHeight": 48 },
+    "gap": "spacing.md"
+  },
+  "tokens": {
+    "icon": "colors.textMuted",
+    "input": { "text": "colors.text", "placeholder": "colors.textMuted" },
+    "focusedBorder": "colors.primary2",
+    "errorBorder": "colors.error",
+    "errorHint": { "icon": "alert-circle-outline", "color": "colors.error", "text": "typography.caption" }
+  },
+  "behavior": "Due-day instance renders only when type === 'expense' && frequency === 'monthly'; reveal fades over animation.medium.",
+  "accessibility": {
+    "label": "{label}, text field",
+    "minTarget": "48pt row",
+    "colorIndependent": "Error state pairs icon + word with red border"
+  }
+}

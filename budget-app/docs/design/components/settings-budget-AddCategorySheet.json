@@ -1,0 +1,54 @@
+{
+  "componentName": "AddCategorySheet",
+  "description": "Tier-3 add-category flow. A flat glass CTA row in the scroll opens a bottom sheet (shared form-sheet recipe) containing the full create form moved verbatim out of the old inline card: name + color chip, monthly limit, rollover switch, share-with-partner switch, color swatch grid, optional group segmented, and a primary-gradient Save button.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-budget-redesign.md#4.4",
+  "props": {
+    "scope": { "type": "'expense' | 'income'", "required": true, "description": "Drives CTA copy, default icon glyph, and which budgetOptions show" },
+    "budgetOptions": { "type": "BudgetGroup[]", "required": true, "description": "Group segmented is only rendered when length > 0" },
+    "visible": { "type": "boolean", "required": true, "description": "Sheet open state" },
+    "onOpen": { "type": "function", "required": true, "description": "CTA press -> open sheet" },
+    "onClose": { "type": "function", "required": true, "description": "Close via ✕, backdrop, or after successful save" },
+    "onSubmit": { "type": "function", "required": true, "description": "Wraps existing handleAdd; closes + resets form on success" }
+  },
+  "ctaRow": {
+    "surface": "glassEffects.glass",
+    "leadingGlyph": { "name": "add", "color": "colors.primary2" },
+    "label": { "format": "Add {expense|income} category", "type": "typography.smallBold", "color": "colors.text" },
+    "trailing": { "name": "chevron-forward", "color": "colors.textMuted" },
+    "minHeight": 44
+  },
+  "sheet": {
+    "surface": "colors.surface2",
+    "radiusTop": "radius.xl",
+    "grabHandle": true,
+    "title": { "format": "New {expense|income} category", "type": "typography.h3", "color": "colors.text" },
+    "close": { "name": "close", "color": "colors.textMuted", "target": 44 },
+    "fields": {
+      "name": { "iconChip": { "fill": "${newColor}20", "border": "${newColor}40", "glyph": "cart-outline | cash-outline" }, "input": { "control": "TextInput", "placeholder": "Category name", "fill": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "text": "colors.text", "placeholderColor": "colors.textDark" } },
+      "limit": { "control": "TextInput", "keyboardType": "numeric", "placeholder": "$0", "label": "Monthly limit (optional)" },
+      "rollover": { "control": "Switch", "label": "Enable rollover", "track": { "true": "colors.primary2", "false": "colors.glassMedium" }, "thumb": "colors.text" },
+      "sharePartner": { "control": "Switch", "label": "Share with partner", "hint": "Partner can see this category", "hintType": "typography.caption", "hintColor": "colors.textMuted", "note": "preserve existing UI toggle; backend wire-up is a TODO, out of scope" },
+      "color": { "control": "swatch grid", "count": 8, "swatchSize": 32, "radius": "radius.md", "selectedRing": { "color": "colors.text", "width": 2 }, "hitArea": 44, "swatchPalette": ["#7c3aed", "#22c55e", "#ef4444", "#06b6d4", "#f59e0b", "#3b82f6", "#ec4899", "#14b8a6"], "paletteNote": "per-item accent colors are a sanctioned exception to the no-literal rule" },
+      "group": { "control": "segmented", "when": "budgetOptions.length > 0", "options": "['None', ...budgetOptions]", "wrap": true, "active": { "fill": "${colors.primary2}1f", "text": "colors.primary2" } }
+    },
+    "save": { "control": "button", "fill": "gradients.primaryGradient", "label": "Save category", "type": "typography.button", "textColor": "colors.text", "pendingState": "disabled/spinner style while POST in flight" }
+  },
+  "states": ["closed", "open", "saving", "invalid"],
+  "tokens": {
+    "colors": ["text", "textMuted", "textDark", "primary2", "surface2", "glassMedium", "borderGlass"],
+    "gradients": ["primaryGradient"],
+    "typography": ["h3", "smallBold", "small", "caption", "button"],
+    "spacing": ["xl", "lg", "md", "sm"],
+    "radius": ["xl", "md"],
+    "glass": ["glass"]
+  },
+  "accessibility": {
+    "ctaLabel": "Add {scope} category, button, opens form",
+    "focusOnOpen": "focus moves to sheet title; ✕ returns focus to CTA",
+    "switchRole": "switch with accessibilityState.checked; full row is target",
+    "swatchLabel": "Color {n} of 8{, selected}",
+    "target": ">= 44pt for CTA, close, switches, swatches, save",
+    "reducedMotion": "sheet slide becomes instant show/hide"
+  }
+}

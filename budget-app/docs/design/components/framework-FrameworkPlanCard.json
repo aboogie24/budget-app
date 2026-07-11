@@ -1,0 +1,43 @@
+{
+  "componentName": "FrameworkPlanCard",
+  "description": "An active plan card: header (name + plan-type badge), milestone progress bar + count, divider, then a list of FrameworkMilestoneRow. Glass surface (subordinate to the level hero).",
+  "platform": "react-native",
+  "spec": "budget-app/docs/design/specs/framework-redesign.md#9-tier-5--active-plans--milestones",
+  "props": {
+    "name": { "type": "string", "required": true, "description": "Plan display name." },
+    "planType": { "type": "string", "required": true, "description": "'debt_payoff' | 'savings' | 'combined'." },
+    "milestonesReached": { "type": "number", "required": true, "description": "Count of reached milestones." },
+    "milestonesTotal": { "type": "number", "required": true, "description": "Total milestone count." },
+    "milestones": { "type": "Milestone[]", "required": true, "description": "Milestones to render as FrameworkMilestoneRow." },
+    "togglingId": { "type": "string", "required": false, "description": "Id of the milestone currently updating (shows in-flight spinner)." },
+    "onToggleMilestone": { "type": "function", "required": true, "description": "(milestone) => void — flips reached/pending." }
+  },
+  "variants": ["debt_payoff", "savings", "combined"],
+  "states": ["default", "empty-milestones"],
+  "layout": {
+    "card": "glassEffects.glass",
+    "padding": "spacing.lg",
+    "nameLines": 1,
+    "badgeFlexShrink": 0,
+    "divider": "commonStyles.divider before the milestone list"
+  },
+  "tokens": {
+    "name": "typography.bodyBold / colors.text",
+    "badgeRadius": "radius.sm",
+    "badgeDebtFill": "`${colors.error}26`",
+    "badgeDebtText": "colors.error",
+    "badgeSavingsFill": "`${colors.success}26`",
+    "badgeSavingsText": "colors.success",
+    "badgeCombinedFill": "`${colors.primary2}26`",
+    "badgeCombinedText": "colors.primary2",
+    "badgeLabel": "typography.caption bold",
+    "progressBar": "FrameworkProgressBar variant=success",
+    "progressCount": "typography.caption / colors.textMuted",
+    "emptyMilestones": "'No milestones yet' / typography.caption / colors.textMuted"
+  },
+  "accessibility": {
+    "role": "group",
+    "label": "{name}, {planType}, {milestonesReached} of {milestonesTotal} milestones reached.",
+    "colorIndependence": "Plan type conveyed by badge text label + color; progress paired with a numeric count."
+  }
+}

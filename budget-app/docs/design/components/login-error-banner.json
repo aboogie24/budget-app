@@ -1,0 +1,35 @@
+{
+  "componentName": "AuthErrorBanner",
+  "description": "Inline error banner replacing raw alert() on the login screen. Color-independent (icon + word + color). Optional Retry for network errors.",
+  "platform": "react-native",
+  "props": {
+    "kind": { "type": "'credentials' | 'empty' | 'network' | 'oauth'", "required": true, "description": "Selects copy + icon + whether Retry renders" },
+    "message": { "type": "string", "required": true, "description": "Human-readable error copy (see spec taxonomy)" },
+    "onRetry": { "type": "function", "required": false, "description": "Rendered as a Retry button for kind='network'" }
+  },
+  "variants": ["credentials", "empty", "network", "oauth"],
+  "states": ["visible", "dismissed"],
+  "behavior": "Auto-clears on next keystroke in any field. Pairs with errorHaptic() when shown.",
+  "tokens": {
+    "container": "glassEffects.glass",
+    "borderColor": "colors.error",
+    "tintBackground": "rgba(239,68,68,0.10)",
+    "borderRadius": "radius.md",
+    "padding": "spacing.md",
+    "marginBottom": "spacing.md",
+    "gap": "spacing.sm",
+    "iconColor": "colors.error",
+    "iconSize": 18,
+    "text": "typography.small",
+    "textColor": "colors.text",
+    "retryText": "typography.smallBold",
+    "retryColor": "colors.primary2"
+  },
+  "icons": { "credentials": "alert-circle-outline", "empty": "alert-circle-outline", "oauth": "alert-circle-outline", "network": "cloud-offline-outline" },
+  "accessibility": {
+    "role": "alert",
+    "liveRegion": "assertive",
+    "colorIndependent": "Always icon + explicit word (incorrect / can't reach / didn't work) + red — never red alone",
+    "retryTarget": "44x44"
+  }
+}

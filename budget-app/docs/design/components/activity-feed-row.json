@@ -1,0 +1,41 @@
+{
+  "componentName": "ActivityRow",
+  "description": "A single household activity-feed event: type-keyed icon chip, description, actor + relative-time subtitle, and an optional signed amount. Visual sibling of the dashboard's RecentActivity row.",
+  "platform": "react-native",
+  "sourceOfTruthTokens": "budget-app/utils/design-system.ts",
+  "props": {
+    "eventType": { "type": "string", "required": true, "description": "ActivityEvent.event_type; drives icon + tint + amount sign via tintForEvent()." },
+    "description": { "type": "string", "required": true, "description": "Human-readable event description (row title). numberOfLines=1." },
+    "actorGlyph": { "type": "object", "required": false, "description": "{ glyph: '◑'|'◐', color: string, name: string } | null. Null in solo households or unknown actor.", "shape": { "glyph": "string", "color": "string", "name": "string" } },
+    "relativeTime": { "type": "string", "required": true, "description": "Pre-formatted relative time, e.g. '2h ago', 'Yesterday at 9:02 AM'." },
+    "amount": { "type": "number", "required": false, "description": "Event amount; omit for events with no monetary value (budget_created, goal_created)." },
+    "onPress": { "type": "function", "required": false, "description": "Navigate to the underlying entity. Provided only when entity_id + entity_type exist; otherwise the row is a non-pressable View." }
+  },
+  "derivations": {
+    "isIncome": "eventType === 'savings_contribution' || eventType === 'income'",
+    "amountColor": "getValueColor(isIncome ? amount : -amount)",
+    "amountPrefix": "isIncome ? '+' : '-'",
+    "tint": "tintForEvent(eventType) → colors.success | colors.error | colors.primary2",
+    "icon": "iconForEvent(eventType) → see spec §5 mapping table"
+  },
+  "variants": ["expense", "income", "no-amount", "unknown-type"],
+  "states": ["default", "pressed", "non-interactive"],
+  "layout": {
+    "card": { "surface": "glassEffects.glass", "borderRadius": "radius.lg", "marginBottom": "spacing.md" },
+    "row": { "flexDirection": "row", "alignItems": "center", "gap": "spacing.md", "paddingVertical": "spacing.md", "paddingHorizontal": "spacing.lg", "minHeight": 44 },
+    "iconChip": { "size": 36, "borderRadius": "radius.md", "backgroundColor": "`${tint}1f`", "iconSize": 18 },
+    "textColumn": { "flex": 1, "minWidth": 0 },
+    "amount": { "flexShrink": 0, "marginLeft": "spacing.sm" }
+  },
+  "typography": {
+    "name": "typography.smallBold + colors.text (numberOfLines 1)",
+    "subtitle": "typography.caption + colors.textMuted (numberOfLines 1); actor glyph rendered in actorGlyph.color",
+    "amount": "typography.smallBold + amountColor"
+  },
+  "accessibility": {
+    "role": "button (only when onPress present)",
+    "label": "{description}, by {actorGlyph.name}, {relativeTime}{, income|expense {amount} when present}.",
+    "activeOpacity": 0.7,
+    "colorIndependence": "direction encoded by icon shape + +/- prefix + color; actor by glyph + name"
+  }
+}

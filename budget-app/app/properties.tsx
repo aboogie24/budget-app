@@ -10,6 +10,8 @@ import {
   Modal,
   ActivityIndicator,
   Switch,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,7 +20,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
 import GradientBackground from '@/components/GradientBackground';
 import { ErrorState } from '@/components/ErrorState';
-import { colors, spacing, glassEffects, typography, gradients } from '@/utils/design-system';
+import { Skeleton } from '@/components/Skeleton';
+import {
+  colors,
+  spacing,
+  radius,
+  glassEffects,
+  typography,
+  gradients,
+  commonStyles,
+  getValueColor,
+} from '@/utils/design-system';
 import { BackButton } from '@/components/BackButton';
 
 type Property = {
@@ -46,11 +58,28 @@ type Debt = {
   balance: number;
 };
 
+// Tinted chip fills derived from tokens (≈12% / ≈16% / ≈8%).
+const tint = {
+  primary12: `${colors.primary2}1f`,
+  primary16: `${colors.primary2}29`,
+  primary8: `${colors.primary2}14`,
+  primary70: `${colors.primary2}b3`,
+  primary40: `${colors.primary2}66`,
+  primary29: `${colors.primary2}29`,
+  error12: `${colors.error}1f`,
+  error66: `${colors.error}66`,
+  info12: `${colors.info}1f`,
+  info8: `${colors.info}14`,
+  info29: `${colors.info}29`,
+};
+
 export default function PropertiesScreen() {
   const router = useRouter();
   const [properties, setProperties] = useState<Property[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Property | null>(null);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -68,6 +97,7 @@ export default function PropertiesScreen() {
   const loadData = useCallback(async () => {
     try {
       setError(null);
+      setRefreshing(true);
       const userId = await api.getUserId();
       if (!userId) return;
       const [propsData, debtsData] = await Promise.all([
@@ -81,6 +111,8 @@ export default function PropertiesScreen() {
       setError('Failed to load properties');
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
+      setRefreshing(false);
     }
   }, []);
 
@@ -108,6 +140,11 @@ export default function PropertiesScreen() {
     setManualValue(p.manual_value != null ? String(p.manual_value) : '');
     setDebtAccountId(p.debt_account_id || null);
     setIsShared(p.is_shared);
+    setShowForm(true);
+  };
+
+  const openAdd = () => {
+    resetForm();
     setShowForm(true);
   };
 
@@ -193,6 +230,11 @@ export default function PropertiesScreen() {
     const mortgage = p.debt_balance || 0;
     return sum + (val - mortgage);
   }, 0);
+  const equityPercent = totalValue > 0 ? Math.round((totalEquity / totalValue) * 100) : null;
+  const mortgageTotal = Math.max(0, totalValue - totalEquity);
+  // Equity share of value (0..1) for the ownership bar; guard divide-by-zero.
+  const equityShare =
+    totalValue > 0 ? Math.max(0, Math.min(1, totalEquity / totalValue)) : 1;
 
   const timeAgo = (dateStr?: string | null) => {
     if (!dateStr) return '';
@@ -204,153 +246,303 @@ export default function PropertiesScreen() {
     return `${days}d ago`;
   };
 
+  const showSkeleton = loading && !loadedOnce;
+
+  // ── Portfolio headline (the ONE floating block) ──
+  const renderHeadline = () => {
+    if (properties.length === 0) return null;
+    const equityLabel =
+      equityPercent != null
+        ? `Total equity ${fmt(totalEquity)}, ${equityPercent} percent owned`
+        : `Total equity ${fmt(totalEquity)}`;
+    return (
+      <View
+        style={styles.headline}
+        accessible
+        accessibilityLabel={`Portfolio: ${properties.length} ${
+          properties.length === 1 ? 'home' : 'homes'
+        }. Total value ${fmt(totalValue)}. ${equityLabel}.`}
+      >
+        <View style={styles.headlineLabelRow}>
+          <Text style={styles.sectionLabel}>Portfolio</Text>
+          <View style={styles.countPill}>
+            <Text style={styles.countPillText}>
+              {properties.length} {properties.length === 1 ? 'home' : 'homes'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.headlineValues}>
+          <View style={styles.headlineCol}>
+            <Text style={styles.valueColLabel}>Total value</Text>
+            <Text style={styles.heroValue}>{fmt(totalValue)}</Text>
+          </View>
+          <View style={[styles.headlineCol, { alignItems: 'flex-end' }]}>
+            <Text style={styles.valueColLabel}>Total equity</Text>
+            <Text style={[styles.heroValue, { color: colors.primary2 }]}>{fmt(totalEquity)}</Text>
+            {equityPercent != null && (
+              <Text style={styles.equityShareText}>{equityPercent}% owned</Text>
+            )}
+          </View>
+        </View>
+
+        {equityPercent != null && (
+          <>
+            <View style={styles.ownershipBar}>
+              <View
+                style={[
+                  styles.ownershipEquity,
+                  { flex: Math.max(equityShare, 0.001) },
+                ]}
+              />
+              {mortgageTotal > 0 && (
+                <View
+                  style={[
+                    styles.ownershipMortgage,
+                    { flex: Math.max(1 - equityShare, 0.001) },
+                  ]}
+                />
+              )}
+            </View>
+            <View style={styles.legendRow}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendSwatch, { backgroundColor: colors.primary2 }]} />
+                <Text style={styles.legendText}>equity</Text>
+              </View>
+              {mortgageTotal > 0 && (
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendSwatch, { backgroundColor: tint.error66 }]} />
+                  <Text style={styles.legendText}>mortgage</Text>
+                </View>
+              )}
+            </View>
+          </>
+        )}
+      </View>
+    );
+  };
+
+  // ── Property card (the list row) ──
+  const renderPropertyCard = (p: Property) => {
+    const val = effectiveValue(p);
+    const mortgage = p.debt_balance || 0;
+    const hasMortgage = !!p.debt_name;
+    const equity = val - mortgage;
+    const isZestimate = !p.manual_value && !!p.zestimate;
+    const zAge = timeAgo(p.last_fetched_at);
+
+    const a11y =
+      `${p.street_address}, ${p.city} ${p.state}. Value ${fmt(val)}, ${
+        isZestimate ? 'Zestimate' : 'Manual'
+      }.` +
+      (hasMortgage ? ` Mortgage ${p.debt_name} ${fmt(mortgage)}.` : '') +
+      ` Equity ${equity < 0 ? '-' : ''}${fmt(Math.abs(equity))}.` +
+      (p.is_shared ? ' Shared with partner.' : '');
+
+    return (
+      <TouchableOpacity
+        key={p.id}
+        style={styles.card}
+        onPress={() => openEdit(p)}
+        activeOpacity={0.7}
+        accessibilityLabel={a11y}
+        accessibilityHint="Double tap to edit."
+      >
+        {/* Header row */}
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={styles.homeIcon}>
+              <Ionicons name="home" size={18} color={colors.primary2} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {p.street_address}
+              </Text>
+              <Text style={styles.cardAddress} numberOfLines={1}>
+                {p.city}, {p.state} {p.zip_code}
+              </Text>
+            </View>
+          </View>
+          {p.is_shared && (
+            <View style={styles.sharedChip}>
+              <Ionicons name="contrast-outline" size={11} color={colors.primary2} />
+              <Text style={styles.sharedChipText}>Shared</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Value section */}
+        <View style={styles.valueSection}>
+          <View style={styles.valueRow}>
+            <Text style={styles.valueLabel}>Value</Text>
+            <View style={styles.valueRight}>
+              <Text style={styles.valueAmount}>{fmt(val)}</Text>
+              {isZestimate ? (
+                <View style={[styles.provChip, { backgroundColor: tint.info12 }]}>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={12}
+                    color={colors.textMuted}
+                  />
+                  <Text style={styles.provChipText}>
+                    Zestimate{zAge ? ` · ${zAge}` : ''}
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.provChip, { backgroundColor: colors.glassLight }]}>
+                  <Ionicons name="create-outline" size={12} color={colors.textMuted} />
+                  <Text style={styles.provChipText}>Manual</Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          {hasMortgage && (
+            <View style={styles.valueRow}>
+              <Text style={styles.valueLabel} numberOfLines={1}>
+                Mortgage ({p.debt_name})
+              </Text>
+              <Text style={[styles.valueAmount, styles.noShrink, { color: colors.error }]}>
+                -{fmt(mortgage)}
+              </Text>
+            </View>
+          )}
+
+          {hasMortgage && <View style={commonStyles.divider} />}
+
+          <View style={styles.valueRow}>
+            <Text style={styles.equityLabel}>Equity</Text>
+            <Text style={[styles.equityValue, styles.noShrink, { color: getValueColor(equity) }]}>
+              {equity < 0 ? '-' : ''}
+              {fmt(Math.abs(equity))}
+            </Text>
+          </View>
+        </View>
+
+        {/* Actions */}
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            style={[styles.actionPill, { backgroundColor: tint.primary12 }]}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handleRefresh(p);
+            }}
+            disabled={refreshingId === p.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Refresh value for ${p.street_address}`}
+          >
+            {refreshingId === p.id ? (
+              <ActivityIndicator size="small" color={colors.primary2} />
+            ) : (
+              <>
+                <Ionicons name="refresh-outline" size={16} color={colors.primary2} />
+                <Text style={[styles.actionText, { color: colors.primary2 }]}>Refresh</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionPill, { backgroundColor: tint.error12 }]}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handleDelete(p);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${p.street_address}`}
+          >
+            <Ionicons name="trash-outline" size={16} color={colors.error} />
+            <Text style={[styles.actionText, { color: colors.error }]}>Delete</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderEmpty = () => (
+    <View style={styles.emptyState}>
+      <Ionicons name="home-outline" size={48} color={colors.textDark} />
+      <Text style={styles.emptyText}>No properties tracked yet</Text>
+      <Text style={styles.emptySubtext}>
+        Add your first home to track its value and equity
+      </Text>
+      <TouchableOpacity style={styles.emptyCta} onPress={openAdd} accessibilityRole="button">
+        <LinearGradient
+          colors={[...gradients.primaryGradient]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.emptyCtaInner}
+        >
+          <Text style={styles.emptyCtaText}>Add a property</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderLoadingSkeleton = () => (
+    <View style={{ gap: spacing.lg }}>
+      <Skeleton height={132} borderRadius={radius.xl} />
+      <Skeleton width={120} height={12} borderRadius={radius.sm} />
+      <View style={{ gap: spacing.md }}>
+        <Skeleton height={168} borderRadius={radius.lg} />
+        <Skeleton height={168} borderRadius={radius.lg} />
+      </View>
+    </View>
+  );
+
   return (
     <GradientBackground variant="bgDarkPurple">
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <BackButton fallback="/(tabs)/goals" color={colors.text} />
+        {/* Header */}
+        <View style={styles.header}>
+          <BackButton fallback="/(tabs)/goals" color={colors.text} />
+          <View style={styles.titleWrap}>
             <Text style={styles.headerTitle}>Properties</Text>
+          </View>
+          <View style={styles.headerRight}>
+            {loadedOnce && refreshing && (
+              <ActivityIndicator color={colors.primary2} size="small" />
+            )}
             <TouchableOpacity
-              onPress={() => {
-                resetForm();
-                setShowForm(true);
-              }}
+              style={styles.iconBtn}
+              onPress={openAdd}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Add property"
             >
-              <Ionicons name="add-circle" size={28} color={colors.primary2} />
+              <Ionicons name="add" size={22} color={colors.primary2} />
             </TouchableOpacity>
           </View>
+        </View>
 
-          {/* Error state */}
-          {error && (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {error ? (
             <ErrorState
-              title="Error"
+              title="Couldn't load your properties"
               message={error}
+              retryLabel="Retry"
               onRetry={loadData}
               onDismiss={() => setError(null)}
             />
+          ) : showSkeleton ? (
+            renderLoadingSkeleton()
+          ) : properties.length === 0 ? (
+            renderEmpty()
+          ) : (
+            <>
+              {renderHeadline()}
+              <Text style={[styles.sectionLabel, styles.listLabel]}>Your properties</Text>
+              {properties.map(renderPropertyCard)}
+            </>
           )}
-
-          {/* Summary card */}
-          {!error && properties.length > 0 && (
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <View>
-                  <Text style={styles.summaryLabel}>Total Value</Text>
-                  <Text style={styles.summaryValue}>{fmt(totalValue)}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.summaryLabel}>Total Equity</Text>
-                  <Text style={[styles.summaryValue, { color: colors.primary2 }]}>{fmt(totalEquity)}</Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          {!error && loading ? (
-            <ActivityIndicator color={colors.primary2} style={{ marginTop: 40 }} />
-          ) : !error && properties.length === 0 && !loading ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="home-outline" size={48} color={colors.textDark} />
-              <Text style={styles.emptyText}>No properties tracked yet</Text>
-              <Text style={styles.emptySubtext}>Tap + to add your first property</Text>
-            </View>
-          ) : !error ? (
-            properties.map((p) => {
-              const val = effectiveValue(p);
-              const mortgage = p.debt_balance || 0;
-              const equity = val - mortgage;
-              const isZestimate = !p.manual_value && p.zestimate;
-
-              return (
-                <TouchableOpacity key={p.id} style={styles.card} onPress={() => openEdit(p)}>
-                  <View style={styles.cardHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                      <View style={styles.homeIcon}>
-                        <Ionicons name="home" size={18} color={colors.primary2} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.cardTitle} numberOfLines={1}>{p.street_address}</Text>
-                        <Text style={styles.cardAddress}>{p.city}, {p.state} {p.zip_code}</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.valueSection}>
-                    <View style={styles.valueRow}>
-                      <Text style={styles.valueLabel}>Value</Text>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={styles.valueAmount}>{fmt(val)}</Text>
-                        {isZestimate && (
-                          <Text style={styles.valueSource}>Zestimate {timeAgo(p.last_fetched_at) ? `· ${timeAgo(p.last_fetched_at)}` : ''}</Text>
-                        )}
-                        {p.manual_value != null && p.manual_value > 0 && (
-                          <Text style={styles.valueSource}>Manual</Text>
-                        )}
-                      </View>
-                    </View>
-
-                    {p.debt_name && (
-                      <View style={styles.valueRow}>
-                        <Text style={styles.valueLabel}>Mortgage ({p.debt_name})</Text>
-                        <Text style={[styles.valueAmount, { color: colors.error }]}>-{fmt(mortgage)}</Text>
-                      </View>
-                    )}
-
-                    {p.debt_name && (
-                      <>
-                        <View style={styles.equityDivider} />
-                        <View style={styles.valueRow}>
-                          <Text style={styles.equityLabel}>Equity</Text>
-                          <Text style={[styles.equityValue, { color: equity >= 0 ? colors.success : colors.error }]}>
-                            {equity < 0 ? '-' : ''}{fmt(Math.abs(equity))}
-                          </Text>
-                        </View>
-                      </>
-                    )}
-                  </View>
-
-                  <View style={styles.cardActions}>
-                    <TouchableOpacity
-                      style={styles.refreshBtn}
-                      onPress={(e) => {
-                        e.stopPropagation?.();
-                        handleRefresh(p);
-                      }}
-                      disabled={refreshingId === p.id}
-                    >
-                      {refreshingId === p.id ? (
-                        <ActivityIndicator size="small" color={colors.primary2} />
-                      ) : (
-                        <>
-                          <Ionicons name="refresh-outline" size={14} color={colors.primary2} />
-                          <Text style={styles.refreshBtnText}>Refresh</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={(e) => {
-                        e.stopPropagation?.();
-                        handleDelete(p);
-                      }}
-                    >
-                      <Ionicons name="trash-outline" size={14} color={colors.error} />
-                      <Text style={styles.deleteBtnText}>Delete</Text>
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
-              );
-            })
-          ) : null}
         </ScrollView>
 
         {/* Add/Edit Modal */}
         <Modal visible={showForm} animationType="slide" transparent>
-          <View style={styles.modalBackdrop}>
+          <KeyboardAvoidingView
+            style={styles.modalBackdrop}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
             <View style={styles.modalContent}>
-              <ScrollView>
+              <ScrollView keyboardShouldPersistTaps="handled">
                 <View style={styles.modalHeader}>
                   <Text style={styles.modalTitle}>
                     {editing ? 'Edit Property' : 'Add Property'}
@@ -360,6 +552,9 @@ export default function PropertiesScreen() {
                       setShowForm(false);
                       resetForm();
                     }}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close"
                   >
                     <Ionicons name="close" size={24} color={colors.textMuted} />
                   </TouchableOpacity>
@@ -372,6 +567,7 @@ export default function PropertiesScreen() {
                   placeholderTextColor={colors.textMuted}
                   value={streetAddress}
                   onChangeText={setStreetAddress}
+                  accessibilityLabel="Street Address"
                 />
 
                 <Text style={styles.label}>City</Text>
@@ -381,9 +577,10 @@ export default function PropertiesScreen() {
                   placeholderTextColor={colors.textMuted}
                   value={city}
                   onChangeText={setCity}
+                  accessibilityLabel="City"
                 />
 
-                <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.label}>State</Text>
                     <TextInput
@@ -394,6 +591,7 @@ export default function PropertiesScreen() {
                       onChangeText={setState}
                       maxLength={2}
                       autoCapitalize="characters"
+                      accessibilityLabel="State"
                     />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -406,6 +604,7 @@ export default function PropertiesScreen() {
                       onChangeText={setZipCode}
                       keyboardType="numeric"
                       maxLength={5}
+                      accessibilityLabel="ZIP Code"
                     />
                   </View>
                 </View>
@@ -418,6 +617,7 @@ export default function PropertiesScreen() {
                   keyboardType="numeric"
                   value={manualValue}
                   onChangeText={setManualValue}
+                  accessibilityLabel="Manual Value"
                 />
 
                 <Text style={styles.label}>Link Mortgage</Text>
@@ -426,15 +626,26 @@ export default function PropertiesScreen() {
                     style={[styles.mortgageOption, !debtAccountId && styles.mortgageOptionActive]}
                     onPress={() => setDebtAccountId(null)}
                   >
-                    <Text style={[styles.mortgageText, !debtAccountId && styles.mortgageTextActive]}>None</Text>
+                    <Text style={[styles.mortgageText, !debtAccountId && styles.mortgageTextActive]}>
+                      None
+                    </Text>
                   </TouchableOpacity>
                   {debts.map((d) => (
                     <TouchableOpacity
                       key={d.id}
-                      style={[styles.mortgageOption, debtAccountId === d.id && styles.mortgageOptionActive]}
+                      style={[
+                        styles.mortgageOption,
+                        debtAccountId === d.id && styles.mortgageOptionActive,
+                      ]}
                       onPress={() => setDebtAccountId(d.id)}
                     >
-                      <Text style={[styles.mortgageText, debtAccountId === d.id && styles.mortgageTextActive]} numberOfLines={1}>
+                      <Text
+                        style={[
+                          styles.mortgageText,
+                          debtAccountId === d.id && styles.mortgageTextActive,
+                        ]}
+                        numberOfLines={1}
+                      >
                         {d.name} ({fmt(d.balance)})
                       </Text>
                     </TouchableOpacity>
@@ -449,21 +660,30 @@ export default function PropertiesScreen() {
                   <Switch
                     value={isShared}
                     onValueChange={setIsShared}
-                    trackColor={{ false: colors.glassLight, true: 'rgba(168,85,247,0.4)' }}
+                    trackColor={{ false: colors.glassLight, true: tint.primary40 }}
                     thumbColor={isShared ? colors.accent : colors.textDark}
+                    accessibilityLabel={`Share with partner, ${isShared ? 'on' : 'off'}`}
                   />
                 </View>
 
                 {!editing && (
                   <View style={styles.infoCard}>
-                    <Ionicons name="information-circle-outline" size={16} color={colors.primary2} />
+                    <Ionicons
+                      name="information-circle-outline"
+                      size={16}
+                      color={colors.primary2}
+                    />
                     <Text style={styles.infoText}>
                       We'll automatically look up the Zestimate from Zillow when you save.
                     </Text>
                   </View>
                 )}
 
-                <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
+                <TouchableOpacity
+                  onPress={handleSave}
+                  style={styles.saveBtn}
+                  accessibilityRole="button"
+                >
                   <LinearGradient
                     colors={[...gradients.primaryGradient]}
                     start={{ x: 0, y: 0 }}
@@ -475,7 +695,7 @@ export default function PropertiesScreen() {
                 </TouchableOpacity>
               </ScrollView>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
     </GradientBackground>
@@ -483,78 +703,180 @@ export default function PropertiesScreen() {
 }
 
 const styles = StyleSheet.create({
-  scrollContent: {
-    padding: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: 120,
-  },
-  headerRow: {
+  // ── Header ──
+  header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  titleWrap: {
+    flex: 1,
+    alignItems: 'center',
   },
   headerTitle: {
     color: colors.text,
-    fontSize: 20,
-    fontWeight: '800',
+    ...typography.h3,
   },
-  iconButton: {
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  iconBtn: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassLight,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
   },
-  summaryCard: {
-    ...glassEffects.glass,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
+
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xxxl + spacing.xxl,
   },
-  summaryRow: {
+
+  // ── Section labels ──
+  sectionLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  listLabel: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+
+  // ── Portfolio headline ──
+  headline: {
+    ...glassEffects.glassFloating,
+    padding: spacing.xl,
+    borderRadius: radius.xl,
+  },
+  headlineLabelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  summaryLabel: {
+  countPill: {
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  countPillText: {
     color: colors.textMuted,
     ...typography.caption,
   },
-  summaryValue: {
+  headlineValues: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+  },
+  headlineCol: {
+    flex: 1,
+  },
+  valueColLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+    marginBottom: spacing.xs,
+  },
+  heroValue: {
     color: colors.text,
-    fontSize: 18,
-    fontWeight: '800',
+    ...typography.h2,
+  },
+  equityShareText: {
+    color: colors.success,
+    ...typography.caption,
     marginTop: spacing.xs,
   },
+  ownershipBar: {
+    flexDirection: 'row',
+    height: 8,
+    borderRadius: radius.full,
+    overflow: 'hidden',
+    marginTop: spacing.lg,
+    backgroundColor: colors.glassLight,
+  },
+  ownershipEquity: {
+    backgroundColor: colors.primary2,
+  },
+  ownershipMortgage: {
+    backgroundColor: tint.error66,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  legendSwatch: {
+    width: 8,
+    height: 8,
+    borderRadius: radius.full,
+  },
+  legendText: {
+    color: colors.textMuted,
+    ...typography.caption,
+  },
+
+  // ── Property card ──
   card: {
-    ...glassEffects.glass,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
+    ...commonStyles.card,
+    borderRadius: radius.lg,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  cardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    flex: 1,
+  },
   homeIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(167,139,250,0.15)',
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: tint.primary12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cardTitle: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 15,
+    ...typography.smallBold,
   },
   cardAddress: {
     color: colors.textMuted,
     ...typography.caption,
     marginTop: 2,
+  },
+  sharedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: tint.primary12,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginLeft: spacing.sm,
+  },
+  sharedChipText: {
+    color: colors.primary2,
+    ...typography.caption,
   },
   valueSection: { marginTop: spacing.md },
   valueRow: {
@@ -562,68 +884,64 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: spacing.xs,
+    gap: spacing.sm,
   },
   valueLabel: {
     color: colors.textMuted,
-    fontSize: 13,
+    ...typography.small,
+    flexShrink: 1,
+  },
+  valueRight: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
   },
   valueAmount: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 15,
+    ...typography.smallBold,
   },
-  valueSource: {
-    color: colors.textDark,
-    fontSize: 11,
-    marginTop: 1,
+  noShrink: {
+    flexShrink: 0,
   },
-  equityDivider: {
-    height: 1,
-    backgroundColor: colors.borderLight,
-    marginVertical: 6,
+  provChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  provChipText: {
+    color: colors.textMuted,
+    ...typography.caption,
   },
   equityLabel: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 13,
+    ...typography.smallBold,
   },
   equityValue: {
-    fontWeight: '800',
-    fontSize: 16,
+    ...typography.bodyBold,
   },
   cardActions: {
     flexDirection: 'row',
     gap: spacing.sm,
     marginTop: spacing.md,
   },
-  refreshBtn: {
+  actionPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(167,139,250,0.12)',
-    borderRadius: 10,
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    minHeight: 44,
+    minWidth: 104,
   },
-  refreshBtnText: {
-    color: colors.primary2,
-    fontWeight: '700',
-    fontSize: 13,
+  actionText: {
+    ...typography.smallBold,
   },
-  deleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(248,113,113,0.12)',
-    borderRadius: 10,
-  },
-  deleteBtnText: {
-    color: colors.error,
-    fontWeight: '700',
-    fontSize: 13,
-  },
+
+  // ── Empty state ──
   emptyState: {
     alignItems: 'center',
     marginTop: 60,
@@ -631,13 +949,30 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 16,
+    ...typography.bodyBold,
   },
   emptySubtext: {
     color: colors.textMuted,
-    fontSize: 13,
+    ...typography.small,
+    textAlign: 'center',
   },
+  emptyCta: {
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    marginTop: spacing.lg,
+  },
+  emptyCtaInner: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyCtaText: {
+    color: colors.text,
+    ...typography.button,
+  },
+
+  // ── Modal ──
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -645,9 +980,9 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.lg,
     maxHeight: '85%',
   },
   modalHeader: {
@@ -658,25 +993,24 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     color: colors.text,
-    fontSize: 18,
-    fontWeight: '800',
+    ...typography.h3,
   },
   label: {
     color: colors.text,
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 6,
+    ...typography.smallBold,
+    marginBottom: spacing.xs,
     marginTop: spacing.md,
   },
   input: {
     backgroundColor: colors.glassLight,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
     color: colors.text,
     borderWidth: 1,
     borderColor: colors.borderGlass,
-    fontSize: 15,
+    ...typography.body,
+    minHeight: 44,
   },
   mortgagePicker: {
     flexDirection: 'row',
@@ -686,44 +1020,44 @@ const styles = StyleSheet.create({
   },
   mortgageOption: {
     paddingVertical: spacing.sm,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
     backgroundColor: colors.glassLight,
     borderWidth: 1,
     borderColor: colors.borderGlass,
     maxWidth: '100%',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   mortgageOptionActive: {
-    backgroundColor: 'rgba(168,85,247,0.18)',
-    borderColor: 'rgba(168,85,247,0.7)',
+    backgroundColor: tint.primary16,
+    borderColor: tint.primary70,
   },
   mortgageText: {
     color: colors.text,
-    fontSize: 13,
+    ...typography.small,
   },
   mortgageTextActive: {
     color: colors.text,
-    fontWeight: '700',
+    ...typography.smallBold,
   },
   sharedToggle: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    backgroundColor: 'rgba(96,165,250,0.06)',
-    borderRadius: 14,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    backgroundColor: tint.info8,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.15)',
+    borderColor: tint.info29,
   },
   sharedLabel: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 14,
+    ...typography.smallBold,
   },
   sharedDesc: {
     color: colors.textMuted,
-    fontSize: 11,
+    ...typography.caption,
     marginTop: 2,
   },
   infoCard: {
@@ -732,10 +1066,10 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginTop: spacing.lg,
     padding: spacing.md,
-    backgroundColor: 'rgba(167,139,250,0.08)',
-    borderRadius: 12,
+    backgroundColor: tint.primary8,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: 'rgba(167,139,250,0.15)',
+    borderColor: tint.primary29,
   },
   infoText: {
     color: colors.textMuted,
@@ -743,10 +1077,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   saveBtn: {
-    borderRadius: 14,
+    borderRadius: radius.lg,
     overflow: 'hidden',
-    marginTop: 20,
-    marginBottom: 20,
+    marginTop: spacing.lg,
+    marginBottom: spacing.lg,
   },
   saveBtnInner: {
     flexDirection: 'row',
@@ -756,7 +1090,6 @@ const styles = StyleSheet.create({
   },
   saveBtnText: {
     color: colors.text,
-    fontWeight: '800',
-    fontSize: 16,
+    ...typography.button,
   },
 });

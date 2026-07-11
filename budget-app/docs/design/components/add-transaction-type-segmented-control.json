@@ -1,0 +1,29 @@
+{
+  "componentName": "TypeSegmentedControl",
+  "description": "Two-segment control that frames the whole form: Expense vs Income. Recolors the amount hero and resets category on change.",
+  "platform": "react-native",
+  "props": {
+    "value": { "type": "'expense' | 'income'", "required": true, "description": "Active transaction type" },
+    "onChange": { "type": "function", "required": true, "description": "(next: 'expense' | 'income') => void" }
+  },
+  "variants": ["default"],
+  "states": ["default", "expenseActive", "incomeActive", "pressed"],
+  "layout": {
+    "track": { "glass": "glassEffects.glass", "radius": "radius.md", "padding": "spacing.xs" },
+    "segment": { "flex": 1, "minHeight": 44, "gap": "spacing.sm", "direction": "row", "justify": "center" }
+  },
+  "tokens": {
+    "expenseActive": { "fill": "colors.error @10%", "border": "colors.error @30%", "icon": "card-outline", "text": "colors.error" },
+    "incomeActive": { "fill": "colors.success @10%", "border": "colors.success @30%", "icon": "trending-up", "text": "colors.success" },
+    "inactive": { "icon": "colors.textMuted", "text": "colors.textMuted", "weight": 400 },
+    "textStyle": "typography.small"
+  },
+  "behavior": "On change resets selectedCategory to null and recolors AmountHero. Cross-fade tint over animation.fast; instant under reduced motion.",
+  "accessibility": {
+    "role": "tablist",
+    "segmentRole": "tab",
+    "state": "accessibilityState={{ selected }}",
+    "label": "Expense / Income",
+    "colorIndependent": "Conveyed by icon + word + sign prefix, not color alone"
+  }
+}

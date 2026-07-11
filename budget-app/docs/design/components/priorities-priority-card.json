@@ -1,0 +1,79 @@
+{
+  "componentName": "PriorityCard",
+  "description": "A single financial priority in the ranked Priorities list. One glass card: leading rank badge, title (+ optional Top pill on rank 1), optional notes, a trailing reorder chevron column, a divider, and an inline Edit/Remove action row. List archetype — reads identically to bills-BillRow and the calendar/dashboard rows.",
+  "platform": "react-native",
+  "predicate": "isTop = rank === 1",
+  "props": {
+    "id": { "type": "string", "required": true },
+    "title": { "type": "string", "required": true },
+    "rank": { "type": "number", "required": true, "description": "1-based display rank" },
+    "notes": { "type": "string", "required": false },
+    "isFirst": { "type": "boolean", "required": true, "description": "index === 0 → disable up arrow" },
+    "isLast": { "type": "boolean", "required": true, "description": "index === length-1 → disable down arrow" },
+    "onMoveUp": { "type": "function", "required": true },
+    "onMoveDown": { "type": "function", "required": true },
+    "onEdit": { "type": "function", "required": true },
+    "onDelete": { "type": "function", "required": true }
+  },
+  "layout": {
+    "card": "commonStyles.card (glassEffects.glass, radius.lg, padding spacing.lg, marginBottom spacing.md)",
+    "rankBadge": { "size": 40, "borderRadius": "radius.md", "borderWidth": 1.5, "flexShrink": 0 },
+    "bodyMarginLeft": "spacing.md",
+    "reorderColumn": { "buttonSize": 44, "flexShrink": 0, "gap": "spacing.xs" },
+    "divider": "commonStyles.divider (colors.borderLight)",
+    "actionRow": { "gap": "spacing.lg", "buttonMinHeight": 44 },
+    "titleNumberOfLines": 2,
+    "notesNumberOfLines": 2
+  },
+  "variants": {
+    "default": {
+      "appliesTo": "rank >= 2",
+      "rankBadgeFill": "rgba(168,85,247,0.12)",
+      "rankBadgeBorder": "colors.primary2",
+      "rankNumberColor": "colors.primary2",
+      "topPill": false
+    },
+    "rank1": {
+      "appliesTo": "rank === 1",
+      "rankBadgeFill": "rgba(234,179,8,0.12)",
+      "rankBadgeBorder": "colors.warning",
+      "rankNumberColor": "colors.warning",
+      "topPill": true
+    }
+  },
+  "topPill": {
+    "show": "isTop",
+    "icon": "star",
+    "word": "TOP",
+    "color": "colors.warning",
+    "bg": "rgba(234,179,8,0.12)",
+    "borderRadius": "radius.full",
+    "typography": "typography.caption (bold)",
+    "note": "Icon + word + color → color-independent. Number in the badge is the primary rank carrier."
+  },
+  "reorder": {
+    "up": { "icon": "chevron-up", "enabledColor": "colors.text", "disabled": "isFirst", "disabledColor": "colors.textMuted", "disabledOpacity": 0.35 },
+    "down": { "icon": "chevron-down", "enabledColor": "colors.text", "disabled": "isLast", "disabledColor": "colors.textMuted", "disabledOpacity": 0.35 }
+  },
+  "actions": {
+    "edit": { "icon": "pencil", "word": "Edit", "color": "colors.primary2", "typography": "typography.smallBold" },
+    "remove": { "icon": "trash-outline", "word": "Remove", "color": "colors.error", "typography": "typography.smallBold", "destructive": true }
+  },
+  "typography": {
+    "rankNumber": "typography.smallBold",
+    "title": "typography.bodyBold (colors.text)",
+    "notes": "typography.caption (colors.textMuted)"
+  },
+  "states": ["default", "rank1", "pressed", "reordering", "loading-skeleton"],
+  "accessibility": {
+    "role": "none (card is a group; children are the interactive nodes)",
+    "cardLabel": "Priority {rank}{, top priority}: {title}. {notes}.",
+    "reorderUpLabel": "Move {title} up",
+    "reorderDownLabel": "Move {title} down",
+    "editLabel": "Edit {title}",
+    "removeLabel": "Remove {title}",
+    "removeHint": "Double tap to remove this priority",
+    "note": "Rank order conveyed by the number, not medal colors. Top priority = star icon + word TOP, not color alone. Reorder targets ≥ 44pt; disabled arrows expose accessibilityState disabled."
+  },
+  "developerNotes": "Re-layout of the existing priorities row — no data changes. Drive rank-1 accent + Top pill off `rank === 1` only; every other rank shares the neutral primary2 badge tier (do NOT reintroduce gold/silver/bronze). Remove uses colors.error (replaces bespoke #f472b6) and keeps the destructive confirm Alert. Optimistic reorder animates swapped cards with animation.fast; instant under reduce-motion."
+}

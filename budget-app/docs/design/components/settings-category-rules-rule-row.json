@@ -1,0 +1,38 @@
+{
+  "componentName": "RuleRow",
+  "description": "A single category rule. Shows the match value, a provenance status badge (icon+word+color), the target category, and optional usage count. User rules are solid and deletable; system rules are ghosted (dashed, locked, no delete).",
+  "platform": "react-native",
+  "screen": "settings/category-rules",
+  "props": {
+    "matchValue": { "type": "string", "required": true, "description": "Merchant name or keyword" },
+    "categoryName": { "type": "string", "required": true, "description": "Target category display name" },
+    "provenance": { "type": "string", "required": true, "description": "'auto' | 'manual' | 'system' — derived from auto_created and isSystemRule" },
+    "usageCount": { "type": "number", "required": false, "description": "Times applied; row hides the usage line when absent or 0" },
+    "onDelete": { "type": "function", "required": false, "description": "Delete handler; omitted/hidden for system rules" }
+  },
+  "variants": ["auto", "manual", "system"],
+  "states": ["default", "pressed", "deleting"],
+  "tokens": {
+    "solidRow": { "surface": "glassEffects.glass", "radius": "radius.lg", "padding": "spacing.md" },
+    "ghostRow": { "borderStyle": "dashed", "border": "colors.borderGlass", "fill": "transparent", "radius": "radius.lg", "padding": "spacing.md" },
+    "matchValue": { "type": "typography.bodyBold", "color": "colors.text", "numberOfLines": 1 },
+    "matchValueSystem": { "color": "colors.textMuted" },
+    "categoryTag": { "icon": "arrow-forward", "iconColor": "colors.primary2", "text": "typography.caption", "textColor": "colors.primary2", "numberOfLines": 1 },
+    "usage": { "type": "typography.caption", "color": "colors.textDark" },
+    "badge": {
+      "auto": { "icon": "flash-outline", "word": "Auto", "color": "colors.warning", "bg": "colors.warning @12%" },
+      "manual": { "icon": "person-outline", "word": "Manual", "color": "colors.info", "bg": "colors.info @12%" },
+      "system": { "icon": "lock-closed-outline", "word": "System", "color": "colors.textMuted", "bg": "colors.textMuted @12%" }
+    },
+    "deleteButton": { "icon": "trash-outline", "iconColor": "colors.error", "bg": "colors.error @8%", "radius": "radius.sm", "hitSlop": 8, "hiddenWhen": "provenance === 'system'" }
+  },
+  "layout": { "rowGapVertical": "spacing.xs", "badgeRadius": "radius.sm", "deleteVisual": 32, "deleteEffective": 48 },
+  "accessibility": {
+    "label": "{matchValue}, {provenance} rule, categorizes as {categoryName}{, used {usageCount} times}",
+    "systemHint": "System rule, read-only",
+    "deleteLabel": "Delete rule for {matchValue}",
+    "deleteHint": "Double tap to delete",
+    "colorIndependence": "Provenance conveyed by icon + word + color AND solid-vs-dashed row, never color alone",
+    "reducedMotion": "Skip press scale/opacity; instant state change"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "componentName": "UnbudgetedHeadline",
+  "description": "The single elevated headline card for the Unbudgeted Spending screen. Leads with the total unbudgeted amount this month and a color-independent status line stating how many categories lack a budget.",
+  "platform": "react-native",
+  "screen": "budget/unbudgeted",
+  "surface": "glassEffects.glassFloating",
+  "props": {
+    "grandTotal": { "type": "number", "required": true, "description": "Sum of all group totals this month, in dollars. Format with formatCurrency/fmt." },
+    "categoryCount": { "type": "number", "required": true, "description": "Number of parent-category groups with unbudgeted spending (groups.length)." }
+  },
+  "variants": ["default"],
+  "states": ["default", "loading", "hidden"],
+  "stateNotes": {
+    "loading": "Rendered as Skeleton placeholders: hero 140x28, subtitle 180x12, status line 220x12 (see spec 3.2).",
+    "hidden": "Not rendered when categoryCount === 0; the empty state replaces the entire body."
+  },
+  "layout": {
+    "padding": "spacing.xl",
+    "borderRadius": "radius.xl",
+    "gaps": { "heroToCaption": "spacing.xs", "captionToStatus": "spacing.md" }
+  },
+  "elements": {
+    "heroTotal": { "text": "formatCurrency(grandTotal)", "typography": "h2", "color": "colors.text" },
+    "heroCaption": { "text": "unbudgeted this month", "typography": "caption", "color": "colors.textMuted" },
+    "statusLine": {
+      "icon": { "name": "alert-circle", "size": 16, "color": "colors.warning" },
+      "text": "{categoryCount} categor{y|ies} have spending but no budget",
+      "typography": "small",
+      "color": "colors.textMuted"
+    }
+  },
+  "tokensUsed": ["glassEffects.glassFloating", "spacing.xl", "spacing.md", "spacing.xs", "radius.xl", "typography.h2", "typography.caption", "typography.small", "colors.text", "colors.textMuted", "colors.warning"],
+  "accessibility": {
+    "role": "summary",
+    "label": "Unbudgeted this month, {formatCurrency(grandTotal)}. {categoryCount} categories have spending but no budget.",
+    "colorIndependent": "Status conveyed by alert-circle icon + word 'no budget' + warning color together, never color alone."
+  }
+}

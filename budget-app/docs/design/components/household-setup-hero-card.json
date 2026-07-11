@@ -1,0 +1,28 @@
+{
+  "componentName": "HouseholdHeroCard",
+  "description": "Floating identity card for an existing household — home icon, name, member/role summary. The one floating card in Mode A.",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "props": {
+    "name": { "type": "string", "required": true, "description": "Household display name" },
+    "memberCount": { "type": "number", "required": true, "description": "Number of members" },
+    "isOwner": { "type": "boolean", "default": false, "description": "Whether current user owns the household" }
+  },
+  "variants": ["default"],
+  "states": ["default"],
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "align": "center",
+    "iconChip": { "size": 64, "radius": "radius.xl", "fill": "${colors.primary2}26", "border": "${colors.primary2}33", "icon": "home", "iconSize": 28, "iconColor": "colors.primary2" }
+  },
+  "typography": {
+    "title": { "style": "typography.h3", "weight": "800", "color": "colors.text", "numberOfLines": 1 },
+    "sub": { "style": "typography.small", "color": "colors.textMuted", "text": "{n} member(s) · {owner ? 'owner you' : 'member'}" }
+  },
+  "accessibility": {
+    "role": "header",
+    "label": "{name}, {memberCount} members, you are {isOwner ? 'owner' : 'member'}"
+  }
+}

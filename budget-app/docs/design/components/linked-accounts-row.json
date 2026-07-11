@@ -1,0 +1,49 @@
+{
+  "componentName": "LinkedAccountRow",
+  "description": "A single linked bank connection in the Linked Accounts list. Renders an institution with an icon+word+color status badge, and — for unhealthy connections — an inline notice with a Re-authenticate (or Link Account for revoked) action. Preserves the existing re-auth flow.",
+  "platform": "react-native",
+  "sourceScreen": "budget-app/app/linked-accounts.tsx",
+  "spec": "budget-app/docs/design/specs/linked-accounts-redesign.md",
+  "props": {
+    "institutionName": { "type": "string", "required": true, "description": "Bank display name" },
+    "status": { "type": "'good' | 'pending_expiration' | 'error' | 'revoked' | string", "required": true, "description": "item_status from getLinkedAccountStatus" },
+    "errorCode": { "type": "string | null", "required": true, "description": "Provider error code, shown in the attention notice" },
+    "createdAt": { "type": "string", "required": true, "description": "ISO 8601 link date" },
+    "updatedAt": { "type": "string", "required": true, "description": "ISO 8601 last-sync date" },
+    "isReAuthLoading": { "type": "boolean", "default": false, "description": "True while this row's re-auth is in flight" },
+    "onReAuth": { "type": "function", "required": true, "description": "Runs the createUpdateLinkToken -> WebBrowser -> resetLinkedAccountError flow" },
+    "onRelink": { "type": "function", "required": false, "description": "Route to /link-account for a revoked connection" }
+  },
+  "variants": ["good", "attention", "revoked"],
+  "states": ["default", "attention", "reauthLoading", "revoked", "pressed"],
+  "layout": {
+    "minHeight": 44,
+    "paddingVertical": "spacing.md",
+    "gap": "spacing.md",
+    "iconChip": { "size": 36, "radius": "radius.md", "bg": "${colors.primary2}1f", "icon": "business-outline", "iconColor": "colors.primary2" },
+    "notice": { "bg": "${colors.warning}14", "radius": "radius.md", "padding": "spacing.md", "borderLeftWidth": 3, "borderLeftColor": "colors.warning" },
+    "actionButton": { "minHeight": 44, "radius": "radius.sm", "paddingHorizontal": "spacing.md", "bg": "colors.primary" }
+  },
+  "typography": {
+    "name": "typography.smallBold / colors.text / numberOfLines 1",
+    "subtitle": "typography.caption / colors.textMuted / numberOfLines 1",
+    "noticeLabel": "typography.smallBold",
+    "errorCode": "typography.caption / colors.textMuted / numberOfLines 2",
+    "actionLabel": "typography.smallBold / colors.text"
+  },
+  "statusMap": {
+    "good": { "token": "colors.success", "icon": "checkmark-circle", "label": "Connected" },
+    "pending_expiration": { "token": "colors.warning", "icon": "alert-circle-outline", "label": "Needs Attention", "noticeLabel": "Authentication Expired" },
+    "error": { "token": "colors.error", "icon": "warning-outline", "label": "Error", "noticeLabel": "Connection Issue" },
+    "revoked": { "token": "colors.textMuted", "icon": "close-circle-outline", "label": "Revoked", "noticeLabel": "Access Revoked", "action": "Link Account" },
+    "_fallback": { "token": "colors.textMuted", "icon": "help-circle-outline", "label": "{raw status}" }
+  },
+  "accessibility": {
+    "row": { "role": "text", "label": "{institutionName}, {statusWord}, {linked|synced} {date}" },
+    "actionButton": { "role": "button", "label": "Re-authenticate {institutionName}", "state": "{ busy: isReAuthLoading, disabled: isReAuthLoading }" },
+    "touchTarget": "44x44 (button minHeight 44, hitSlop where visually smaller)",
+    "colorIndependence": "status conveyed by icon + word + color, never color alone",
+    "reducedMotion": "re-auth ActivityIndicator shows static in-progress state under reduce-motion"
+  },
+  "reuses": ["Ionicons", "LinkedStatusBadge"]
+}

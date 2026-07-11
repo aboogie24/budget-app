@@ -1,0 +1,42 @@
+{
+  "componentName": "ReviewQueueHero",
+  "screen": "transactions/review",
+  "description": "The single elevated headline card for the review queue. Leads with the count of transactions still needing review (typography.h2), a verified/total progress bar, and the two bulk actions (Confirm all, AI categorize) relocated from the header.",
+  "platform": "react-native",
+  "surface": "glassEffects.glassFloating",
+  "props": {
+    "leftCount": { "type": "number", "required": true, "description": "Unverified transactions remaining in scope (the hero number)" },
+    "doneCount": { "type": "number", "required": true, "description": "Already-verified transactions in scope" },
+    "totalCount": { "type": "number", "required": true, "description": "Total transactions in scope (done + left)" },
+    "categoryName": { "type": "string", "required": false, "description": "When filtered to one category, shown in the eyebrow as 'Review · {name}'" },
+    "partnerScope": { "type": "string", "required": false, "description": "'a' | 'b' | undefined — drives the eyebrow partner glyph; undefined = household (neutral icon)" },
+    "confirmingAll": { "type": "boolean", "default": false, "description": "Confirm-all in flight" },
+    "aiCategorizing": { "type": "boolean", "default": false, "description": "AI categorize in flight" },
+    "onConfirmAll": { "type": "function", "required": true, "description": "Confirm all in-scope unverified transactions" },
+    "onAiCategorize": { "type": "function", "required": true, "description": "Run AI categorization" }
+  },
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "marginBottom": "spacing.xl",
+    "eyebrow": { "type": "typography.caption", "color": "colors.textMuted", "glyph": "◑/◐ (partnerScope) or list/checkmark-done (household)" },
+    "progressLabel": { "text": "{doneCount} of {totalCount} done", "type": "typography.caption", "color": "colors.textMuted", "align": "right" },
+    "heroNumber": { "type": "typography.h2", "color": "colors.text", "value": "leftCount" },
+    "heroCaption": { "text": "transactions to review", "type": "typography.caption", "color": "colors.textMuted" },
+    "progressBar": { "height": "spacing.xs", "radius": "radius.full", "fill": "gradients.primaryGradient", "track": "colors.glassLight", "value": "doneCount / totalCount" },
+    "actions": {
+      "confirmAll": { "role": "primary", "fill": "gradients.primaryGradient", "radius": "radius.md", "icon": "checkmark-circle", "label": "Confirm all ({leftCount})", "labelType": "typography.button", "loadingLabel": "Confirming…" },
+      "aiCategorize": { "role": "secondary", "surface": "glassEffects.glass", "border": "colors.borderGlass", "radius": "radius.md", "icon": "sparkles", "iconColor": "colors.primary2", "label": "AI categorize", "labelType": "typography.smallBold", "loadingLabel": "Categorizing…" }
+    }
+  },
+  "states": ["default", "confirming-all", "ai-categorizing", "loading-skeleton"],
+  "accessibility": {
+    "role": "summary",
+    "label": "{leftCount} transactions to review, {doneCount} of {totalCount} done",
+    "actions": ["Confirm all {leftCount}, button", "AI categorize, button"],
+    "touchTarget": "both action buttons >= 44pt tall",
+    "reducedMotion": "progress bar renders at final width (no grow-in)"
+  },
+  "tokensUsed": ["glassEffects.glassFloating", "gradients.primaryGradient", "colors.glassLight", "colors.text", "colors.textMuted", "colors.primary2", "colors.borderGlass", "typography.h2", "typography.button", "typography.smallBold", "typography.caption", "radius.xl", "radius.md", "radius.full", "spacing.xl", "spacing.md", "spacing.xs"]
+}

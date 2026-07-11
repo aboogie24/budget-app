@@ -1,0 +1,32 @@
+{
+  "componentName": "DebtNudgeCard",
+  "description": "Fallback local nudge card used only when a debt AI nudge cannot be mapped to the shared AttentionCard. Mirrors AttentionCard's tokens exactly for visual consistency.",
+  "platform": "react-native",
+  "preferredAlternative": "components/AttentionCard.tsx (use this whenever the nudge maps to an AttentionItem)",
+  "surface": "glassEffects.glass",
+  "props": {
+    "nudge": { "type": "{ id: string, title: string, body: string, action_type?: string, action_data?: string }", "required": true },
+    "onPress": { "type": "function", "required": true, "description": "Dispatches action then dismisses" },
+    "onDismiss": { "type": "function", "required": true }
+  },
+  "tokens": {
+    "card": "glassEffects.glass / radius.lg",
+    "border": "colors.borderGlass",
+    "iconChip": "gradients.primaryGradient",
+    "iconChipRadius": "radius.md",
+    "icon": "sparkles / white",
+    "title": "typography.smallBold / colors.text",
+    "body": "typography.caption / colors.textMuted",
+    "dismissIcon": "close / colors.textDark",
+    "padding": "spacing.md"
+  },
+  "nudgeTypes": ["debt_progress", "debt_category_suggestion", "debt_reclassification", "structured_debt_milestone"],
+  "states": ["default", "pressed"],
+  "rendersNothingWhen": "no debt-related nudges present",
+  "accessibility": {
+    "role": "button",
+    "label": "{title}. {body}",
+    "hint": "Double tap to act on this suggestion",
+    "dismissLabel": "Dismiss suggestion"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "componentName": "RegisterOAuthButton",
+  "description": "A glass SSO button (Google or Apple) for the register screen. Google shows a Skeleton label while its auth request initializes instead of an opacity-dimmed 'broken' look.",
+  "platform": "react-native",
+  "props": {
+    "provider": { "type": "string", "required": true, "description": "'google' | 'apple'" },
+    "onPress": { "type": "function", "required": true, "description": "promptGoogleAsync | handleAppleSignIn" },
+    "loading": { "type": "boolean", "default": false, "description": "Google only: true while !googleRequest — renders Skeleton label" },
+    "disabled": { "type": "boolean", "default": false, "description": "True while submitting or (google) while loading" }
+  },
+  "variants": ["google", "apple"],
+  "states": ["default", "loading", "disabled"],
+  "platformGating": "Apple button renders only when Platform.OS === 'ios'",
+  "tokens": {
+    "surface": "glassEffects.glass",
+    "border": "colors.borderGlass",
+    "radius": "radius.md",
+    "paddingVertical": "spacing.md",
+    "gap": "spacing.sm",
+    "rowGap": "spacing.md",
+    "icon": "logo-google | logo-apple",
+    "iconColor": "colors.text",
+    "textType": "typography.smallBold",
+    "textColor": "colors.text",
+    "loadingLabel": "Skeleton width 60 height 14 (components/Skeleton.tsx)"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "Sign up with Google | Sign up with Apple",
+    "touchTarget": 44,
+    "loadingHint": "Announces 'loading' rather than appearing dead when the request is not ready."
+  }
+}

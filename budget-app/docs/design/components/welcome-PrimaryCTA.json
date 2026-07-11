@@ -1,0 +1,32 @@
+{
+  "componentName": "WelcomePrimaryCTA",
+  "description": "The primary action on the welcome screen: 'Create an account'. Gradient-filled button matching the auth-screen (register) primary button language, tokenized. Navigates to the register screen. Replaces the old flat #7c3aed button.",
+  "platform": "react-native",
+  "designSystem": {
+    "surface": "LinearGradient with gradients.primaryGradient ([colors.primary, colors.primary2]), start {x:0,y:0} end {x:1,y:1}",
+    "wrapper": "TouchableOpacity, overflow hidden",
+    "radius": "radius.lg",
+    "height": 52,
+    "width": "full",
+    "label": { "typography": "typography.button", "color": "colors.text" },
+    "trailingIcon": { "name": "arrow-forward", "color": "colors.text", "gap": "spacing.xs" }
+  },
+  "props": {
+    "label": { "type": "string", "default": "Create an account" },
+    "onPress": { "type": "function", "required": true, "description": "router.replace('/register') — preserved from original" },
+    "loading": { "type": "boolean", "default": false, "description": "In-flight navigation; dims to opacity 0.6 and blocks re-tap" }
+  },
+  "states": ["default", "pressed", "disabled"],
+  "stateTreatments": {
+    "pressed": "activeOpacity scale/opacity via animation.fast",
+    "disabled": "opacity 0.6, block re-tap while navigation in flight (mirrors register 'submitting')"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "Create an account",
+    "hint": "Opens sign-up",
+    "touchTarget": "52pt tall × full width (≥44)",
+    "colorIndependence": "distinguished from secondary by gradient fill + arrow icon + position, not color alone",
+    "reducedMotion": "press-scale becomes instant opacity swap"
+  }
+}

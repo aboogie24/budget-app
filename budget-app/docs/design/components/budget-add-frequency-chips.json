@@ -1,0 +1,35 @@
+{
+  "componentName": "BudgetFrequencyChips",
+  "description": "Wrapping row of selectable chips for budget frequency. Same visual language as add-transaction FrequencyChips, with the extra '1st & 15th' option and no due-day reveal.",
+  "platform": "react-native",
+  "props": {
+    "value": { "type": "'one-time' | 'weekly' | 'biweekly' | 'monthly' | '1st-15th'", "required": true },
+    "onChange": { "type": "function", "required": true, "description": "(next) => void — also updates the AmountHero frequency echo" }
+  },
+  "variants": ["default"],
+  "states": ["default", "selected", "pressed"],
+  "layout": {
+    "row": { "direction": "row", "flexWrap": "wrap", "gap": "spacing.sm" },
+    "chip": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "paddingVertical": "spacing.sm", "paddingHorizontal": "spacing.md", "minHeight": 44 }
+  },
+  "tokens": {
+    "label": { "type": "typography.small", "color": "colors.text" },
+    "selected": { "fill": "colors.primary2 @18%", "border": "colors.primary2 @70%", "text": "colors.text", "weight": 700 }
+  },
+  "options": [
+    { "value": "one-time", "label": "One-time" },
+    { "value": "weekly", "label": "Weekly" },
+    { "value": "biweekly", "label": "Biweekly" },
+    { "value": "monthly", "label": "Monthly" },
+    { "value": "1st-15th", "label": "1st & 15th" }
+  ],
+  "default": "monthly",
+  "behavior": "Five chips wrap to two rows on a 390pt screen (flexWrap). Selecting a value updates the AmountHero frequency-echo caption ('per month', 'every 2 weeks', etc.). Unlike add-transaction, no chip reveals an extra field (there is no due-day here). Display labels are friendlier than raw values ('1st & 15th' for '1st-15th').",
+  "accessibility": {
+    "role": "radiogroup",
+    "chipRole": "radio",
+    "state": "accessibilityState={{ checked }}",
+    "minTarget": "44pt (padded)",
+    "colorIndependent": "Selection conveyed by checked state + weight, not tint alone"
+  }
+}

@@ -20,6 +20,17 @@ import { getCurrentUser } from '@/utils/storage';
 import CategoryPicker from '@/components/CategoryPicker';
 import { successHaptic } from '@/utils/haptics';
 import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  gradients,
+  commonStyles,
+} from '@/utils/design-system';
 
 type Transaction = {
   id: string;
@@ -34,24 +45,71 @@ type Transaction = {
   source?: string;
 };
 
-// Map confidence levels to visual styles
-function getConfidenceBadge(confidence?: string) {
+/** 12% semantic tint suffix — the one documented "magic" value (see spec §9). */
+const TINT = '1f';
+
+type ConfidenceBadge = {
+  label: string;
+  color: string;
+  bg: string;
+  icon: keyof typeof Ionicons.glyphMap;
+};
+
+/**
+ * Map confidence levels to an icon + word + tint triple so the review status
+ * reads without relying on color alone (spec §6.2).
+ */
+function getConfidenceBadge(confidence?: string): ConfidenceBadge {
   switch (confidence) {
     case 'exact':
+      return {
+        label: 'Exact',
+        color: colors.success,
+        bg: `${colors.success}${TINT}`,
+        icon: 'checkmark-circle',
+      };
     case 'high':
-      return { label: confidence === 'exact' ? 'Exact' : 'High', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' };
+      return {
+        label: 'High',
+        color: colors.success,
+        bg: `${colors.success}${TINT}`,
+        icon: 'checkmark-circle-outline',
+      };
     case 'ai':
-      return { label: 'AI', color: '#c084fc', bg: 'rgba(168,85,247,0.15)' };
+      return {
+        label: 'AI',
+        color: colors.primary2,
+        bg: `${colors.primary2}${TINT}`,
+        icon: 'sparkles',
+      };
     case 'medium':
-      return { label: 'Medium', color: '#eab308', bg: 'rgba(234,179,8,0.15)' };
+      return {
+        label: 'Medium',
+        color: colors.warning,
+        bg: `${colors.warning}${TINT}`,
+        icon: 'remove-circle-outline',
+      };
     case 'low':
-      return { label: 'Low', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
+      return {
+        label: 'Low',
+        color: colors.error,
+        bg: `${colors.error}${TINT}`,
+        icon: 'alert-circle-outline',
+      };
     default:
-      return { label: 'Unknown', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)' };
+      return {
+        label: 'Needs review',
+        color: colors.textMuted,
+        bg: colors.glassLight,
+        icon: 'help-circle-outline',
+      };
   }
 }
 
-// Determine an icon based on category name heuristic
+/**
+ * Determine an outline icon based on a category name heuristic. Outline glyphs
+ * signal "not yet verified / ghosted" (spec §6.3).
+ */
 function getCategoryIcon(categoryName?: string): keyof typeof Ionicons.glyphMap {
   if (!categoryName) return 'pricetag-outline';
   const lower = categoryName.toLowerCase();
@@ -68,7 +126,9 @@ function getCategoryIcon(categoryName?: string): keyof typeof Ionicons.glyphMap 
   return 'pricetag-outline';
 }
 
-// Swipeable row component
+const SWIPE_THRESHOLD = 80;
+
+/** Swipeable row — right-swipe reveals a success "Confirm" background (spec §6.4). */
 function SwipeableRow({
   children,
   onSwipeRight,
@@ -88,7 +148,7 @@ function SwipeableRow({
         }
       },
       onPanResponderRelease: (_, gesture) => {
-        if (gesture.dx > 80) {
+        if (gesture.dx > SWIPE_THRESHOLD) {
           Animated.timing(translateX, {
             toValue: 400,
             duration: 250,
@@ -103,46 +163,22 @@ function SwipeableRow({
           }).start();
         }
       },
-    })
+    }),
   ).current;
 
   return (
-    <View style={{ position: 'relative', overflow: 'hidden', borderRadius: 14, marginBottom: 8 }}>
+    <View style={styles.swipeWrap}>
       {/* Background revealed on swipe */}
-      <View style={swipeStyles.swipeBg}>
-        <Ionicons name="checkmark-circle" size={28} color="#fff" />
-        <Text style={swipeStyles.swipeText}>Confirm</Text>
+      <View style={styles.swipeBg}>
+        <Ionicons name="checkmark-circle" size={22} color={colors.text} />
+        <Text style={styles.swipeText}>Confirm</Text>
       </View>
-      <Animated.View
-        style={{ transform: [{ translateX }] }}
-        {...panResponder.panHandlers}
-      >
+      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
         {children}
       </Animated.View>
     </View>
   );
 }
-
-const swipeStyles = StyleSheet.create({
-  swipeBg: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#22c55e',
-    borderRadius: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingLeft: 20,
-    gap: 8,
-  },
-  swipeText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-});
 
 export default function TransactionReviewScreen() {
   const router = useRouter();
@@ -150,6 +186,8 @@ export default function TransactionReviewScreen() {
   const params = useLocalSearchParams<{ category_id?: string; category_name?: string }>();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [error, setError] = useState(false);
   const [confirming, setConfirming] = useState<Set<string>>(new Set());
   const [confirmingAll, setConfirmingAll] = useState(false);
   const [aiCategorizing, setAiCategorizing] = useState(false);
@@ -157,16 +195,28 @@ export default function TransactionReviewScreen() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
 
-  const unverifiedTransactions = transactions.filter(
-    (t) =>
-      !t.user_verified &&
-      t.match_confidence !== 'exact' &&
-      (!params.category_id || t.category_id === params.category_id)
+  // In-scope set = matches the category filter (when present). Used for the
+  // hero's progress math (total / done / left) per spec §10.
+  const scopedTransactions = transactions.filter(
+    (t) => !params.category_id || t.category_id === params.category_id,
   );
+
+  const unverifiedTransactions = scopedTransactions.filter(
+    (t) => !t.user_verified && t.match_confidence !== 'exact',
+  );
+
+  const totalInScope = scopedTransactions.length;
+  const leftCount = unverifiedTransactions.length;
+  const doneCount = Math.max(0, totalInScope - leftCount);
+  const progress = totalInScope > 0 ? doneCount / totalInScope : 0;
 
   const load = useCallback(async () => {
     const user = await getCurrentUser();
-    if (!user?.id) return;
+    if (!user?.id) {
+      setLoading(false);
+      setLoadedOnce(true);
+      return;
+    }
     setUserId(user.id);
     try {
       const data = await api.get<Transaction[]>('/auth/transactions', { user_id: user.id });
@@ -175,19 +225,22 @@ export default function TransactionReviewScreen() {
         list.map((t: any) => ({
           ...t,
           category_name: t.category_name ?? t.category ?? t.categoryName,
-        }))
+        })),
       );
+      setError(false);
     } catch (e) {
       console.error('Failed to load transactions:', e);
+      setError(true);
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
     }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load])
+    }, [load]),
   );
 
   const confirmTransaction = async (txId: string) => {
@@ -196,7 +249,7 @@ export default function TransactionReviewScreen() {
       await api.patch(`/auth/transactions/${txId}/verify`, { user_id: userId });
       successHaptic();
       setTransactions((prev) =>
-        prev.map((t) => (t.id === txId ? { ...t, user_verified: true } : t))
+        prev.map((t) => (t.id === txId ? { ...t, user_verified: true } : t)),
       );
     } catch (e) {
       console.error('Failed to confirm transaction:', e);
@@ -214,16 +267,13 @@ export default function TransactionReviewScreen() {
     setConfirmingAll(true);
     try {
       const promises = unverifiedTransactions.map((t) =>
-        api.patch(`/auth/transactions/${t.id}/verify`, { user_id: userId })
+        api.patch(`/auth/transactions/${t.id}/verify`, { user_id: userId }),
       );
       await Promise.all(promises);
       successHaptic();
+      const ids = new Set(unverifiedTransactions.map((t) => t.id));
       setTransactions((prev) =>
-        prev.map((t) =>
-          !t.user_verified && t.match_confidence !== 'exact'
-            ? { ...t, user_verified: true }
-            : t
-        )
+        prev.map((t) => (ids.has(t.id) ? { ...t, user_verified: true } : t)),
       );
     } catch (e) {
       console.error('Failed to confirm all:', e);
@@ -275,14 +325,14 @@ export default function TransactionReviewScreen() {
       // same merchant — all server-side.
       const res = await api.patch<{ retroactive_count?: number }>(
         `/auth/transactions/${txId}/category`,
-        { user_id: userId, category_id: category.id }
+        { user_id: userId, category_id: category.id },
       );
       successHaptic();
       const extra = res?.retroactive_count ?? 0;
       if (extra > 0) {
         Alert.alert(
           'Categorized',
-          `Also auto-categorized ${extra} more ${extra === 1 ? 'transaction' : 'transactions'} from this merchant.`
+          `Also auto-categorized ${extra} more ${extra === 1 ? 'transaction' : 'transactions'} from this merchant.`,
         );
       }
       // Refetch so the edited + retroactively-verified transactions drop off
@@ -294,7 +344,7 @@ export default function TransactionReviewScreen() {
     }
   };
 
-  // Group transactions by date
+  // Group unverified transactions by date, newest first.
   const groupedByDate = unverifiedTransactions.reduce<Record<string, Transaction[]>>(
     (acc, tx) => {
       const dateKey = new Date(tx.date).toLocaleDateString('en-US', {
@@ -306,169 +356,334 @@ export default function TransactionReviewScreen() {
       acc[dateKey].push(tx);
       return acc;
     },
-    {}
+    {},
   );
 
   const sections = Object.entries(groupedByDate).sort(
-    ([, a], [, b]) => new Date(b[0].date).getTime() - new Date(a[0].date).getTime()
+    ([, a], [, b]) => new Date(b[0].date).getTime() - new Date(a[0].date).getTime(),
   );
 
   const formatCurrency = (v: number) =>
     v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-  if (loading) {
-    return (
-      <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
-        <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#a855f7" />
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
+  const headerTitle = params.category_name
+    ? `Review · ${params.category_name}`
+    : 'Review transactions';
 
-  return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1 }}>
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <BackButton
-            size={20}
-            onPress={() =>
-              params.category_id ? router.back() : router.replace('/(tabs)/goals')
-            }
-          />
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={styles.headerTitle}>
-              {params.category_name ? `Review · ${params.category_name}` : 'Review Transactions'}
-            </Text>
-            {unverifiedTransactions.length > 0 && (
-              <View style={styles.countBadge}>
-                <Text style={styles.countBadgeText}>{unverifiedTransactions.length}</Text>
-              </View>
+  const backTarget = () =>
+    params.category_id ? router.back() : router.replace('/(tabs)/goals');
+
+  const showSkeleton = loading && !loadedOnce;
+
+  // ── Header (fixed, outside scroll) ──
+  const renderHeader = () => (
+    <View style={styles.headerRow}>
+      <BackButton size={20} onPress={backTarget} />
+      <Text style={styles.headerTitle} numberOfLines={1}>
+        {headerTitle}
+      </Text>
+      <View style={styles.headerRight}>
+        {loading && loadedOnce && <ActivityIndicator color={colors.primary2} size="small" />}
+      </View>
+    </View>
+  );
+
+  // ── Review Queue hero (glass floating) ──
+  const renderHero = () => (
+    <View
+      style={styles.hero}
+      accessible
+      accessibilityLabel={`${leftCount} transactions to review, ${doneCount} of ${totalInScope} done.`}
+    >
+      <View style={commonStyles.flexBetween}>
+        <View style={styles.eyebrowRow}>
+          <Ionicons name="checkmark-done-outline" size={14} color={colors.textMuted} />
+          <Text style={styles.eyebrow} numberOfLines={1}>
+            {params.category_name ? `Review · ${params.category_name}` : 'Needs your review'}
+          </Text>
+        </View>
+        <Text style={styles.progressLabel}>
+          {doneCount} of {totalInScope} done
+        </Text>
+      </View>
+
+      <View style={styles.heroBlock}>
+        <Text style={styles.heroNumber}>{leftCount}</Text>
+        <Text style={styles.heroCaption}>
+          {leftCount === 1 ? 'transaction to review' : 'transactions to review'}
+        </Text>
+      </View>
+
+      {/* Thin progress bar */}
+      <View style={styles.progressTrack}>
+        <LinearGradient
+          colors={gradients.primaryGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={[styles.progressFill, { width: `${Math.round(progress * 100)}%` }]}
+        />
+      </View>
+
+      {/* Bulk actions */}
+      <View style={styles.bulkRow}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={confirmAll}
+          disabled={confirmingAll || leftCount === 0}
+          style={[styles.confirmAllWrap, (confirmingAll || leftCount === 0) && styles.disabled]}
+          accessibilityRole="button"
+          accessibilityLabel={`Confirm all ${leftCount}`}
+        >
+          <LinearGradient
+            colors={gradients.primaryGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.confirmAllBtn}
+          >
+            {confirmingAll ? (
+              <>
+                <ActivityIndicator size="small" color={colors.text} />
+                <Text style={styles.confirmAllText}>Confirming…</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="checkmark-circle" size={18} color={colors.text} />
+                <Text style={styles.confirmAllText}>Confirm all ({leftCount})</Text>
+              </>
             )}
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <TouchableOpacity
-              onPress={runAICategorize}
-              disabled={aiCategorizing}
-              style={styles.aiCategorizeBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              {aiCategorizing ? (
-                <ActivityIndicator size="small" color="#c084fc" />
-              ) : (
-                <>
-                  <Ionicons name="sparkles" size={12} color="#c084fc" />
-                  <Text style={styles.aiCategorizeText}>AI</Text>
-                </>
-              )}
-            </TouchableOpacity>
-            {unverifiedTransactions.length > 0 ? (
-              <TouchableOpacity
-                onPress={confirmAll}
-                disabled={confirmingAll}
-                style={styles.confirmAllBtn}
+          </LinearGradient>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={runAICategorize}
+          disabled={aiCategorizing}
+          style={[styles.aiBtn, aiCategorizing && styles.disabled]}
+          accessibilityRole="button"
+          accessibilityLabel="AI categorize"
+        >
+          {aiCategorizing ? (
+            <>
+              <ActivityIndicator size="small" color={colors.primary2} />
+              <Text style={styles.aiText}>Categorizing…</Text>
+            </>
+          ) : (
+            <>
+              <Ionicons name="sparkles" size={16} color={colors.primary2} />
+              <Text style={styles.aiText}>AI categorize</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  // ── Transaction review row ──
+  const renderRow = (tx: Transaction) => {
+    const badge = getConfidenceBadge(tx.match_confidence);
+    const isConfirmingThis = confirming.has(tx.id);
+    const isIncome = tx.type === 'income';
+    const hasCategory = !!tx.category_name;
+    const iconColor = isIncome ? colors.success : colors.primary2;
+
+    return (
+      <SwipeableRow key={tx.id} onSwipeRight={() => confirmTransaction(tx.id)}>
+        <View style={[styles.txCard, isConfirmingThis && styles.txCardConfirming]}>
+          <View style={styles.txRow}>
+            {/* Category icon chip (outline = ghosted / unverified) */}
+            <View style={[styles.txIconChip, { backgroundColor: `${iconColor}${TINT}` }]}>
+              <Ionicons
+                name={isIncome ? 'cash-outline' : getCategoryIcon(tx.category_name)}
+                size={20}
+                color={iconColor}
+              />
+            </View>
+
+            {/* Center: merchant + category link + confidence chip */}
+            <View style={styles.txCenter}>
+              <Text
+                style={[styles.txMerchant, !tx.note && styles.txMerchantMuted]}
+                numberOfLines={1}
               >
-                {confirmingAll ? (
-                  <ActivityIndicator size="small" color="#22c55e" />
+                {tx.note || 'Unknown merchant'}
+              </Text>
+              <View style={styles.subRow}>
+                <TouchableOpacity
+                  onPress={() => openCategoryPicker(tx)}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                  style={styles.categoryLinkWrap}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Category ${tx.category_name || 'Uncategorized'}, tap to change`}
+                >
+                  <Text
+                    style={[styles.txCategory, !hasCategory && styles.txCategoryUncat]}
+                    numberOfLines={1}
+                  >
+                    {tx.category_name || 'Uncategorized'} ›
+                  </Text>
+                </TouchableOpacity>
+                <View style={[styles.confidenceChip, { backgroundColor: badge.bg }]}>
+                  <Ionicons name={badge.icon} size={12} color={badge.color} />
+                  <Text style={[styles.confidenceText, { color: badge.color }]}>{badge.label}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Right: amount + confirm button */}
+            <View style={styles.txRight}>
+              <Text
+                style={[styles.txAmount, { color: isIncome ? colors.success : colors.error }]}
+                numberOfLines={1}
+              >
+                {isIncome ? '+' : '−'}
+                {formatCurrency(tx.amount)}
+              </Text>
+              <TouchableOpacity
+                onPress={() => confirmTransaction(tx.id)}
+                disabled={isConfirmingThis}
+                style={styles.confirmBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm transaction"
+              >
+                {isConfirmingThis ? (
+                  <ActivityIndicator size="small" color={colors.success} />
                 ) : (
-                  <Text style={styles.confirmAllText}>Confirm All</Text>
+                  <Ionicons name="checkmark-circle-outline" size={24} color={colors.success} />
                 )}
               </TouchableOpacity>
-            ) : null}
+            </View>
           </View>
         </View>
+      </SwipeableRow>
+    );
+  };
 
-        {unverifiedTransactions.length === 0 ? (
-          /* Empty state */
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconCircle}>
-              <Ionicons name="checkmark-done-outline" size={48} color="#22c55e" />
+  // ── Loading skeleton ──
+  const renderSkeleton = () => (
+    <View style={styles.scrollPad}>
+      <View style={styles.hero}>
+        <View style={commonStyles.flexBetween}>
+          <Skeleton width={110} height={14} borderRadius={radius.sm} />
+          <Skeleton width={70} height={14} borderRadius={radius.sm} />
+        </View>
+        <Skeleton width={90} height={34} borderRadius={radius.sm} style={{ marginTop: spacing.md }} />
+        <Skeleton width={160} height={14} borderRadius={radius.sm} style={{ marginTop: spacing.sm }} />
+        <Skeleton height={8} borderRadius={radius.full} style={{ marginTop: spacing.md }} />
+        <View style={[styles.bulkRow, { marginTop: spacing.md }]}>
+          <Skeleton height={44} borderRadius={radius.md} style={{ flex: 1 }} />
+          <Skeleton height={44} borderRadius={radius.md} style={{ flex: 1 }} />
+        </View>
+      </View>
+
+      <Skeleton width={90} height={12} borderRadius={radius.sm} style={{ marginTop: spacing.xl, marginBottom: spacing.sm, marginLeft: spacing.xs }} />
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={[styles.txCard, { marginBottom: spacing.sm }]}>
+          <View style={styles.txRow}>
+            <Skeleton width={40} height={40} borderRadius={radius.md} />
+            <View style={styles.txCenter}>
+              <Skeleton width="70%" height={15} borderRadius={radius.sm} />
+              <Skeleton width="45%" height={12} borderRadius={radius.sm} style={{ marginTop: spacing.sm }} />
             </View>
-            <Text style={styles.emptyTitle}>All caught up!</Text>
-            <Text style={styles.emptySubtitle}>
-              Every transaction has been reviewed and verified.
-            </Text>
-            <TouchableOpacity
-              style={styles.emptyBtn}
-              onPress={() => router.navigate('/(tabs)/goals' as any)}
-            >
-              <Text style={styles.emptyBtnText}>Back to Dashboard</Text>
-            </TouchableOpacity>
+            <Skeleton width={70} height={15} borderRadius={radius.sm} />
           </View>
+        </View>
+      ))}
+    </View>
+  );
+
+  // ── Empty (all caught up) ──
+  const renderEmpty = () => {
+    const filtered = !!params.category_id;
+    return (
+      <View style={styles.centeredContainer}>
+        <View style={styles.emptyIconCircle}>
+          <Ionicons name="checkmark-done-outline" size={44} color={colors.success} />
+        </View>
+        <Text style={styles.emptyTitle}>
+          {filtered ? `${params.category_name || 'This category'} is all reviewed` : 'All caught up!'}
+        </Text>
+        <Text style={styles.emptyBody}>
+          Every transaction has been reviewed and verified.
+        </Text>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => (filtered ? router.back() : router.replace('/(tabs)/goals'))}
+          style={styles.ctaWrap}
+          accessibilityRole="button"
+        >
+          <LinearGradient
+            colors={gradients.primaryGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.cta}
+          >
+            <Text style={styles.ctaText}>{filtered ? 'Back' : 'Back to dashboard'}</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // ── Error (inline glass card) ──
+  const renderError = () => (
+    <View style={styles.scrollPad}>
+      <View style={styles.errorCard}>
+        <View style={styles.errorIconCircle}>
+          <Ionicons name="alert-circle-outline" size={36} color={colors.error} />
+        </View>
+        <Text style={styles.emptyTitle}>Couldn&apos;t load your queue</Text>
+        <Text style={styles.emptyBody}>
+          We couldn&apos;t reach your transactions. Check your connection and try again.
+        </Text>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => {
+            setLoading(true);
+            setLoadedOnce(false);
+            load();
+          }}
+          style={styles.ctaWrap}
+          accessibilityRole="button"
+        >
+          <LinearGradient
+            colors={gradients.primaryGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.cta}
+          >
+            <Ionicons name="refresh-outline" size={16} color={colors.text} />
+            <Text style={styles.ctaText}>Try again</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  return (
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }}>
+        {renderHeader()}
+
+        {showSkeleton ? (
+          renderSkeleton()
+        ) : error ? (
+          renderError()
+        ) : leftCount === 0 ? (
+          renderEmpty()
         ) : (
           <FlatList
             data={sections}
             keyExtractor={([dateKey]) => dateKey}
-            contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+            contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
+            ListHeaderComponent={
+              <View style={{ marginBottom: spacing.xl }}>{renderHero()}</View>
+            }
             renderItem={({ item: [dateKey, txs] }) => (
-              <View style={{ marginBottom: 16 }}>
+              <View style={{ marginBottom: spacing.lg }}>
                 <Text style={styles.dateHeader}>{dateKey}</Text>
-                {txs.map((tx) => {
-                  const badge = getConfidenceBadge(tx.match_confidence);
-                  const isConfirmingThis = confirming.has(tx.id);
-
-                  return (
-                    <SwipeableRow key={tx.id} onSwipeRight={() => confirmTransaction(tx.id)}>
-                      <View style={styles.txCard}>
-                        <View style={styles.txRow}>
-                          {/* Category icon */}
-                          <View style={[styles.txIconCircle, { backgroundColor: 'rgba(168,85,247,0.15)' }]}>
-                            <Ionicons
-                              name={getCategoryIcon(tx.category_name)}
-                              size={18}
-                              color="#a855f7"
-                            />
-                          </View>
-
-                          {/* Center: merchant + category + confidence */}
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.txMerchant} numberOfLines={1}>
-                              {tx.note || 'Unknown Merchant'}
-                            </Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                              <TouchableOpacity onPress={() => openCategoryPicker(tx)}>
-                                <Text style={styles.txCategory}>
-                                  {tx.category_name || 'Uncategorized'}
-                                </Text>
-                              </TouchableOpacity>
-                              <View style={[styles.confidenceBadge, { backgroundColor: badge.bg }]}>
-                                <Text style={[styles.confidenceText, { color: badge.color }]}>
-                                  {badge.label}
-                                </Text>
-                              </View>
-                            </View>
-                          </View>
-
-                          {/* Right: amount + confirm button */}
-                          <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                            <Text
-                              style={[
-                                styles.txAmount,
-                                tx.type === 'income' ? styles.income : styles.expense,
-                              ]}
-                            >
-                              {tx.type === 'income' ? '+' : '-'}
-                              {formatCurrency(tx.amount)}
-                            </Text>
-                            <TouchableOpacity
-                              onPress={() => confirmTransaction(tx.id)}
-                              disabled={isConfirmingThis}
-                              style={styles.confirmBtn}
-                            >
-                              {isConfirmingThis ? (
-                                <ActivityIndicator size="small" color="#22c55e" />
-                              ) : (
-                                <Ionicons name="checkmark-circle-outline" size={24} color="#22c55e" />
-                              )}
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      </View>
-                    </SwipeableRow>
-                  );
-                })}
+                {txs.map((tx) => renderRow(tx))}
               </View>
             )}
           />
@@ -485,175 +700,304 @@ export default function TransactionReviewScreen() {
           userId={userId}
         />
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  // ── Header ──
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: spacing.md,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#f8fafc',
-  },
-  countBadge: {
-    backgroundColor: '#7c3aed',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    minWidth: 24,
-    alignItems: 'center',
-  },
-  countBadgeText: {
-    color: '#fff',
-    fontSize: 12,
+    flex: 1,
+    color: colors.text,
+    ...typography.h3,
     fontWeight: '800',
   },
-  confirmAllBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(34,197,94,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.3)',
+  headerRight: {
+    minWidth: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
-  confirmAllText: {
-    color: '#22c55e',
-    fontSize: 13,
-    fontWeight: '700',
+
+  // ── Scroll / list ──
+  listContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xxxl,
   },
-  aiCategorizeBtn: {
+  scrollPad: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+  },
+
+  // ── Hero ──
+  hero: {
+    ...glassEffects.glassFloating,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+  },
+  eyebrowRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(192,132,252,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(192,132,252,0.3)',
+    gap: spacing.xs,
+    flexShrink: 1,
   },
-  aiCategorizeText: {
-    color: '#c084fc',
-    fontSize: 12,
+  eyebrow: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  progressLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  heroBlock: {
+    marginTop: spacing.md,
+  },
+  heroNumber: {
+    ...typography.h2,
+    color: colors.text,
     fontWeight: '800',
   },
-  dateHeader: {
-    color: '#94a3b8',
-    fontSize: 13,
+  heroCaption: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  progressTrack: {
+    height: spacing.sm,
+    borderRadius: radius.full,
+    backgroundColor: colors.glassLight,
+    overflow: 'hidden',
+    marginTop: spacing.md,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: radius.full,
+  },
+  bulkRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  confirmAllWrap: {
+    flex: 1,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  confirmAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+  },
+  confirmAllText: {
+    ...typography.button,
+    color: colors.text,
     fontWeight: '700',
-    marginBottom: 8,
-    marginLeft: 4,
+  },
+  aiBtn: {
+    flex: 1,
+    ...glassEffects.glass,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+  },
+  aiText: {
+    ...typography.smallBold,
+    color: colors.primary2,
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+
+  // ── Date group label ──
+  dateHeader: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+    marginLeft: spacing.xs,
   },
+
+  // ── Swipe row ──
+  swipeWrap: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: radius.lg,
+    marginBottom: spacing.sm,
+  },
+  swipeBg: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.success,
+    borderRadius: radius.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: spacing.xl,
+    gap: spacing.sm,
+  },
+  swipeText: {
+    color: colors.text,
+    ...typography.smallBold,
+    fontWeight: '700',
+  },
+
+  // ── Transaction row ──
   txCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+  },
+  txCardConfirming: {
+    opacity: 0.6,
   },
   txRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: spacing.md,
   },
-  txIconCircle: {
+  txIconChip: {
     width: 40,
     height: 40,
-    borderRadius: 12,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  txCenter: {
+    flex: 1,
+  },
   txMerchant: {
-    color: '#f8fafc',
-    fontSize: 15,
-    fontWeight: '700',
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  txMerchantMuted: {
+    color: colors.textMuted,
+  },
+  subRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  categoryLinkWrap: {
+    flexShrink: 1,
   },
   txCategory: {
-    color: '#a78bfa',
-    fontSize: 13,
-    fontWeight: '500',
-    textDecorationLine: 'underline',
+    ...typography.small,
+    color: colors.primary2,
+    fontWeight: '600',
   },
-  confidenceBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+  txCategoryUncat: {
+    color: colors.warning,
+  },
+  confidenceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    flexShrink: 0,
   },
   confidenceText: {
-    fontSize: 11,
+    ...typography.caption,
     fontWeight: '700',
   },
+  txRight: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+    flexShrink: 0,
+  },
   txAmount: {
-    fontSize: 15,
+    ...typography.bodyBold,
     fontWeight: '800',
   },
-  income: {
-    color: '#4ade80',
-  },
-  expense: {
-    color: '#f87171',
-  },
   confirmBtn: {
-    padding: 2,
+    minWidth: 24,
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  emptyContainer: {
+
+  // ── Empty state ──
+  centeredContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    gap: 12,
+    paddingHorizontal: spacing.xxl,
   },
   emptyIconCircle: {
     width: 80,
     height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderRadius: radius.full,
+    backgroundColor: `${colors.success}${TINT}`,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: spacing.lg,
   },
   emptyTitle: {
-    color: '#f8fafc',
-    fontSize: 22,
+    ...typography.h3,
+    color: colors.text,
     fontWeight: '800',
-  },
-  emptySubtitle: {
-    color: '#94a3b8',
-    fontSize: 15,
     textAlign: 'center',
-    lineHeight: 22,
   },
-  emptyBtn: {
-    marginTop: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(168,85,247,0.15)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.3)',
+  emptyBody: {
+    ...typography.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.sm,
   },
-  emptyBtnText: {
-    color: '#a855f7',
+
+  // ── Error state ──
+  errorCard: {
+    ...glassEffects.glass,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    alignItems: 'center',
+    marginTop: spacing.lg,
+  },
+  errorIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.full,
+    backgroundColor: `${colors.error}${TINT}`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+
+  // ── CTA button (shared by empty + error) ──
+  ctaWrap: {
+    marginTop: spacing.xl,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  cta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    minHeight: 44,
+    paddingHorizontal: spacing.xl,
+  },
+  ctaText: {
+    ...typography.button,
+    color: colors.text,
     fontWeight: '700',
-    fontSize: 15,
   },
 });

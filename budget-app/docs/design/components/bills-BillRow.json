@@ -1,0 +1,85 @@
+{
+  "componentName": "BillRow",
+  "description": "A single bill in the Bills list. Renders in one of two visual modes driven by a single predicate: PAID (solid card, actual money already gone) or UNPAID/OVERDUE (dashed, ghosted card — a projection that hasn't left the account yet). Mirrors CalendarEventRow so the two screens read identically.",
+  "platform": "react-native",
+  "predicate": "isPaid = status === 'paid'; isOverdue = status === 'overdue'",
+  "props": {
+    "id": { "type": "string", "required": true },
+    "name": { "type": "string", "required": true },
+    "amount": { "type": "number", "required": true, "description": "amount_due" },
+    "status": { "type": "'paid' | 'unpaid' | 'overdue'", "required": true, "description": "derived via getBillStatus()" },
+    "dueDay": { "type": "number", "required": true },
+    "category": { "type": "string", "required": false, "description": "category_name or resolved from category_id" },
+    "payee": { "type": "string", "required": false },
+    "owner": { "type": "'You' | 'Partner' | 'Joint'", "required": false, "description": "maps to A/B/shared token" },
+    "isAutoPay": { "type": "boolean", "default": false },
+    "hasDebtLink": { "type": "boolean", "default": false, "description": "debt_account_id present" },
+    "onPress": { "type": "function", "required": false, "description": "opens edit modal" },
+    "onMarkPaid": { "type": "function", "required": false },
+    "onDelete": { "type": "function", "required": true }
+  },
+  "variants": {
+    "paid": {
+      "appliesTo": "status === 'paid' (actual money)",
+      "card": "glassEffects.glass (solid)",
+      "border": "colors.borderGlass (solid)",
+      "nameOpacity": 1.0,
+      "amountPrefix": "none (exact)",
+      "amountColor": "colors.accent",
+      "statusChip": "checkmark + PAID, colors.success @12%",
+      "actions": ["delete"]
+    },
+    "unpaid": {
+      "appliesTo": "status === 'unpaid' (projection)",
+      "card": "ghosted glass, borderStyle 'dashed', colors.borderGlass, near-transparent fill",
+      "nameOpacity": 0.85,
+      "amountPrefix": "~ (estimate)",
+      "amountColor": "colors.warning",
+      "statusChip": "time-outline + DUE, colors.warning @12%",
+      "actions": ["markPaid", "delete"]
+    },
+    "overdue": {
+      "appliesTo": "status === 'overdue' (late projection)",
+      "card": "ghosted glass, borderStyle 'dashed'",
+      "nameOpacity": 0.85,
+      "amountPrefix": "~ (estimate)",
+      "amountColor": "colors.error",
+      "statusChip": "warning-outline + OVERDUE, colors.error @12%",
+      "actions": ["markPaid", "delete"]
+    }
+  },
+  "chips": {
+    "AUTO": { "color": "colors.info", "bg": "rgba(59,130,246,0.12)", "icon": "flash", "show": "isAutoPay" },
+    "DEBT": { "color": "colors.primary2", "bg": "rgba(168,85,247,0.12)", "icon": "link", "show": "hasDebtLink" }
+  },
+  "ownerGlyph": {
+    "You": { "color": "colors.primary2" },
+    "Partner": { "color": "colors.info" },
+    "Joint": { "color": "colors.textMuted" },
+    "placement": "leading dot before the name",
+    "note": "Matches RecentActivity partner convention. Never recolor the amount by owner."
+  },
+  "layout": {
+    "minHeight": 72,
+    "padding": { "horizontal": "spacing.md", "vertical": "spacing.md" },
+    "borderRadius": "radius.lg",
+    "gap": "spacing.md",
+    "amountFlexShrink": 0,
+    "nameNumberOfLines": 1
+  },
+  "typography": {
+    "name": "typography.bodyBold",
+    "amount": "typography.bodyBold",
+    "subtitle": "typography.caption (colors.textMuted)",
+    "statusChip": "typography.caption bold"
+  },
+  "states": ["paid", "unpaid", "overdue", "pressed", "loading-skeleton"],
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {paid | upcoming bill | overdue}, {amount}{, autopay}{, linked to debt}, due {ordinal}",
+    "hint": "Double tap to edit",
+    "actionButtons": ["Mark {name} paid", "Delete {name}"],
+    "note": "Paid vs unpaid conveyed by solid-vs-dashed border + icon + word label, not color alone."
+  },
+  "developerNotes": "Drive ALL styling off isPaid / isOverdue. Reuse getBillStatus(). Status-tint bg is the semantic color at 12% (same recipe as CalendarEventRow.json). The '~' prefix and DUE/OVERDUE words are required for color-independence. Optimistic mark-paid transitions dashed→solid with animation.medium; snap under reduce-motion."
+}

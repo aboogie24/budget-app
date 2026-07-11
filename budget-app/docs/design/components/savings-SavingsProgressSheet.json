@@ -1,0 +1,39 @@
+{
+  "componentName": "SavingsProgressSheet",
+  "description": "Quick fade-in bottom sheet for updating a goal's saved total. Re-skin of the existing progressId Modal — same handleUpdateProgress logic and tap-scrim-to-dismiss. Uses the success gradient because it is a positive-money action.",
+  "platform": "react-native",
+  "props": {
+    "visible": { "type": "boolean", "required": true, "description": "progressId !== null" },
+    "progressAmount": { "type": "string", "required": true },
+    "onChangeAmount": { "type": "function", "required": true, "description": "setProgressAmount" },
+    "onSave": { "type": "function", "required": true, "description": "handleUpdateProgress" },
+    "onDismiss": { "type": "function", "required": true, "description": "setProgressId(null) — via scrim tap" }
+  },
+  "layout": {
+    "presentation": "bottom sheet, Modal animationType 'fade', scrim tap dismisses",
+    "backdrop": "rgba(0,0,0,0.6) scrim (keep)",
+    "sheetSurface": "colors.surface2",
+    "sheetRadius": "radius.xl (top corners)",
+    "sheetPadding": "spacing.xl"
+  },
+  "content": {
+    "title": { "text": "Update Savings", "type": "typography.h3", "color": "colors.text" },
+    "subtitle": { "text": "Enter the new total saved amount", "type": "typography.caption", "color": "colors.textMuted" },
+    "input": { "recipe": "same as SavingsGoalFormSheet input", "keyboardType": "numeric", "placeholder": "Current amount saved", "placeholderColor": "colors.textMuted" },
+    "cta": {
+      "gradient": "gradients.successGradient",
+      "borderRadius": "radius.lg",
+      "paddingVertical": "spacing.lg",
+      "label": "typography.button colors.text",
+      "text": "Save Progress"
+    }
+  },
+  "states": ["default", "validation-error (Alert, unchanged)"],
+  "accessibility": {
+    "role": "dialog",
+    "label": "Update savings amount",
+    "ctaLabel": "Save progress",
+    "note": "Scrim is tap-to-dismiss; ensure the input and CTA are not inside the dismiss touch area."
+  },
+  "developerNotes": "Re-skin only — keep handleUpdateProgress and the activeOpacity scrim dismiss. Swap #1a1a2e → colors.surface2 and the ['#34d399','#059669'] CTA → gradients.successGradient. On save, optimistically bump the source goal's bar (animation.medium; may flip status to Funded) before the refetch; snap under reduce-motion."
+}
