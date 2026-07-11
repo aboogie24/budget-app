@@ -112,8 +112,10 @@ func TestGetCategoriesForUser_ReturnsCategoriesForUser(t *testing.T) {
 		// GetCategoriesForUser query - personal only
 		rows := sqlmock.NewRows([]string{
 			"id", "name", "user_id", "type", "color", "household_id", "budget_id", "limit_amount", "rollover_enabled",
+			"parent_id", "icon", "sort_order",
 		}).AddRow(
 			catID.String(), "Groceries", userID, "expense", "#FF5733", nil, nil, 500.0, false,
+			nil, nil, 0,
 		)
 		mock.ExpectQuery(`FROM categories c`).
 			WithArgs(userID).
@@ -150,8 +152,10 @@ func TestGetCategoriesForUser_WithHousehold(t *testing.T) {
 		// GetCategoriesForUser query with household
 		rows := sqlmock.NewRows([]string{
 			"id", "name", "user_id", "type", "color", "household_id", "budget_id", "limit_amount", "rollover_enabled",
+			"parent_id", "icon", "sort_order",
 		}).AddRow(
 			catID.String(), "Groceries", nil, "expense", "#FF5733", householdID, nil, 500.0, false,
+			nil, nil, 0,
 		)
 		mock.ExpectQuery(`FROM categories c`).
 			WithArgs(householdID).
@@ -182,8 +186,10 @@ func TestGetCategoriesByUserID_Handler(t *testing.T) {
 		// GetCategoriesForUser query
 		rows := sqlmock.NewRows([]string{
 			"id", "name", "user_id", "type", "color", "household_id", "budget_id", "limit_amount", "rollover_enabled",
+			"parent_id", "icon", "sort_order",
 		}).AddRow(
 			catID.String(), "Groceries", userID, "expense", "#FF5733", nil, nil, 500.0, false,
+			nil, nil, 0,
 		)
 		mock.ExpectQuery(`FROM categories c`).
 			WithArgs(userID).
@@ -263,6 +269,11 @@ func TestDeleteCategory_SuccessfulDelete(t *testing.T) {
 	categoryID := uuid.Must(uuid.NewV4())
 
 	withCategoriesMockDB(t, func(mock sqlmock.Sqlmock) {
+		// Child-count guard — no subcategories
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM categories WHERE parent_id`).
+			WithArgs(categoryID).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
 		// DELETE query
 		mock.ExpectExec(`DELETE FROM categories`).
 			WithArgs(categoryID).

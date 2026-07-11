@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
   headerTitle: {
-    ...typography.bodyBold,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
     flex: 1,
     marginLeft: spacing.xs,

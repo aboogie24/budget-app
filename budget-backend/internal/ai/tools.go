@@ -169,6 +169,20 @@ func GetToolDefinitions() []models.ClaudeToolDef {
 			},
 		},
 		{
+			Name:        "assess_savings_goal",
+			Description: "Check whether a savings goal is realistic before creating a plan for it. Given a target amount and target date, returns the required monthly contribution, the couple's free monthly cash flow (surplus minus what active plans already commit), whether it's feasible, and — when it isn't — a realistic later date, a lower target that fits, and how much more per month they'd need to free up. Use this when a couple wants to save for something by a date, then give them a realistic, encouraging read and (if they agree) create the goal and plan.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":           map[string]interface{}{"type": "string", "description": "What they're saving for."},
+					"target_amount":  map[string]interface{}{"type": "number", "description": "The savings target amount."},
+					"current_amount": map[string]interface{}{"type": "number", "description": "How much they already have saved toward it (default 0)."},
+					"target_date":    map[string]interface{}{"type": "string", "description": "The date they want to reach it by, YYYY-MM-DD."},
+				},
+				"required": []string{"target_amount", "target_date"},
+			},
+		},
+		{
 			Name:        "remember_fact",
 			Description: "Save a durable fact about this couple so you remember it in future conversations — their goals in their own words, constraints, preferences, decisions or commitments they've made, or what they've already tried. Use this whenever the user shares something worth remembering long-term. Do NOT use it for transient numbers you can already get from the financial tools. Set scope to 'shared' for couple-level facts both partners should see (shared goals, agreed strategy, household constraints), or 'private' for one person's individual context (personal worries, individual preferences, solo aspirations). When unsure, use 'private' — private facts are never shown to the partner.",
 			InputSchema: map[string]interface{}{
@@ -237,6 +251,8 @@ func ExecuteTool(conn *sql.DB, userID string, householdID string, toolName strin
 		return getPartnerStatus(conn, userID, householdID)
 	case "create_financial_plan":
 		return createFinancialPlanTool(conn, userID, householdID, input)
+	case "assess_savings_goal":
+		return assessSavingsGoalTool(conn, userID, householdID, input)
 	case "remember_fact":
 		return rememberFactTool(conn, userID, householdID, input)
 	case "web_search":

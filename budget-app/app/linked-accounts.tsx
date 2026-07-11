@@ -260,7 +260,7 @@ export default function LinkedAccountsScreen() {
   const handleReAuth = async (accountId: string) => {
     setReAuthLoading(accountId);
     try {
-      const tokenData = await createUpdateLinkToken(accountId);
+      const tokenData: any = await createUpdateLinkToken(accountId);
       const linkToken = tokenData?.link_token;
 
       if (!linkToken) {
@@ -498,7 +498,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   headerTitle: {
-    ...typography.bodyBold,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
     flex: 1,
   },

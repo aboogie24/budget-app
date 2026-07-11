@@ -166,7 +166,7 @@ export default function WelcomeScreen() {
             By continuing you agree to our{' '}
             <Text
               style={styles.consentLink}
-              onPress={() => router.push('/terms')}
+              onPress={() => router.push('/terms' as any)}
               accessibilityRole="link"
             >
               Terms
@@ -174,7 +174,7 @@ export default function WelcomeScreen() {
             &amp;{' '}
             <Text
               style={styles.consentLink}
-              onPress={() => router.push('/privacy')}
+              onPress={() => router.push('/privacy' as any)}
               accessibilityRole="link"
             >
               Privacy

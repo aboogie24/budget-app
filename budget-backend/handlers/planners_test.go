@@ -48,8 +48,8 @@ func TestListDebts_PersonalOnly(t *testing.T) {
 	withMockDB(t, func(mock sqlmock.Sqlmock) {
 
 		// Personal debts query.
-		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "balance", "apr", "min_payment", "due_day", "strategy", "is_shared", "source"}).
-			AddRow("d1", userID, "", "Card", 1200.0, 12.5, 45.0, nil, "snowball", false, "manual")
+		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "balance", "apr", "min_payment", "due_day", "strategy", "is_shared", "source", "debt_category", "liability_type", "asset_depreciates"}).
+			AddRow("d1", userID, "", "Card", 1200.0, 12.5, 45.0, nil, "snowball", false, "manual", "attack", "credit_card", false)
 		mock.ExpectQuery(`FROM debt_accounts`).
 			WithArgs(userID).
 			WillReturnRows(rows)
@@ -172,10 +172,10 @@ func TestListDebts_WithHousehold(t *testing.T) {
 
 	withMockDB(t, func(mock sqlmock.Sqlmock) {
 		// Return debts with household_id populated
-		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "balance", "apr", "min_payment", "due_day", "strategy", "is_shared", "source"}).
-			AddRow("d1", userID, hhID, "Shared Mortgage", 250000.0, 3.5, 1200.0, 1, "avalanche", true, "manual").
-			AddRow("d2", userID, hhID, "Joint Credit Card", 5000.0, 18.9, 150.0, 15, "snowball", true, "manual").
-			AddRow("d3", userID, "", "Personal Loan", 8000.0, 7.5, 200.0, 10, "avalanche", false, "manual")
+		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "balance", "apr", "min_payment", "due_day", "strategy", "is_shared", "source", "debt_category", "liability_type", "asset_depreciates"}).
+			AddRow("d1", userID, hhID, "Shared Mortgage", 250000.0, 3.5, 1200.0, 1, "avalanche", true, "manual", "structural", "mortgage", false).
+			AddRow("d2", userID, hhID, "Joint Credit Card", 5000.0, 18.9, 150.0, 15, "snowball", true, "manual", "attack", "credit_card", false).
+			AddRow("d3", userID, "", "Personal Loan", 8000.0, 7.5, 200.0, 10, "avalanche", false, "manual", "attack", "personal_loan", false)
 		mock.ExpectQuery(`FROM debt_accounts`).
 			WithArgs(userID).
 			WillReturnRows(rows)

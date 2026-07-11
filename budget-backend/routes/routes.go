@@ -205,6 +205,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/ai/conversations/{id}", handlers.DeleteAIConversation).Methods("DELETE")
 
 	// Financial Plans (behind auth)
+	authRoutes.HandleFunc("/plans/savings-feasibility", handlers.AssessSavingsFeasibility).Methods("POST")
 	authRoutes.HandleFunc("/plans", handlers.CreatePlan).Methods("POST")
 	authRoutes.HandleFunc("/plans", handlers.ListPlans).Methods("GET")
 	authRoutes.HandleFunc("/plans/{id}", handlers.GetPlan).Methods("GET")
@@ -215,6 +216,8 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/plans/{id}/approvals", handlers.GetPlanApprovals).Methods("GET")
 
 	// Milestones
+	authRoutes.HandleFunc("/plans/{id}/allocations/{allocId}", handlers.UpdateAllocation).Methods("PATCH")
+	authRoutes.HandleFunc("/plans/{id}/allocations/{allocId}", handlers.DeleteAllocation).Methods("DELETE")
 	authRoutes.HandleFunc("/plans/{id}/milestones", handlers.CreateMilestone).Methods("POST")
 	authRoutes.HandleFunc("/plans/{planId}/milestones/{milestoneId}", handlers.UpdateMilestone).Methods("PUT")
 

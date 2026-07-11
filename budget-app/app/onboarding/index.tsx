@@ -14,6 +14,7 @@ import {
   TouchableWithoutFeedback,
   Platform,
   AccessibilityInfo,
+  type TextStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -826,7 +827,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     color: colors.text,
     ...typography.body,
-  },
+  } as TextStyle,
   fieldInputDisabled: { opacity: 0.6 },
 
   // Glass card (steps 1 & 2 benefit copy)

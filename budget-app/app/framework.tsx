@@ -944,7 +944,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   headerTitle: {
-    ...typography.bodyBold,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
   },
   headerRight: {

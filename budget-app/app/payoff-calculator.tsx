@@ -712,7 +712,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   headerTitle: {
-    ...typography.bodyBold,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
   },
 

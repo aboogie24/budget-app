@@ -32,7 +32,11 @@ export default function GradientBackground({
 
   return (
     <LinearGradient
-      colors={Array.isArray(gradientColors) ? [...gradientColors] : [gradientColors as string]}
+      colors={
+        (Array.isArray(gradientColors)
+          ? [...gradientColors]
+          : [String(gradientColors), String(gradientColors)]) as [string, string, ...string[]]
+      }
       start={start}
       end={end}
       style={[{ flex: 1 }, style]}

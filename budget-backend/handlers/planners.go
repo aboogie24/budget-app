@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/aboogie/budget-backend/db"
@@ -88,6 +89,12 @@ func ListSavingsGoals(w http.ResponseWriter, r *http.Request) {
 			g.TargetDate = ""
 		}
 		goals = append(goals, g)
+	}
+
+	// Overlay the effective $/month per goal (summed across active plans).
+	eff := effectiveMonthlyByTarget(client.Raw(), userID)
+	for i := range goals {
+		goals[i].EffectiveMonthly = eff[goals[i].ID]
 	}
 
 	json.NewEncoder(w).Encode(goals)
@@ -450,6 +457,40 @@ func ApplyDebtPayment(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(updated)
 }
 
+// PriorityTarget is one rankable target — a savings goal or a debt — with its
+// rank. Priorities are now an ordering over real targets, not free text; this
+// order drives plan allocation.
+type PriorityTarget struct {
+	TargetID   string `json:"target_id"`
+	TargetType string `json:"target_type"` // savings_goal | debt
+	Name       string `json:"name"`
+	Rank       int    `json:"rank"` // 0 = unranked (sorts last)
+	// Savings context
+	Current    float64 `json:"current"`
+	Target     float64 `json:"target"`
+	TargetDate string  `json:"target_date,omitempty"`
+	// Debt context
+	Balance    float64 `json:"balance"`
+	APR        float64 `json:"apr"`
+	MinPayment float64 `json:"min_payment"`
+	// EffectiveMonthly is the total $/month allocated to this target summed across
+	// all active plans — the single source of truth for "how much toward it".
+	EffectiveMonthly float64 `json:"effective_monthly"`
+}
+
+// scopeKeyFor returns the value used to scope a household's shared entities: the
+// household id when in a household, else the user id (solo).
+func scopeKeyFor(conn *sql.DB, userID string) (scopeKey, householdID string) {
+	hh := db.ResolveHouseholdID(conn, userID)
+	if hh != "" {
+		return hh, hh
+	}
+	return userID, ""
+}
+
+// ListFinancialPriorities returns the couple's savings goals and debts as ONE
+// ranked list. Unranked targets sort last (rank 0), then by name. This ordering
+// is the single source of truth that plan allocation follows.
 func ListFinancialPriorities(w http.ResponseWriter, r *http.Request) {
 	userID, err := sanitizeUserID(r.URL.Query().Get("user_id"))
 	if err != nil {
@@ -464,45 +505,87 @@ func ListFinancialPriorities(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	hh := db.ResolveHouseholdID(client.Raw(), userID)
-	var rows *sql.Rows
+	scopeKey, hh := scopeKeyFor(client.Raw(), userID)
+
+	// Scope predicate for goals/debts: household rows + personal rows, or just
+	// personal when solo. $1 = scopeKey (for the rank join), $2/$3 = scope args.
+	var goalWhere, debtWhere string
+	args := []interface{}{scopeKey}
 	if hh == "" {
-		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id::text, ''), title, rank, COALESCE(notes, ''), is_shared
-			FROM financial_priorities
-			WHERE household_id IS NULL AND user_id = $1
-		`, userID)
+		goalWhere, debtWhere = "g.user_id = $2", "d.user_id = $2"
+		args = append(args, userID)
 	} else {
-		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id::text, ''), title, rank, COALESCE(notes, ''), is_shared
-			FROM financial_priorities
-			WHERE household_id = $1
-			   OR (household_id IS NULL AND user_id = $2)
-		`, hh, userID)
+		goalWhere = "(g.household_id::text = $2 OR (g.household_id IS NULL AND g.user_id = $3))"
+		debtWhere = "(d.household_id::text = $2 OR (d.household_id IS NULL AND d.user_id = $3))"
+		args = append(args, hh, userID)
 	}
+
+	out := []PriorityTarget{}
+
+	// Savings goals
+	grows, err := client.Query(`
+		SELECT g.id::text, g.name, COALESCE(g.current_amount,0), COALESCE(g.target_amount,0),
+		       COALESCE(g.target_date,''), COALESCE(fp.rank, 0)
+		FROM savings_goals g
+		LEFT JOIN financial_priorities fp
+		  ON fp.target_id = g.id AND fp.target_type = 'savings_goal'
+		 AND COALESCE(fp.household_id::text, fp.user_id::text) = $1
+		WHERE `+goalWhere, args...)
 	if err != nil {
-		log.Printf("ListFinancialPriorities query error: %v", err)
-		http.Error(w, "Query error: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("ListFinancialPriorities goals query error: %v", err)
+		http.Error(w, "Query error", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-
-	var priorities []models.FinancialPriority
-	for rows.Next() {
-		var (
-			p    models.FinancialPriority
-			hhID string
-		)
-		if err := rows.Scan(&p.ID, &p.UserID, &hhID, &p.Title, &p.Rank, &p.Notes, &p.IsShared); err != nil {
-			log.Printf("ListFinancialPriorities scan error: %v", err)
-			http.Error(w, "Scan error", http.StatusInternalServerError)
-			return
+	for grows.Next() {
+		p := PriorityTarget{TargetType: "savings_goal"}
+		if err := grows.Scan(&p.TargetID, &p.Name, &p.Current, &p.Target, &p.TargetDate, &p.Rank); err == nil {
+			out = append(out, p)
 		}
-		p.HouseholdID = hhID
-		priorities = append(priorities, p)
+	}
+	grows.Close()
+
+	// Debts
+	drows, err := client.Query(`
+		SELECT d.id::text, d.name, COALESCE(d.balance,0), COALESCE(d.apr,0),
+		       COALESCE(d.min_payment,0), COALESCE(fp.rank, 0)
+		FROM debt_accounts d
+		LEFT JOIN financial_priorities fp
+		  ON fp.target_id = d.id AND fp.target_type = 'debt'
+		 AND COALESCE(fp.household_id::text, fp.user_id::text) = $1
+		WHERE `+debtWhere, args...)
+	if err != nil {
+		log.Printf("ListFinancialPriorities debts query error: %v", err)
+		http.Error(w, "Query error", http.StatusInternalServerError)
+		return
+	}
+	for drows.Next() {
+		p := PriorityTarget{TargetType: "debt"}
+		if err := drows.Scan(&p.TargetID, &p.Name, &p.Balance, &p.APR, &p.MinPayment, &p.Rank); err == nil {
+			out = append(out, p)
+		}
+	}
+	drows.Close()
+
+	// Overlay the effective $/month per target (summed across active plans).
+	eff := effectiveMonthlyByTarget(client.Raw(), userID)
+	for i := range out {
+		out[i].EffectiveMonthly = eff[out[i].TargetID]
 	}
 
-	json.NewEncoder(w).Encode(priorities)
+	// Rank order: ranked first (ascending), unranked (0) last, then name.
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := out[i].Rank, out[j].Rank
+		if (ri == 0) != (rj == 0) {
+			return rj == 0 // non-zero (ranked) before zero (unranked)
+		}
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].Name < out[j].Name
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 func CreateFinancialPriority(w http.ResponseWriter, r *http.Request) {
@@ -621,12 +704,29 @@ func DeleteFinancialPriority(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ReorderFinancialPriorities sets each target's rank from an ordered list.
+// Body: { "user_id": "...", "order": [ {"target_id","target_type"}, ... ] }.
+// Ranks are written 1..N into financial_priorities (upsert per target, scoped to
+// the household so both partners share one ranking).
 func ReorderFinancialPriorities(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Order []string `json:"order"`
+		UserID string `json:"user_id"`
+		Order  []struct {
+			TargetID   string `json:"target_id"`
+			TargetType string `json:"target_type"`
+		} `json:"order"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+	uid := body.UserID
+	if uid == "" {
+		uid = r.URL.Query().Get("user_id")
+	}
+	userID, err := sanitizeUserID(uid)
+	if err != nil {
+		http.Error(w, "Missing or invalid user_id", http.StatusBadRequest)
 		return
 	}
 	if len(body.Order) == 0 {
@@ -641,10 +741,24 @@ func ReorderFinancialPriorities(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	// assign ranks sequentially (1-based)
-	for idx, id := range body.Order {
-		_, err := client.Exec(`UPDATE financial_priorities SET rank=$1 WHERE id=$2`, idx+1, id)
+	_, hh := scopeKeyFor(client.Raw(), userID)
+	var hhArg interface{}
+	if hh != "" {
+		hhArg = hh
+	}
+
+	for idx, item := range body.Order {
+		if item.TargetID == "" || (item.TargetType != "savings_goal" && item.TargetType != "debt") {
+			continue
+		}
+		_, err := client.Exec(`
+			INSERT INTO financial_priorities (id, user_id, household_id, target_id, target_type, rank)
+			VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+			ON CONFLICT (COALESCE(household_id, user_id), target_id, target_type) WHERE target_id IS NOT NULL
+			DO UPDATE SET rank = EXCLUDED.rank
+		`, userID, hhArg, item.TargetID, item.TargetType, idx+1)
 		if err != nil {
+			log.Printf("ReorderFinancialPriorities upsert error: %v", err)
 			http.Error(w, "Update error", http.StatusInternalServerError)
 			return
 		}

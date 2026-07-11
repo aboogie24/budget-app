@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -959,7 +960,7 @@ const styles = StyleSheet.create({
     ...typography.smallBold,
     fontWeight: '400',
     marginBottom: spacing.sm,
-  },
+  } as TextStyle,
   sendBtn: {
     width: 44,
     height: 44,

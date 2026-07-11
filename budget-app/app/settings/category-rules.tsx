@@ -110,7 +110,7 @@ export default function CategoryRulesScreen() {
   }, [fetchRules]);
 
   // Group rules by type (keep filtering & memo shape — only rendering changes)
-  const groupedRules: RuleGroup[] = [
+  const allGroups: RuleGroup[] = [
     {
       title: 'Merchant Rules',
       type: 'merchant',
@@ -129,7 +129,8 @@ export default function CategoryRulesScreen() {
       icon: 'settings-outline',
       rules: rules.filter((r) => r.rule_type === 'system' || r.rule_type === 'default'),
     },
-  ].filter((g) => g.rules.length > 0);
+  ];
+  const groupedRules = allGroups.filter((g) => g.rules.length > 0);
 
   // Derived hero breakdown counts (cheap)
   const autoCount = rules.filter((r) => r.auto_created && !isSystemRule(r)).length;

@@ -13,19 +13,20 @@ jest.mock('@/utils/ThemeContext', () => ({
   }),
 }));
 
-// Mock GlassCard component
-jest.mock('../GlassCard', () => ({
-  GlassCard: ({ children, ...props }: any) => (
+// Mock GlassCard component (imported as default in EmptyState)
+jest.mock('../GlassCard', () => {
+  const GlassCard = ({ children, ...props }: any) => (
     <div testID="glass-card" {...props}>
       {children}
     </div>
-  ),
-}));
+  );
+  return { __esModule: true, default: GlassCard, GlassCard };
+});
 
 // Mock Ionicons
 jest.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name, size, color }: any) => (
-    <div testID={`icon-${name}`} data-size={size} data-color={color}>
+    <div {...({ testID: `icon-${name}`, "data-size": size, "data-color": color } as any)}>
       {name}
     </div>
   ),
@@ -48,7 +49,7 @@ describe('EmptyState Component', () => {
   it('renders with correct icon', () => {
     render(<EmptyState {...defaultProps} icon="cart-outline" />);
 
-    const icon = screen.getByTestID('icon-cart-outline');
+    const icon = screen.getByTestId('icon-cart-outline');
     expect(icon).toBeTruthy();
   });
 
@@ -97,18 +98,18 @@ describe('EmptyState Component', () => {
   it('renders GlassCard wrapper', () => {
     render(<EmptyState {...defaultProps} />);
 
-    const glassCard = screen.getByTestID('glass-card');
+    const glassCard = screen.getByTestId('glass-card');
     expect(glassCard).toBeTruthy();
   });
 
   it('renders with different icons', () => {
     render(<EmptyState {...defaultProps} icon="heart-outline" />);
-    expect(screen.getByTestID('icon-heart-outline')).toBeTruthy();
+    expect(screen.getByTestId('icon-heart-outline')).toBeTruthy();
 
     const { unmount } = render(
       <EmptyState {...defaultProps} icon="star-outline" />
     );
-    expect(screen.getByTestID('icon-star-outline')).toBeTruthy();
+    expect(screen.getByTestId('icon-star-outline')).toBeTruthy();
     unmount();
   });
 

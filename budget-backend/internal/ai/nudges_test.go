@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"github.com/aboogie/budget-backend/models"
 )
 
 // ─── checkSpendingAlert Tests ────────────────────────────────
@@ -201,35 +203,20 @@ func TestSaveNudges_DeduplicatesWithinWindow(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM ai_nudges WHERE created_at`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	// Duplicate check — nudge already exists
+	// Duplicate check — nudge already exists, so no INSERT should follow.
 	mock.ExpectQuery(`SELECT EXISTS`).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
-	nudges := []struct {
-		NudgeType string
-		Title     string
-	}{
-		{"spending_alert", "Spending is up this week"},
+	inserted, err := SaveNudges(db, createTestNudges(userID, &actionType, &actionData))
+	if err != nil {
+		t.Fatalf("SaveNudges returned error: %v", err)
 	}
-
-	err = SaveNudges(db, []struct {
-		UserID      string
-		HouseholdID *string
-		NudgeType   string
-		Title       string
-		Body        string
-		ActionType  *string
-		ActionData  *string
-		Priority    int
-		ExpiresAt   *string
-	}{
-		// This won't work with the model. Use the actual model type.
-	})
-	// Actually, use the models type directly via the function signature.
-	// SaveNudges takes []models.AINudge, so let me call it properly.
-	_ = nudges // suppress unused
-
-	// Re-approach: test via actual models.AINudge
+	if len(inserted) != 0 {
+		t.Fatalf("expected 0 inserted nudges for duplicate, got %d", len(inserted))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sqlmock expectations: %v", err)
+	}
 }
 
 func TestSaveNudges_InsertsNewNudge(t *testing.T) {
@@ -255,17 +242,18 @@ func TestSaveNudges_InsertsNewNudge(t *testing.T) {
 	mock.ExpectQuery(`SELECT EXISTS`).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
-	// Insert
-	mock.ExpectExec(`INSERT INTO ai_nudges`).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+	// Insert returns the new row's id
+	mock.ExpectQuery(`INSERT INTO ai_nudges`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("nudge-1"))
 
-	// Need to import models; since we're in package ai, import is needed.
-	// Actually we already import it in nudges.go. Let's use it.
 	nudges := createTestNudges(userID, &actionType, &actionData)
 
-	err = SaveNudges(mockDB, nudges)
+	inserted, err := SaveNudges(mockDB, nudges)
 	if err != nil {
 		t.Fatalf("SaveNudges error: %v", err)
+	}
+	if len(inserted) != 1 || inserted[0].ID != "nudge-1" {
+		t.Fatalf("expected 1 inserted nudge with id nudge-1, got %#v", inserted)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -300,9 +288,12 @@ func TestSaveNudges_SkipsDuplicate(t *testing.T) {
 
 	nudges := createTestNudges(userID, &actionType, &actionData)
 
-	err = SaveNudges(mockDB, nudges)
+	inserted, err := SaveNudges(mockDB, nudges)
 	if err != nil {
 		t.Fatalf("SaveNudges error: %v", err)
+	}
+	if len(inserted) != 0 {
+		t.Fatalf("expected 0 inserted nudges for duplicate, got %d", len(inserted))
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

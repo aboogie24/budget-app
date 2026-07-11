@@ -68,7 +68,7 @@ export default function SettingsScreen() {
     }
     if (user?.id) {
       try {
-        const data = await api.get(`/auth/households/me`, { user_id: user.id });
+        const data: any = await api.get(`/auth/households/me`, { user_id: user.id });
         setHousehold({
           name: data?.name,
           members: data?.members,
@@ -99,7 +99,7 @@ export default function SettingsScreen() {
     try {
       const userId = await api.getUserId();
       if (userId) {
-        const data = await api.get('/auth/currencies/default', { user_id: userId });
+        const data: any = await api.get('/auth/currencies/default', { user_id: userId });
         if (data && data.currency) {
           setCurrencyCode(data.currency);
         }
@@ -462,7 +462,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
   headerTitle: {
-    ...typography.bodyBold,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
   },
   scroll: {

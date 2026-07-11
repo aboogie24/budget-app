@@ -20,8 +20,11 @@ jest.mock('expo-router', () => ({
   Link: 'Link',
 }));
 
-// Mock react-native Platform
-jest.mock('react-native/Libraries/Utilities/Platform', () => ({
-  OS: 'ios',
-  select: (obj) => obj.ios,
-}));
+// Mock react-native Platform (RN 0.81 Platform module is ESM — needs a default export)
+jest.mock('react-native/Libraries/Utilities/Platform', () => {
+  const platform = {
+    OS: 'ios',
+    select: (obj) => obj.ios,
+  };
+  return { __esModule: true, default: platform, ...platform };
+});

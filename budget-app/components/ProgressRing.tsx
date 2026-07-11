@@ -2,6 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
 interface ProgressRingProps {
   progress: number;
   size: number;
@@ -51,7 +53,7 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
             fill="none"
           />
           {/* Progress circle */}
-          <Circle
+          <AnimatedCircle
             cx={centerX}
             cy={centerY}
             r={radius}

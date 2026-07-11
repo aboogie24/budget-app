@@ -521,7 +521,7 @@ const styles = StyleSheet.create({
 
   // Header
   headerTitle: {
-    ...typography.bodyBold,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
     flex: 1,
     textAlign: 'center',

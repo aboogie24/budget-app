@@ -2,28 +2,27 @@ import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import { ProgressRing } from '../ProgressRing';
 
-// Mock react-native-svg
+// Mock react-native-svg (Svg is imported as the default export in ProgressRing)
 jest.mock('react-native-svg', () => {
   const React = require('react');
-  return {
-    Svg: ({ children, ...props }: any) => (
-      <div testID="svg" {...props}>
-        {children}
-      </div>
-    ),
-    Circle: ({ cx, cy, r, stroke, strokeWidth, fill, ...props }: any) => (
-      <div
-        testID="circle"
-        data-cx={cx}
-        data-cy={cy}
-        data-r={r}
-        data-stroke={stroke}
-        data-stroke-width={strokeWidth}
-        data-fill={fill}
-        {...props}
-      />
-    ),
-  };
+  const Svg = ({ children, ...props }: any) => (
+    <div testID="svg" {...props}>
+      {children}
+    </div>
+  );
+  const Circle = ({ cx, cy, r, stroke, strokeWidth, fill, ...props }: any) => (
+    <div
+      testID="circle"
+      data-cx={cx}
+      data-cy={cy}
+      data-r={r}
+      data-stroke={stroke}
+      data-stroke-width={strokeWidth}
+      data-fill={fill}
+      {...props}
+    />
+  );
+  return { __esModule: true, default: Svg, Svg, Circle };
 });
 
 describe('ProgressRing Component', () => {
@@ -38,7 +37,7 @@ describe('ProgressRing Component', () => {
   it('renders with correct structure', () => {
     render(<ProgressRing {...defaultProps} />);
 
-    const svg = screen.getByTestID('svg');
+    const svg = screen.getByTestId('svg');
     expect(svg).toBeTruthy();
   });
 
@@ -80,7 +79,8 @@ describe('ProgressRing Component', () => {
   it('rounds percentage to nearest integer', () => {
     render(<ProgressRing {...defaultProps} progress={0.125} />);
 
-    expect(screen.getByText('12%')).toBeTruthy();
+    // Math.round(12.5) rounds half up to 13
+    expect(screen.getByText('13%')).toBeTruthy();
   });
 
   it('renders with accent color when progress is high', () => {
@@ -126,22 +126,22 @@ describe('ProgressRing Component', () => {
     const { unmount } = render(
       <ProgressRing {...defaultProps} size={120} />
     );
-    expect(screen.getByTestID('svg')).toBeTruthy();
+    expect(screen.getByTestId('svg')).toBeTruthy();
     unmount();
 
     render(<ProgressRing {...defaultProps} size={80} />);
-    expect(screen.getByTestID('svg')).toBeTruthy();
+    expect(screen.getByTestId('svg')).toBeTruthy();
   });
 
   it('handles different stroke widths', () => {
     const { unmount } = render(
       <ProgressRing {...defaultProps} strokeWidth={4} />
     );
-    expect(screen.getByTestID('svg')).toBeTruthy();
+    expect(screen.getByTestId('svg')).toBeTruthy();
     unmount();
 
     render(<ProgressRing {...defaultProps} strokeWidth={12} />);
-    expect(screen.getByTestID('svg')).toBeTruthy();
+    expect(screen.getByTestId('svg')).toBeTruthy();
   });
 
   it('uses correct colors', () => {
@@ -156,7 +156,7 @@ describe('ProgressRing Component', () => {
       />
     );
 
-    const circles = screen.getAllByTestID('circle');
+    const circles = screen.getAllByTestId('circle');
     expect(circles.length).toBeGreaterThan(0);
   });
 
@@ -187,7 +187,7 @@ describe('ProgressRing Component', () => {
   it('renders SVG circles for background and progress', () => {
     render(<ProgressRing {...defaultProps} />);
 
-    const circles = screen.getAllByTestID('circle');
+    const circles = screen.getAllByTestId('circle');
     expect(circles.length).toBeGreaterThanOrEqual(2);
   });
 

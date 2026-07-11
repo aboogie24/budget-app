@@ -787,7 +787,7 @@ export default function LinkAccountScreen() {
      ══════════════════════════════════════════════════════════════ */
   const renderHeader = (showRefresh: boolean) => (
     <View style={styles.header}>
-      <BackButton fallback="/(tabs)/accounts" color={colors.primary2} />
+      <BackButton fallback="/accounts" color={colors.primary2} />
       <Text style={styles.headerTitle}>Link Account</Text>
       <View style={styles.headerRight}>
         {showRefresh ? (
@@ -1215,7 +1215,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
   headerTitle: {
-    ...typography.bodyBold,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
     flex: 1,
     textAlign: 'center',

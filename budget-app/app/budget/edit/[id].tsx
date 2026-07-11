@@ -121,7 +121,7 @@ export default function EditBudget() {
       // Budget record (fatal — drives the load-error surface).
       if (params.id) {
         const data = await api.get(`/auth/budgets/${params.id}`);
-        setBudgetData(data);
+        setBudgetData(data as BudgetData);
       }
     } catch (e) {
       console.error('Failed to load budget:', e);

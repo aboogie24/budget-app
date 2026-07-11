@@ -367,7 +367,7 @@ export default function BudgetSettingsScreen() {
     const prevSnapshot = categories;
     setCategories((prev) => prev.map((c) => (c.id === cat.id ? { ...c, ...updates } : c)));
     try {
-      const updated = await api.put(`/auth/categories/${cat.id}`, {
+      const updated: any = await api.put(`/auth/categories/${cat.id}`, {
         name: updates.name ?? cat.name,
         color: updates.color ?? cat.color,
         limit_amount: updates.limit_amount ?? cat.limit_amount ?? 0,
@@ -418,7 +418,7 @@ export default function BudgetSettingsScreen() {
         budget_id: newBudgetId || null,
         // TODO wire share flag — sharePartner has no backend payload yet.
       };
-      const created = await api.post(`/auth/categories`, payload);
+      const created: any = await api.post(`/auth/categories`, payload);
       setCategories((prev) => [...prev, created]);
       setSheetOpen(false);
       resetForm();

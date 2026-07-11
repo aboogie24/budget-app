@@ -691,7 +691,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   greeting: {
-    ...typography.bodyBold,
+    ...typography.h3,
+    fontWeight: '800',
     color: colors.text,
   },
   headerRight: {

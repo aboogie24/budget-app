@@ -300,8 +300,6 @@ export default function AddTransactionScreen() {
                   placeholderTextColor={colors.textMuted}
                   style={[styles.heroValue, styles.heroInput, heroFontStyle, { color: semantic }]}
                   accessibilityLabel="Transaction amount"
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.6}
                 />
               </View>
               {!!amountHint && (

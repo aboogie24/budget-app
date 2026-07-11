@@ -596,8 +596,8 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: colors.text,
-    fontSize: 20,
-    fontWeight: '700',
+    ...typography.h3,
+    fontWeight: '800',
   },
   monthSelector: {
     flexDirection: 'row',

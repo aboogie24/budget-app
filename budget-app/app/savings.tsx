@@ -42,6 +42,8 @@ type SavingsGoal = {
   target_date: string;
   priority: number;
   is_shared: boolean;
+  /** $/month flowing to this goal from the couple's active plans (source of truth for monthly contribution). */
+  effective_monthly?: number;
 };
 
 type GoalStatus = 'funded' | 'on_track' | 'behind';
@@ -66,6 +68,24 @@ const daysBetween = (from: Date, toStr: string): number => {
   if (isNaN(to.getTime())) return Infinity;
   const ms = to.getTime() - from.getTime();
   return Math.ceil(ms / (1000 * 60 * 60 * 24));
+};
+
+/** Monthly $/mo from active plans, guarded against missing/older cached data. */
+const effectiveMonthly = (g: SavingsGoal): number => {
+  const v = g.effective_monthly;
+  return typeof v === 'number' && v > 0 ? v : 0;
+};
+
+/**
+ * Months to goal from the plan-funded monthly contribution (source of truth).
+ * Returns null when there's no funding or the goal is already met.
+ */
+const monthsToGoal = (g: SavingsGoal): number | null => {
+  const monthly = effectiveMonthly(g);
+  if (monthly <= 0) return null;
+  const remaining = (g.target_amount || 0) - (g.current_amount || 0);
+  if (remaining <= 0) return null;
+  return Math.ceil(remaining / monthly);
 };
 
 /**
@@ -383,6 +403,8 @@ export default function SavingsScreen() {
                 const pct = getPercent(g);
                 const status = getGoalStatus(g);
                 const meta = STATUS_META[status];
+                const monthly = effectiveMonthly(g);
+                const months = monthsToGoal(g);
                 return (
                   <TouchableOpacity
                     key={g.id}
@@ -394,6 +416,12 @@ export default function SavingsScreen() {
                       g.current_amount,
                     )} saved of ${fmt(g.target_amount)}, ${pct.toFixed(0)} percent${
                       g.target_date ? `, due ${g.target_date}` : ''
+                    }${
+                      monthly > 0
+                        ? `, ${fmtWhole(monthly)} per month from plans${
+                            months !== null ? `, about ${months} months to goal` : ''
+                          }`
+                        : ', not funded by a plan yet'
                     }.`}
                   >
                     {/* Row 1 — name / status chip / amount */}
@@ -418,6 +446,23 @@ export default function SavingsScreen() {
                         <SavingsProgressBar percent={pct} color={meta.color} />
                       </View>
                       <Text style={styles.goalPercent}>{pct.toFixed(0)}%</Text>
+                    </View>
+
+                    {/* Row 2b — plan funding (source of truth for monthly contribution) */}
+                    <View style={styles.goalFundingRow}>
+                      {monthly > 0 ? (
+                        <>
+                          <Ionicons name="repeat" size={12} color={colors.primary} />
+                          <Text style={[styles.goalFunding, { color: colors.primary }]}>
+                            {fmtWhole(monthly)}/mo from plans
+                            {months !== null
+                              ? ` · ~${months} mo${months === 1 ? '' : 's'} to goal`
+                              : ''}
+                          </Text>
+                        </>
+                      ) : (
+                        <Text style={styles.goalFunding}>Not funded by a plan yet</Text>
+                      )}
                     </View>
 
                     {/* Row 3 — sub-line + update action */}
@@ -727,6 +772,17 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     flexShrink: 0,
+  },
+  goalFundingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  goalFunding: {
+    ...typography.caption,
+    color: colors.textMuted,
+    flexShrink: 1,
   },
   goalBottomRow: {
     flexDirection: 'row',

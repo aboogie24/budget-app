@@ -11,12 +11,14 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  type TextStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { api } from '../utils/apiClient';
+import { api, ApiError } from '../utils/apiClient';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { BackButton } from '@/components/BackButton';
@@ -50,14 +52,20 @@ type Milestone = {
   completed_at?: string;
 };
 
+type AllocationTargetType = 'savings_goal' | 'debt';
+
 type Allocation = {
   id: string;
   plan_id: string;
-  target_type: string;
+  target_type: AllocationTargetType | string;
   target_id?: string;
   monthly_amount: number;
+  priority_order?: number;
   target_name?: string;
 };
+
+// Resolved target metadata (name + human-readable type label) for a target_id.
+type TargetInfo = { name: string; typeLabel: string };
 
 type Approval = {
   id: string;
@@ -75,6 +83,22 @@ type PlanDetail = Plan & {
   milestones: Milestone[];
   allocations: Allocation[];
   approvals?: Approval[];
+};
+
+// Shape returned by POST /auth/plans/savings-feasibility. The optional fields
+// are only populated when `feasible` is false (the "here's how to make it work"
+// alternatives).
+type Feasibility = {
+  months: number;
+  required_monthly: number;
+  surplus_monthly: number;
+  committed_monthly: number;
+  available_monthly: number;
+  feasible: boolean;
+  realistic_date?: string;
+  lower_target?: number;
+  free_up_monthly?: number;
+  pointer: string;
 };
 
 // ─── Semantic tint recipe (documented 12%/8% status backgrounds) ─
@@ -149,6 +173,22 @@ const formatDate = (dateStr: string | undefined | null) => {
 const capitalize = (s: string) =>
   s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
+// 'YYYY-MM-DD' from a Date, using local calendar fields (not toISOString, which
+// would shift across the UTC boundary for evening timezones).
+const toISODate = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+// Parse a 'YYYY-MM-DD' back into a local Date (midday to avoid DST edge cases).
+const fromISODate = (s: string): Date => {
+  const [y, m, d] = s.split('-').map((n) => parseInt(n, 10));
+  if (!y || !m || !d) return new Date();
+  return new Date(y, m - 1, d, 12, 0, 0);
+};
+
 const isDraft = (p: { status: PlanStatus }) => p.status === 'draft';
 
 // ─── Small presentational primitives (in-file) ──────────────────
@@ -210,6 +250,442 @@ function ProgressBar({ ratio, color }: { ratio: number; color?: string }) {
 
 // ─── Component ──────────────────────────────────────────────────
 
+// FormSheet is a bottom-sheet modal wrapper. It MUST be a module-scope
+// component (not defined inside PlansScreen) so its identity is stable across
+// re-renders — otherwise TextInputs inside it remount on every keystroke and the
+// keyboard dismisses.
+function FormSheet({
+  visible,
+  title,
+  onClose,
+  children,
+  submitLabel,
+  submitGradient = [...gradients.primaryGradient] as string[],
+  onSubmit,
+  submitting,
+}: {
+  visible: boolean;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  submitLabel: string;
+  submitGradient?: string[];
+  onSubmit: () => void;
+  submitting: boolean;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.sheetBackdrop}
+      >
+        <View style={styles.sheet}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle}>{title}</Text>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={24} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
+          <TouchableOpacity
+            onPress={onSubmit}
+            style={[styles.sheetSubmit, submitting && styles.disabledBtn]}
+            disabled={submitting}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={submitGradient as any}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.sheetSubmitInner}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.sheetSubmitText}>{submitLabel}</Text>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ─── Guided savings-goal + plan sheet (module scope) ────────────
+//
+// Lives at module scope for the SAME reason FormSheet does: its TextInputs must
+// keep a stable component identity across re-renders or the keyboard dismisses
+// on every keystroke. It owns all of its own local form state and the debounced
+// feasibility fetch, then hands the finished payload back to the parent via
+// onConfirm. The parent stays responsible for the two create API calls + refresh.
+function SavingsGoalSheet({
+  visible,
+  onClose,
+  onConfirm,
+  submitting,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: (payload: {
+    name: string;
+    target_amount: number;
+    current_amount: number;
+    target_date: string;
+    is_shared: boolean;
+    monthly_contribution: number;
+  }) => void;
+  submitting: boolean;
+}) {
+  const [name, setName] = useState('');
+  const [targetAmount, setTargetAmount] = useState('');
+  const [currentAmount, setCurrentAmount] = useState('');
+  // Default the target date ~12 months out so the picker opens somewhere useful.
+  const [targetDate, setTargetDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 12);
+    return d;
+  });
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [isShared, setIsShared] = useState(true);
+
+  // Feasibility state.
+  const [feas, setFeas] = useState<Feasibility | null>(null);
+  const [feasLoading, setFeasLoading] = useState(false);
+  const [feasError, setFeasError] = useState<string | null>(null);
+
+  const targetNum = parseFloat(targetAmount);
+  const currentNum = currentAmount.trim() === '' ? 0 : parseFloat(currentAmount);
+  const targetDateStr = toISODate(targetDate);
+
+  // Reset everything whenever the sheet is (re)opened.
+  useEffect(() => {
+    if (visible) {
+      setName('');
+      setTargetAmount('');
+      setCurrentAmount('');
+      const d = new Date();
+      d.setMonth(d.getMonth() + 12);
+      setTargetDate(d);
+      setShowDatePicker(false);
+      setIsShared(true);
+      setFeas(null);
+      setFeasLoading(false);
+      setFeasError(null);
+    }
+  }, [visible]);
+
+  // Debounced (~400ms) feasibility fetch. Fires once we have a name, a positive
+  // target, and a future date. Any change to those inputs re-arms the timer.
+  useEffect(() => {
+    if (!visible) return;
+    const validTarget = !isNaN(targetNum) && targetNum > 0;
+    const validCurrent = !isNaN(currentNum) && currentNum >= 0;
+    if (!name.trim() || !validTarget || !validCurrent) {
+      setFeas(null);
+      setFeasError(null);
+      setFeasLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setFeasLoading(true);
+    setFeasError(null);
+    const handle = setTimeout(async () => {
+      try {
+        const result = await api.post<Feasibility>('/auth/plans/savings-feasibility', {
+          name: name.trim(),
+          target_amount: targetNum,
+          current_amount: validCurrent ? currentNum : 0,
+          target_date: targetDateStr,
+        });
+        if (!cancelled) {
+          setFeas(result);
+          setFeasError(null);
+        }
+      } catch (e) {
+        console.error('Feasibility fetch error:', e);
+        if (!cancelled) {
+          setFeas(null);
+          setFeasError("We couldn't check this goal right now — you can still create it.");
+        }
+      } finally {
+        if (!cancelled) setFeasLoading(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [visible, name, targetNum, currentNum, targetDateStr]);
+
+  const handleDateChange = (_e: unknown, selected?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (selected) setTargetDate(selected);
+  };
+
+  // Not-feasible option handlers: (a) push the date, (b) lower the target. Both
+  // mutate the inputs, which re-arms the debounced fetch for a fresh readout.
+  const applyRealisticDate = () => {
+    if (feas?.realistic_date) {
+      setTargetDate(fromISODate(feas.realistic_date));
+      setShowDatePicker(false);
+    }
+  };
+  const applyLowerTarget = () => {
+    if (feas?.lower_target != null) setTargetAmount(String(feas.lower_target));
+  };
+
+  const handleSubmit = () => {
+    if (!name.trim()) {
+      Alert.alert('Validation', 'Tell us what you’re saving for.');
+      return;
+    }
+    if (isNaN(targetNum) || targetNum <= 0) {
+      Alert.alert('Validation', 'Enter a valid target amount.');
+      return;
+    }
+    // Prefer the honest available number when the goal isn't feasible; otherwise
+    // the required monthly. Fall back to required if the readout is missing.
+    const monthly = feas
+      ? feas.feasible
+        ? feas.required_monthly
+        : feas.available_monthly > 0
+          ? feas.available_monthly
+          : feas.required_monthly
+      : 0;
+    onConfirm({
+      name: name.trim(),
+      target_amount: targetNum,
+      current_amount: isNaN(currentNum) ? 0 : currentNum,
+      target_date: targetDateStr,
+      is_shared: isShared,
+      monthly_contribution: monthly,
+    });
+  };
+
+  // Feasibility status visual (color-independent: word + icon + color).
+  const statusVis = feas
+    ? feas.feasible
+      ? { word: 'On track', icon: 'checkmark-circle' as const, color: colors.success, tint: tint.success }
+      : { word: 'A stretch', icon: 'alert-circle' as const, color: colors.warning, tint: tint.warning }
+    : null;
+
+  return (
+    <FormSheet
+      visible={visible}
+      title="New savings goal"
+      onClose={onClose}
+      submitLabel="Create goal & plan"
+      submitGradient={[...gradients.successGradient]}
+      onSubmit={handleSubmit}
+      submitting={submitting}
+    >
+      {/* 1 — What are you saving for? */}
+      <Text style={[styles.fieldLabel, { marginTop: 0 }]}>What are you saving for?</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="e.g. Emergency fund, Trip to Japan"
+        placeholderTextColor={colors.textDark}
+        value={name}
+        onChangeText={setName}
+        returnKeyType="next"
+      />
+
+      {/* 2 — How much do you need? */}
+      <Text style={styles.fieldLabel}>How much do you need?</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="0.00"
+        placeholderTextColor={colors.textDark}
+        keyboardType="numeric"
+        value={targetAmount}
+        onChangeText={setTargetAmount}
+      />
+
+      {/* 3 — How much do you have so far? */}
+      <Text style={styles.fieldLabel}>How much do you have so far?</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="0.00"
+        placeholderTextColor={colors.textDark}
+        keyboardType="numeric"
+        value={currentAmount}
+        onChangeText={setCurrentAmount}
+      />
+
+      {/* 4 — By when? (reveal-on-tap date picker) */}
+      <Text style={styles.fieldLabel}>By when?</Text>
+      <TouchableOpacity
+        style={styles.dateField}
+        onPress={() => setShowDatePicker((s) => !s)}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel={`Target date, ${formatDate(targetDateStr)}, opens date picker`}
+      >
+        <Ionicons name="calendar-outline" size={18} color={colors.textMuted} style={{ marginRight: spacing.sm }} />
+        <Text style={styles.dateFieldValue} numberOfLines={1}>
+          {formatDate(targetDateStr)}
+        </Text>
+        <Ionicons
+          name={showDatePicker ? 'chevron-up' : 'chevron-forward'}
+          size={18}
+          color={colors.textDark}
+        />
+      </TouchableOpacity>
+      {showDatePicker && Platform.OS === 'ios' && (
+        <View style={styles.datePickerInset}>
+          <DateTimePicker
+            value={targetDate}
+            mode="date"
+            display="spinner"
+            onChange={handleDateChange}
+            themeVariant="dark"
+            minimumDate={new Date()}
+            style={{ height: 150 }}
+          />
+        </View>
+      )}
+      {showDatePicker && Platform.OS === 'android' && (
+        <DateTimePicker
+          value={targetDate}
+          mode="date"
+          display="calendar"
+          minimumDate={new Date()}
+          onChange={handleDateChange}
+        />
+      )}
+
+      {/* Shared with partner toggle */}
+      <TouchableOpacity
+        style={styles.sharedToggle}
+        onPress={() => setIsShared((s) => !s)}
+        activeOpacity={0.75}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: isShared }}
+        accessibilityLabel="Share this goal with your partner"
+      >
+        <Ionicons
+          name={isShared ? 'checkbox' : 'square-outline'}
+          size={20}
+          color={isShared ? colors.success : colors.textMuted}
+        />
+        <Text style={styles.sharedToggleText}>Share this goal with your partner</Text>
+      </TouchableOpacity>
+
+      {/* ── Live feasibility readout ── */}
+      {feasLoading && (
+        <View style={styles.feasCard}>
+          <ActivityIndicator color={colors.accent} size="small" />
+          <Text style={styles.feasLoadingText}>Checking if this is realistic…</Text>
+        </View>
+      )}
+
+      {!feasLoading && feasError && (
+        <View style={[styles.feasCard, { backgroundColor: tint.warning }]}>
+          <Ionicons name="cloud-offline-outline" size={18} color={colors.warning} />
+          <Text style={[styles.feasNoteText, { color: colors.warning }]}>{feasError}</Text>
+        </View>
+      )}
+
+      {!feasLoading && !feasError && feas && statusVis && (
+        <View style={styles.feasReadout}>
+          {/* Status pill */}
+          <View style={[styles.feasStatusRow, { backgroundColor: statusVis.tint }]}>
+            <Ionicons name={statusVis.icon} size={18} color={statusVis.color} />
+            <Text style={[styles.feasStatusWord, { color: statusVis.color }]}>{statusVis.word}</Text>
+          </View>
+
+          {/* Required vs available */}
+          <View style={styles.feasNumbers}>
+            <View style={styles.feasNumberItem}>
+              <Text style={styles.metaLabel}>You'd need</Text>
+              <Text style={styles.feasNumberValue}>{fmt(feas.required_monthly)}/mo</Text>
+            </View>
+            <View style={styles.feasNumberItem}>
+              <Text style={styles.metaLabel}>Free after other plans</Text>
+              <Text
+                style={[
+                  styles.feasNumberValue,
+                  { color: feas.available_monthly >= feas.required_monthly ? colors.success : colors.warning },
+                ]}
+              >
+                {fmt(feas.available_monthly)}/mo
+              </Text>
+            </View>
+          </View>
+
+          {/* AI pointer sentence */}
+          {feas.pointer ? (
+            <View style={styles.pointerCard}>
+              <Ionicons name="sparkles" size={14} color={colors.accent} style={{ marginTop: 2 }} />
+              <Text style={styles.pointerText}>{feas.pointer}</Text>
+            </View>
+          ) : null}
+
+          {/* Not-feasible options */}
+          {!feas.feasible && (
+            <View style={styles.feasOptions}>
+              <Text style={styles.feasOptionsLabel}>Ways to make it work</Text>
+
+              {feas.realistic_date ? (
+                <TouchableOpacity
+                  style={styles.feasOptionBtn}
+                  onPress={applyRealisticDate}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Push the date to ${formatDate(feas.realistic_date)}`}
+                >
+                  <Ionicons name="calendar-outline" size={18} color={colors.accent} />
+                  <Text style={styles.feasOptionText}>
+                    Push the date to {formatDate(feas.realistic_date)}
+                  </Text>
+                  <Ionicons name="arrow-forward" size={16} color={colors.textDark} />
+                </TouchableOpacity>
+              ) : null}
+
+              {feas.lower_target != null ? (
+                <TouchableOpacity
+                  style={styles.feasOptionBtn}
+                  onPress={applyLowerTarget}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Aim for ${fmt(feas.lower_target)} instead`}
+                >
+                  <Ionicons name="trending-down-outline" size={18} color={colors.accent} />
+                  <Text style={styles.feasOptionText}>
+                    Aim for {fmt(feas.lower_target)} instead
+                  </Text>
+                  <Ionicons name="arrow-forward" size={16} color={colors.textDark} />
+                </TouchableOpacity>
+              ) : null}
+
+              {feas.free_up_monthly != null ? (
+                <View style={[styles.feasOptionBtn, styles.feasOptionInfo]}>
+                  <Ionicons name="wallet-outline" size={18} color={colors.textMuted} />
+                  <Text style={[styles.feasOptionText, { color: colors.textMuted }]}>
+                    Free up {fmt(feas.free_up_monthly)}/mo in your budget to hit this date
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* When no readout yet, coach the user on what to fill in. */}
+      {!feasLoading && !feasError && !feas && (
+        <Text style={styles.feasHint}>
+          Fill in a name, target, and date and we'll show you whether it's realistic.
+        </Text>
+      )}
+    </FormSheet>
+  );
+}
+
 export default function PlansScreen() {
   const router = useRouter();
 
@@ -222,6 +698,16 @@ export default function PlansScreen() {
   // Detail state
   const [selectedPlan, setSelectedPlan] = useState<PlanDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  // Allocation target resolution (target_id → { name, typeLabel }).
+  const [targetMap, setTargetMap] = useState<Record<string, TargetInfo>>({});
+
+  // Inline allocation edit/remove state.
+  const [editingAllocId, setEditingAllocId] = useState<string | null>(null);
+  const [editingAllocValue, setEditingAllocValue] = useState('');
+  const [allocError, setAllocError] = useState<string | null>(null);
+  const [allocBusyId, setAllocBusyId] = useState<string | null>(null);
 
   // Create modal state
   const [showCreate, setShowCreate] = useState(false);
@@ -229,6 +715,10 @@ export default function PlansScreen() {
   const [createType, setCreateType] = useState<PlanType>('savings');
   const [createContribution, setCreateContribution] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // Guided savings-goal flow state (additive to the existing create path).
+  const [showSavingsGoal, setShowSavingsGoal] = useState(false);
+  const [savingsSubmitting, setSavingsSubmitting] = useState(false);
 
   // Action loading
   const [actionLoading, setActionLoading] = useState(false);
@@ -270,17 +760,68 @@ export default function PlansScreen() {
     loadPlans();
   }, [loadPlans]);
 
+  // Fetch the couple's savings goals + debts and build a target_id → info map so
+  // allocation rows can render a real NAME + type instead of a raw id.
+  const loadTargetMap = async () => {
+    try {
+      const userId = await api.getUserId();
+      if (!userId) {
+        setTargetMap({});
+        return;
+      }
+      const [goals, debts] = await Promise.all([
+        api
+          .get<Array<{ id: string; name: string }>>('/auth/savings-goals', { user_id: userId })
+          .catch(() => [] as Array<{ id: string; name: string }>),
+        api
+          .get<Array<{ id: string; name: string }>>('/auth/debts', { user_id: userId })
+          .catch(() => [] as Array<{ id: string; name: string }>),
+      ]);
+      const map: Record<string, TargetInfo> = {};
+      (Array.isArray(goals) ? goals : []).forEach((g) => {
+        if (g?.id) map[g.id] = { name: g.name || 'Savings goal', typeLabel: 'Savings goal' };
+      });
+      (Array.isArray(debts) ? debts : []).forEach((d) => {
+        if (d?.id) map[d.id] = { name: d.name || 'Debt', typeLabel: 'Debt' };
+      });
+      setTargetMap(map);
+    } catch (e) {
+      console.error('Failed to load allocation targets:', e);
+      setTargetMap({});
+    }
+  };
+
   const loadPlanDetail = async (planId: string) => {
     setDetailLoading(true);
+    setDetailError(null);
+    setAllocError(null);
+    setEditingAllocId(null);
     try {
-      const data = await api.get<PlanDetail>(`/auth/plans/${planId}`);
+      const [data] = await Promise.all([
+        api.get<PlanDetail>(`/auth/plans/${planId}`),
+        loadTargetMap(),
+      ]);
       setSelectedPlan(data);
     } catch (e) {
       console.error('Failed to load plan detail:', e);
-      Alert.alert('Error', 'Failed to load plan details.');
+      setDetailError('Failed to load plan details.');
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  // Resolve an allocation's display name + type label from the fetched targets.
+  // Falls back to the allocation's own target_type; returns null when the target
+  // no longer exists so the caller can skip / show "Unknown".
+  const resolveTarget = (a: Allocation): TargetInfo | null => {
+    if (a.target_id && targetMap[a.target_id]) return targetMap[a.target_id];
+    if (a.target_name) {
+      return {
+        name: a.target_name,
+        typeLabel: a.target_type === 'debt' ? 'Debt' : a.target_type === 'savings_goal' ? 'Savings goal' : capitalize(a.target_type || ''),
+      };
+    }
+    return null;
   };
 
   // ─── Actions ────────────────────────────────────────────────
@@ -313,6 +854,53 @@ export default function PlansScreen() {
       Alert.alert('Error', 'Failed to create plan.');
     } finally {
       setCreating(false);
+    }
+  };
+
+  // Guided savings flow confirm: create the goal, then a savings plan pointed at
+  // it (backend auto-allocates), then refresh. Mirrors the param names used by
+  // the existing create-plan call above.
+  const handleCreateSavingsGoalPlan = async (payload: {
+    name: string;
+    target_amount: number;
+    current_amount: number;
+    target_date: string;
+    is_shared: boolean;
+    monthly_contribution: number;
+  }) => {
+    setSavingsSubmitting(true);
+    try {
+      const goal = await api.post<{ id: string }>('/auth/savings-goals', {
+        name: payload.name,
+        target_amount: payload.target_amount,
+        current_amount: payload.current_amount,
+        target_date: payload.target_date,
+        is_shared: payload.is_shared,
+      });
+      if (!goal?.id) throw new Error('Goal created without an id');
+
+      const monthly =
+        payload.monthly_contribution > 0
+          ? Math.round(payload.monthly_contribution * 100) / 100
+          : undefined;
+
+      const newPlan = await api.post<Plan>('/auth/plans', {
+        name: `${payload.name} plan`,
+        plan_type: 'savings',
+        monthly_contribution: monthly,
+        goal_ids: [goal.id],
+      });
+
+      setShowSavingsGoal(false);
+      await loadPlans();
+      if (newPlan?.id) {
+        loadPlanDetail(newPlan.id);
+      }
+    } catch (e) {
+      console.error('Create savings goal + plan error:', e);
+      Alert.alert('Error', 'Failed to create your savings goal and plan. Please try again.');
+    } finally {
+      setSavingsSubmitting(false);
     }
   };
 
@@ -461,6 +1049,79 @@ export default function PlansScreen() {
     }
   };
 
+  // ─── Allocation inline edit / remove ────────────────────────
+
+  const beginEditAlloc = (a: Allocation) => {
+    setAllocError(null);
+    setEditingAllocId(a.id);
+    setEditingAllocValue(String(a.monthly_amount ?? ''));
+  };
+
+  const cancelEditAlloc = () => {
+    setEditingAllocId(null);
+    setEditingAllocValue('');
+    setAllocError(null);
+  };
+
+  const saveEditAlloc = async (a: Allocation) => {
+    if (!selectedPlan) return;
+    const amount = Number(editingAllocValue);
+    if (editingAllocValue.trim() === '' || isNaN(amount) || amount < 0) {
+      setAllocError('Enter a valid amount.');
+      return;
+    }
+    setAllocBusyId(a.id);
+    setAllocError(null);
+    try {
+      await api.patch(`/auth/plans/${selectedPlan.id}/allocations/${a.id}`, {
+        monthly_amount: amount,
+      });
+      setEditingAllocId(null);
+      setEditingAllocValue('');
+      await loadPlanDetail(selectedPlan.id);
+    } catch (e) {
+      // A 400 means the override would push allocations above the pot.
+      if (e instanceof ApiError && e.status === 400) {
+        setAllocError("That's more than this plan has left to allocate.");
+      } else {
+        console.error('Allocation update error:', e);
+        setAllocError('Failed to update this allocation.');
+      }
+    } finally {
+      setAllocBusyId(null);
+    }
+  };
+
+  const removeAlloc = (a: Allocation) => {
+    if (!selectedPlan) return;
+    const info = resolveTarget(a);
+    Alert.alert(
+      'Remove allocation',
+      `Remove ${info?.name || 'this allocation'} from "${selectedPlan.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setAllocBusyId(a.id);
+            setAllocError(null);
+            try {
+              await api.delete(`/auth/plans/${selectedPlan.id}/allocations/${a.id}`);
+              if (editingAllocId === a.id) cancelEditAlloc();
+              await loadPlanDetail(selectedPlan.id);
+            } catch (e) {
+              console.error('Allocation remove error:', e);
+              setAllocError('Failed to remove this allocation.');
+            } finally {
+              setAllocBusyId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const resetCreateForm = () => {
     setCreateName('');
     setCreateType('savings');
@@ -523,65 +1184,10 @@ export default function PlansScreen() {
 
   // ─── Shared form-sheet recipe ───────────────────────────────
 
-  const FormSheet = ({
-    visible,
-    title,
-    onClose,
-    children,
-    submitLabel,
-    submitGradient = [...gradients.primaryGradient] as string[],
-    onSubmit,
-    submitting,
-  }: {
-    visible: boolean;
-    title: string;
-    onClose: () => void;
-    children: React.ReactNode;
-    submitLabel: string;
-    submitGradient?: string[];
-    onSubmit: () => void;
-    submitting: boolean;
-  }) => (
-    <Modal visible={visible} transparent animationType="slide">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.sheetBackdrop}
-      >
-        <View style={styles.sheet}>
-          <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>{title}</Text>
-            <TouchableOpacity
-              onPress={onClose}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              accessibilityLabel="Close"
-            >
-              <Ionicons name="close" size={24} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
-          <TouchableOpacity
-            onPress={onSubmit}
-            style={[styles.sheetSubmit, submitting && styles.disabledBtn]}
-            disabled={submitting}
-            activeOpacity={0.85}
-          >
-            <LinearGradient
-              colors={submitGradient as any}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.sheetSubmitInner}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.sheetSubmitText}>{submitLabel}</Text>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
+  // FormSheet lives at module scope (defined below) so it keeps a STABLE
+  // component identity across PlansScreen re-renders. When it was defined here
+  // inline, every keystroke re-created it, remounting the TextInputs and
+  // dismissing the keyboard.
 
   // ─── Detail View ────────────────────────────────────────────
 
@@ -591,6 +1197,15 @@ export default function PlansScreen() {
     const statusVis = STATUS_VISUAL[plan.status] || STATUS_VISUAL.draft;
     const maxAllocation = Math.max(...(plan.allocations?.map((a) => a.monthly_amount) || [1]), 1);
     const msProgress = milestoneProgress(plan.milestones);
+
+    // Allocation summary: pot, allocated sum, remaining (never negative — the
+    // backend guarantees the sum ≤ monthly_contribution).
+    const pot = plan.monthly_contribution || 0;
+    const orderedAllocations = [...(plan.allocations || [])].sort(
+      (a, b) => (a.priority_order ?? 0) - (b.priority_order ?? 0),
+    );
+    const allocatedSum = orderedAllocations.reduce((s, a) => s + (a.monthly_amount || 0), 0);
+    const remaining = Math.max(0, pot - allocatedSum);
     const hasPendingApproval =
       plan.status === 'draft' && !!plan.approvals?.some((a) => a.status === 'pending');
 
@@ -616,7 +1231,15 @@ export default function PlansScreen() {
             </View>
           </View>
 
-          {detailLoading ? (
+          {detailError ? (
+            <ScrollView contentContainerStyle={styles.scrollContent}>
+              <ErrorState
+                title="Couldn't load plan"
+                message={detailError}
+                onRetry={() => loadPlanDetail(plan.id)}
+              />
+            </ScrollView>
+          ) : detailLoading ? (
             <ScrollView contentContainerStyle={styles.scrollContent}>
               {/* Overview hero skeleton */}
               <View style={[styles.heroCard, { padding: spacing.xl }]}>
@@ -743,20 +1366,144 @@ export default function PlansScreen() {
 
               {/* Allocations */}
               <View style={styles.section}>
-                <GroupLabel>ALLOCATIONS</GroupLabel>
+                <GroupLabel
+                  icon="pie-chart-outline"
+                  right={
+                    <Text style={styles.groupLabelRightText}>
+                      {fmt(allocatedSum)} of {fmt(pot)}
+                    </Text>
+                  }
+                >
+                  ALLOCATIONS
+                </GroupLabel>
                 <View style={styles.glassCard}>
-                  {!plan.allocations || plan.allocations.length === 0 ? (
-                    <Text style={styles.emptySubtext}>No allocations configured.</Text>
+                  {/* Pot summary: allocated vs unallocated */}
+                  <View style={styles.allocSummary}>
+                    <View style={styles.allocSummaryItem}>
+                      <Text style={styles.metaLabel}>Allocated</Text>
+                      <Text style={styles.allocSummaryValue}>{fmt(allocatedSum)}</Text>
+                    </View>
+                    <View style={styles.allocSummaryItem}>
+                      <Text style={styles.metaLabel}>Unallocated</Text>
+                      <Text
+                        style={[
+                          styles.allocSummaryValue,
+                          { color: remaining > 0 ? colors.warning : colors.textMuted },
+                        ]}
+                      >
+                        {fmt(remaining)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={openEditPlan}
+                      style={styles.allocPotBtn}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Edit monthly pot"
+                    >
+                      <Ionicons name="create-outline" size={14} color={colors.accent} />
+                      <Text style={styles.allocPotBtnText}>Edit pot</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ marginBottom: spacing.md }}>
+                    <ProgressBar ratio={pot > 0 ? allocatedSum / pot : 0} />
+                  </View>
+
+                  {allocError && (
+                    <View style={styles.allocErrorBox}>
+                      <Ionicons name="alert-circle" size={14} color={colors.error} />
+                      <Text style={styles.allocErrorText}>{allocError}</Text>
+                    </View>
+                  )}
+
+                  {orderedAllocations.length === 0 ? (
+                    <Text style={styles.emptySubtext}>
+                      No allocations yet. This plan's pot is fully unallocated.
+                    </Text>
                   ) : (
-                    plan.allocations.map((a) => {
+                    orderedAllocations.map((a, idx) => {
+                      const info = resolveTarget(a);
+                      const isEditing = editingAllocId === a.id;
+                      const busy = allocBusyId === a.id;
                       const ratio = maxAllocation > 0 ? a.monthly_amount / maxAllocation : 0;
                       return (
-                        <View key={a.id} style={styles.allocationRow}>
+                        <View key={a.id} style={[styles.allocationRow, idx > 0 && styles.rowDivider]}>
                           <View style={styles.allocationHeader}>
-                            <Text style={styles.allocationLabel} numberOfLines={1}>
-                              {capitalize(a.target_name || a.target_type || 'Unknown')}
-                            </Text>
-                            <Text style={styles.allocationAmount}>{fmt(a.monthly_amount)}/mo</Text>
+                            <View style={{ flex: 1, marginRight: spacing.sm }}>
+                              <Text style={styles.allocationLabel} numberOfLines={1}>
+                                {info?.name || 'Unknown target'}
+                              </Text>
+                              <Text style={styles.metaLabel}>
+                                {info?.typeLabel || 'No longer available'}
+                              </Text>
+                            </View>
+                            {isEditing ? (
+                              <View style={styles.allocEditRow}>
+                                <TextInput
+                                  style={styles.allocEditInput}
+                                  value={editingAllocValue}
+                                  onChangeText={setEditingAllocValue}
+                                  keyboardType="numeric"
+                                  placeholder="0.00"
+                                  placeholderTextColor={colors.textDark}
+                                  autoFocus
+                                  editable={!busy}
+                                  accessibilityLabel="Monthly amount"
+                                />
+                                <TouchableOpacity
+                                  onPress={() => saveEditAlloc(a)}
+                                  disabled={busy}
+                                  style={styles.allocIconBtn}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Save amount"
+                                >
+                                  {busy ? (
+                                    <ActivityIndicator size="small" color={colors.success} />
+                                  ) : (
+                                    <Ionicons name="checkmark" size={20} color={colors.success} />
+                                  )}
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={cancelEditAlloc}
+                                  disabled={busy}
+                                  style={styles.allocIconBtn}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Cancel edit"
+                                >
+                                  <Ionicons name="close" size={20} color={colors.textMuted} />
+                                </TouchableOpacity>
+                              </View>
+                            ) : (
+                              <View style={styles.allocEditRow}>
+                                <Text style={styles.allocationAmount}>{fmt(a.monthly_amount)}/mo</Text>
+                                <TouchableOpacity
+                                  onPress={() => beginEditAlloc(a)}
+                                  disabled={busy}
+                                  style={styles.allocIconBtn}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Edit ${info?.name || 'allocation'} amount`}
+                                >
+                                  <Ionicons name="create-outline" size={18} color={colors.accent} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => removeAlloc(a)}
+                                  disabled={busy}
+                                  style={styles.allocIconBtn}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Remove ${info?.name || 'allocation'}`}
+                                >
+                                  {busy ? (
+                                    <ActivityIndicator size="small" color={colors.error} />
+                                  ) : (
+                                    <Ionicons name="trash-outline" size={18} color={colors.error} />
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+                            )}
                           </View>
                           <ProgressBar ratio={ratio} />
                         </View>
@@ -1191,6 +1938,38 @@ export default function PlansScreen() {
           onSubmit={handleCreate}
           submitting={creating}
         >
+          {/* Guided savings entry — the new happy path. Creating a savings plan
+              no longer requires a pre-existing goal: this walks the user through
+              a goal, checks feasibility, and creates both. */}
+          <TouchableOpacity
+            style={styles.guidedCta}
+            onPress={() => {
+              setShowCreate(false);
+              resetCreateForm();
+              setShowSavingsGoal(true);
+            }}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Start a new savings goal with a guided plan"
+          >
+            <View style={[styles.guidedCtaIcon, { backgroundColor: tint.success }]}>
+              <Ionicons name="trending-up" size={20} color={colors.success} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.guidedCtaTitle}>New savings goal</Text>
+              <Text style={styles.guidedCtaSub}>
+                We'll help you set a goal and check if it's realistic
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textDark} />
+          </TouchableOpacity>
+
+          <View style={styles.guidedDivider}>
+            <View style={styles.guidedDividerLine} />
+            <Text style={styles.guidedDividerText}>or build a plan manually</Text>
+            <View style={styles.guidedDividerLine} />
+          </View>
+
           <Text style={[styles.fieldLabel, { marginTop: 0 }]}>Plan Name</Text>
           <TextInput
             style={styles.input}
@@ -1239,6 +2018,14 @@ export default function PlansScreen() {
             onChangeText={setCreateContribution}
           />
         </FormSheet>
+
+        {/* Guided savings-goal + plan sheet */}
+        <SavingsGoalSheet
+          visible={showSavingsGoal}
+          onClose={() => setShowSavingsGoal(false)}
+          onConfirm={handleCreateSavingsGoalPlan}
+          submitting={savingsSubmitting}
+        />
       </SafeAreaView>
     </GradientBackground>
   );
@@ -1538,6 +2325,71 @@ const styles = StyleSheet.create({
     color: colors.accent,
     flexShrink: 0,
   },
+  allocSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    gap: spacing.lg,
+  },
+  allocSummaryItem: {
+    flexShrink: 1,
+  },
+  allocSummaryValue: {
+    ...typography.smallBold,
+    color: colors.text,
+    marginTop: spacing.xs,
+  },
+  allocPotBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginLeft: 'auto',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.full,
+    backgroundColor: colors.glassLight,
+  },
+  allocPotBtnText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: '700',
+  },
+  allocErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: tint.error,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  allocErrorText: {
+    ...typography.small,
+    color: colors.error,
+    flex: 1,
+  },
+  allocEditRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    flexShrink: 0,
+  },
+  allocEditInput: {
+    ...glassEffects.glass,
+    ...typography.smallBold,
+    color: colors.text,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    minWidth: 80,
+    textAlign: 'right',
+  } as TextStyle,
+  allocIconBtn: {
+    minWidth: 32,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // Approvals
   approvalRow: {
@@ -1694,7 +2546,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     ...typography.body,
     color: colors.text,
-  },
+  } as TextStyle,
   inputMultiline: {
     minHeight: 80,
     textAlignVertical: 'top',
@@ -1716,5 +2568,181 @@ const styles = StyleSheet.create({
   typeText: {
     ...typography.caption,
     color: colors.textMuted,
+  },
+
+  // Guided savings CTA (inside the Create sheet)
+  guidedCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+  },
+  guidedCtaIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guidedCtaTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  guidedCtaSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  guidedDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginVertical: spacing.lg,
+  },
+  guidedDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.borderLight,
+  },
+  guidedDividerText: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+
+  // Date field (guided savings sheet)
+  dateField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    ...glassEffects.glass,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+  },
+  dateFieldValue: {
+    flex: 1,
+    ...typography.body,
+    color: colors.text,
+  },
+  datePickerInset: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+
+  // Shared toggle
+  sharedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  sharedToggleText: {
+    ...typography.small,
+    color: colors.text,
+    flex: 1,
+  },
+
+  // Feasibility readout
+  feasCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    ...glassEffects.glass,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.lg,
+  },
+  feasLoadingText: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  feasNoteText: {
+    ...typography.small,
+    flex: 1,
+  },
+  feasHint: {
+    ...typography.small,
+    color: colors.textMuted,
+    marginTop: spacing.lg,
+    textAlign: 'center',
+  },
+  feasReadout: {
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginTop: spacing.lg,
+    gap: spacing.md,
+  },
+  feasStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.full,
+  },
+  feasStatusWord: {
+    ...typography.smallBold,
+  },
+  feasNumbers: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.lg,
+  },
+  feasNumberItem: {
+    flex: 1,
+  },
+  feasNumberValue: {
+    ...typography.bodyBold,
+    color: colors.text,
+    marginTop: spacing.xs,
+  },
+  pointerCard: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    backgroundColor: tint.primary2,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  pointerText: {
+    ...typography.small,
+    color: colors.text,
+    flex: 1,
+    lineHeight: 20,
+  },
+  feasOptions: {
+    gap: spacing.sm,
+  },
+  feasOptionsLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: spacing.xs,
+  },
+  feasOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  feasOptionInfo: {
+    borderStyle: 'dashed',
+  },
+  feasOptionText: {
+    ...typography.small,
+    color: colors.text,
+    flex: 1,
   },
 });

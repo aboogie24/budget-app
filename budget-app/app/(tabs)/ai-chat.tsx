@@ -519,12 +519,12 @@ export default function AIChatScreen() {
               multiline
               maxLength={2000}
               editable={!isStreaming}
-              onSubmitEditing={sendMessage}
+              onSubmitEditing={() => sendMessage()}
               blurOnSubmit={false}
             />
             <TouchableOpacity
               style={[styles.sendBtn, (!inputText.trim() || isStreaming) && styles.sendBtnDisabled]}
-              onPress={sendMessage}
+              onPress={() => sendMessage()}
               disabled={!inputText.trim() || isStreaming}
             >
               <Ionicons
@@ -560,7 +560,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg,
   },
   headerTitle: {
-    ...typography.h2,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
   },
   headerSubtitle: {

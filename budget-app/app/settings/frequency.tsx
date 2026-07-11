@@ -213,7 +213,7 @@ export default function FrequencySettingsScreen() {
 
   const morphTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const setters: Record<FieldKey, (v: string) => void> = {
+  const setters: Record<FieldKey, React.Dispatch<React.SetStateAction<string>>> = {
     weekly: setWeekly,
     biweekly: setBiweekly,
     monthly: setMonthly,

@@ -232,6 +232,8 @@ const tasks = [
   {id:100, title:"Couple collaboration (plan approval flow)", phase:"AI Enhancement", status:"todo", priority:"high", area:"fullstack", notes:"Partner review, approve/reject financial plans, negotiation via AI. Phase 3."},
   {id:101, title:"Monthly snapshot & milestone tracking", phase:"AI Enhancement", status:"todo", priority:"medium", area:"fullstack", notes:"Automated monthly snapshots, milestone progress visualization. Phase 4."},
   {id:102, title:"Proactive intelligence (nudges + what-if)", phase:"AI Enhancement", status:"todo", priority:"medium", area:"fullstack", notes:"Background nudge generation, what-if scenario simulator, monthly review automation. Phase 5."},
+  {id:103, title:"Priorities-over-targets redesign (rank real goals/debts)", phase:"AI Enhancement", status:"done", priority:"high", area:"fullstack", notes:"DONE 2026-07-11 (code-verified; needs manual in-app QA + migration apply). Priorities are now a ranking over real savings goals + debts instead of free text. Migration 20260710120000 (target_id/target_type on financial_priorities, unique rank per scope). Rewrote ListFinancialPriorities (union of goals+debts with rank overlay), ReorderFinancialPriorities (upsert per target). New handlers: plan_allocations.go (PATCH/DELETE allocations, effectiveMonthlyByTarget), plan_feasibility.go (POST /auth/plans/savings-feasibility). Frontend: priorities.tsx + plans.tsx rewrites, savings.tsx effective-monthly display. Backend build/vet/tests green."},
+  {id:104, title:"Repair TypeScript + Jest verification gates", phase:"Testing & Quality", status:"done", priority:"critical", area:"frontend", notes:"DONE 2026-07-11. tsconfig.json was corrupted (40 duplicate jsx keys + moduleResolution conflict) which silently disabled typecheck; jest-expo was v51 against Expo SDK 54 so all suites failed to parse. Fixed tsconfig, upgraded jest-expo to 54, fixed 386 latent TS errors (root cause: ViewStyle spreads into text styles vs expo web type augmentation poisoning StyleSheet.create inference), fixed stale test mocks (RN 0.81 ESM Platform mock, default-export mocks for GlassCard/react-native-svg, ListDebts/categories sqlmock columns, SaveNudges signature). Also fixed ProgressRing to use Animated.createAnimatedComponent so the ring actually animates. tsc: 0 errors, Jest: 88/88, Go: all green."},
 ];
 
 // === DERIVED DATA ===
@@ -291,7 +293,7 @@ function render(){
         <div class="header-sub">React Native + Go • ${s.total} tasks across ${phases.length} phases</div>
       </div>
       <div class="header-right">
-        <span class="last-updated">Updated: April 1, 2026</span>
+        <span class="last-updated">Updated: July 11, 2026</span>
       </div>
     </div>
 

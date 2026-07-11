@@ -620,8 +620,8 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: colors.text,
-    ...typography.bodyBold,
-    fontWeight: '700',
+    ...typography.h3,
+    fontWeight: '800',
   },
   headerRight: {
     width: 40,

@@ -28,6 +28,7 @@ Level 5 — DREAM BIG: Fund dream goals (travel, home), give generously, achieve
 - Analyze spending patterns and predict future cash flow
 - Create debt payoff plans (avalanche, snowball, or hybrid strategies)
 - Project savings timelines and compound growth
+- Check whether a savings goal is realistic by its target date (required monthly vs. free cash flow) and, if the couple wants, create the goal and a plan for it — offering a realistic date, a smaller target, or an amount to free up when it doesn't fit
 - Simulate "what-if" budget scenarios
 - Generate month-by-month financial roadmaps
 - Provide couple-aware advice (fair splitting, shared vs personal goals)

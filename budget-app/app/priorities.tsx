@@ -1,20 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  TouchableOpacity,
-  Alert,
-  ScrollView,
-  Modal,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
 import GradientBackground from '@/components/GradientBackground';
@@ -27,47 +14,81 @@ import {
   spacing,
   radius,
   typography,
-  glassEffects,
-  gradients,
   commonStyles,
 } from '@/utils/design-system';
 
-type Priority = {
-  id: string;
-  user_id: string;
-  household_id?: string;
-  title: string;
-  rank: number;
-  notes: string;
-  is_shared: boolean;
+// ─── Model ──────────────────────────────────────────────────────
+// Priorities is now a RANKING over the couple's real targets — their
+// savings goals and debts. Each entry mirrors a live target; there is
+// nothing to "add" here (targets come from Savings and Debts).
+type TargetType = 'savings_goal' | 'debt';
+
+type PriorityTarget = {
+  target_id: string;
+  target_type: TargetType;
+  name: string;
+  rank: number; // 0 = unranked
+  current: number; // savings: current_amount
+  target: number; // savings: target_amount
+  target_date: string; // savings, may be ''
+  balance: number; // debt: balance
+  apr: number; // debt
+  min_payment: number; // debt
+  effective_monthly: number; // $/month flowing to this target from active plans
 };
 
-// Rank-1 accent tints (12% on the semantic colors — kept out of the row logic).
-const RANK1_TINT = 'rgba(234,179,8,0.12)'; // colors.warning @ 12%
-const RANK_TINT = 'rgba(168,85,247,0.12)'; // colors.primary2 @ 12%
+// Type-indicator metadata. Color is a *supporting* accent — the icon + label
+// carry the meaning, so the distinction survives without color.
+const TYPE_META: Record<
+  TargetType,
+  { label: string; icon: keyof typeof Ionicons.glyphMap; accent: string; tint: string }
+> = {
+  savings_goal: {
+    label: 'Savings goal',
+    icon: 'flag',
+    accent: colors.success,
+    tint: 'rgba(34,197,94,0.12)', // colors.success @ 12%
+  },
+  debt: {
+    label: 'Debt',
+    icon: 'card',
+    accent: colors.info,
+    tint: 'rgba(59,130,246,0.12)', // colors.info @ 12%
+  },
+};
+
 const DISABLED_OPACITY = 0.35;
+
+const targetKey = (t: PriorityTarget) => `${t.target_type}:${t.target_id}`;
+
+const formatCurrency = (n: number) =>
+  `$${Math.round(n).toLocaleString('en-US')}`;
+
+const formatDate = (raw: string): string | null => {
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+};
 
 export default function PrioritiesScreen() {
   const router = useRouter();
-  const [priorities, setPriorities] = useState<Priority[]>([]);
+  const [targets, setTargets] = useState<PriorityTarget[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<Priority | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  // Form state
-  const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
 
   const loadPriorities = useCallback(async () => {
     try {
       const userId = await api.getUserId();
-      if (!userId) return;
-      const data = await api.get<Priority[]>('/auth/priorities', { user_id: userId });
-      const list = Array.isArray(data) ? data : [];
-      list.sort((a, b) => (a.rank || 99) - (b.rank || 99));
-      setPriorities(list);
+      if (!userId) {
+        setError('No user session found');
+        return;
+      }
+      // Backend returns the list already sorted (ranked first, unranked last).
+      const data = await api.get<PriorityTarget[]>('/auth/priorities', {
+        user_id: userId,
+      });
+      setTargets(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
       console.error('Failed to load priorities:', e);
@@ -81,105 +102,45 @@ export default function PrioritiesScreen() {
     loadPriorities();
   }, [loadPriorities]);
 
-  const resetForm = () => {
-    setTitle('');
-    setNotes('');
-    setEditing(null);
-  };
-
-  const openCreate = () => {
-    resetForm();
-    setShowForm(true);
-  };
-
-  const openEdit = (p: Priority) => {
-    setEditing(p);
-    setTitle(p.title);
-    setNotes(p.notes || '');
-    setShowForm(true);
-  };
-
-  const closeForm = () => {
-    setShowForm(false);
-    resetForm();
-  };
-
-  const handleSave = async () => {
-    if (!title.trim()) {
-      Alert.alert('Validation', 'Title is required.');
-      return;
-    }
-
-    const userId = await api.getUserId();
-    if (!userId) {
-      Alert.alert('Error', 'No user session found.');
-      return;
-    }
-
-    const payload = {
-      user_id: userId,
-      title: title.trim(),
-      rank: editing ? editing.rank : priorities.length + 1,
-      notes: notes.trim(),
-      is_shared: false,
-    };
-
-    setSaving(true);
-    try {
-      if (editing) {
-        await api.put(`/auth/priorities/${editing.id}`, payload);
-      } else {
-        await api.post('/auth/priorities', payload);
-      }
-      setShowForm(false);
-      resetForm();
+  useFocusEffect(
+    useCallback(() => {
       loadPriorities();
-    } catch (e) {
-      console.error('Save priority error:', e);
-      Alert.alert('Error', 'Failed to save priority.');
-    } finally {
-      setSaving(false);
-    }
-  };
+    }, [loadPriorities]),
+  );
 
-  const handleDelete = (p: Priority) => {
-    Alert.alert('Delete Priority', `Remove "${p.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await api.delete(`/auth/priorities/${p.id}`);
-            loadPriorities();
-          } catch (e) {
-            console.error('Delete priority error:', e);
-            Alert.alert('Error', 'Failed to delete priority.');
-          }
-        },
-      },
-    ]);
-  };
-
-  const moveItem = async (index: number, direction: 'up' | 'down') => {
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= priorities.length) return;
-
-    const reordered = [...priorities];
-    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
-    setPriorities(reordered);
-
+  // Optimistically reorder locally, then persist the full new order.
+  // The backend writes ranks 1..N in array order.
+  const persistOrder = useCallback(async (ordered: PriorityTarget[]) => {
     try {
+      const userId = await api.getUserId();
+      if (!userId) throw new Error('No user session');
       await api.patch('/auth/priorities/reorder', {
-        order: reordered.map((p) => p.id),
+        user_id: userId,
+        order: ordered.map((t) => ({
+          target_id: t.target_id,
+          target_type: t.target_type,
+        })),
       });
     } catch (e) {
       console.error('Reorder error:', e);
+      // Re-sync from source of truth on failure.
       loadPriorities();
     }
+  }, [loadPriorities]);
+
+  const moveItem = (index: number, direction: 'up' | 'down') => {
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= targets.length) return;
+
+    const reordered = [...targets];
+    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
+    // Reflect the new 1..N ranks locally so badges update immediately.
+    const withRanks = reordered.map((t, i) => ({ ...t, rank: i + 1 }));
+    setTargets(withRanks);
+    persistOrder(withRanks);
   };
 
-  // ── Header block (static — renders in every state) ──
+  // ── Header (static — renders in every state) ──
   const renderHeader = () => (
     <>
       <View style={styles.headerRow}>
@@ -187,25 +148,18 @@ export default function PrioritiesScreen() {
         <Text style={styles.headerTitle} numberOfLines={1}>
           Financial Priorities
         </Text>
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={openCreate}
-          accessibilityRole="button"
-          accessibilityLabel="Add a priority"
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="add-circle" size={28} color={colors.primary2} />
-        </TouchableOpacity>
+        {/* Spacer to keep the title balanced with the back button. */}
+        <View style={styles.headerSpacer} />
       </View>
 
       <Text style={styles.contextStrip}>
-        Rank what matters most so your spending stays aligned with your goals. Drag order with
-        the arrows.
+        Rank your savings goals and debts so your money flows to what matters most first. Reorder
+        with the arrows.
       </Text>
     </>
   );
 
-  // ── Loading skeleton card (layout-matched to a real PriorityCard) ──
+  // ── Loading skeleton card (layout-matched to a real target card) ──
   const renderSkeletonCard = (key: number) => (
     <View key={key} style={styles.card}>
       <View style={styles.cardRow}>
@@ -217,34 +171,56 @@ export default function PrioritiesScreen() {
         </View>
       </View>
       <View style={commonStyles.divider} />
-      <Skeleton height={12} width="30%" />
+      <Skeleton height={12} width="40%" />
     </View>
   );
 
-  const renderPriorityCard = (p: Priority, index: number) => {
-    const isTop = p.rank === 1;
+  const renderTargetCard = (t: PriorityTarget, index: number) => {
+    const meta = TYPE_META[t.target_type];
+    const isTop = index === 0;
     const upDisabled = index === 0;
-    const downDisabled = index === priorities.length - 1;
-    const accent = isTop ? colors.warning : colors.primary2;
-    const badgeFill = isTop ? RANK1_TINT : RANK_TINT;
+    const downDisabled = index === targets.length - 1;
+    const rank = index + 1;
 
-    const a11yLabel = `Priority ${p.rank}${isTop ? ', top priority' : ''}: ${p.title}.${
-      p.notes ? ` ${p.notes}.` : ''
-    }`;
+    // Context line — goal shows progress (+ date); debt shows balance + APR.
+    let contextText: string;
+    if (t.target_type === 'savings_goal') {
+      const dateLabel = formatDate(t.target_date);
+      contextText =
+        `${formatCurrency(t.current)} of ${formatCurrency(t.target)}` +
+        (dateLabel ? ` · by ${dateLabel}` : '');
+    } else {
+      contextText = `${formatCurrency(t.balance)} balance · ${t.apr}% APR`;
+    }
+
+    // Effective monthly funding from active plans.
+    const funded = t.effective_monthly > 0;
+    const fundingText = funded
+      ? `${formatCurrency(t.effective_monthly)}/mo from plans`
+      : 'Not funded yet';
+
+    const a11yLabel =
+      `Priority ${rank}${isTop ? ', top priority' : ''}: ${t.name}, ${meta.label}. ` +
+      `${contextText}. ${fundingText}.`;
 
     return (
-      <View key={p.id} style={styles.card} accessible accessibilityLabel={a11yLabel}>
+      <View
+        key={targetKey(t)}
+        style={styles.card}
+        accessible
+        accessibilityLabel={a11yLabel}
+      >
         <View style={styles.cardRow}>
-          {/* Rank badge — number carries order; color is a supporting accent only */}
-          <View style={[styles.rankBadge, { backgroundColor: badgeFill, borderColor: accent }]}>
-            <Text style={[styles.rankText, { color: accent }]}>{p.rank}</Text>
+          {/* Rank badge — number carries order; color is a supporting accent. */}
+          <View style={[styles.rankBadge, { borderColor: meta.accent, backgroundColor: meta.tint }]}>
+            <Text style={[styles.rankText, { color: meta.accent }]}>{rank}</Text>
           </View>
 
           {/* Body */}
           <View style={styles.cardBody}>
             <View style={styles.titleRow}>
               <Text style={styles.cardTitle} numberOfLines={2}>
-                {p.title}
+                {t.name}
               </Text>
               {isTop && (
                 <View style={styles.topPill}>
@@ -253,11 +229,19 @@ export default function PrioritiesScreen() {
                 </View>
               )}
             </View>
-            {p.notes ? (
-              <Text style={styles.notesText} numberOfLines={2}>
-                {p.notes}
-              </Text>
-            ) : null}
+
+            {/* Type indicator: icon + label + color (color-independent). */}
+            <View style={styles.typeRow}>
+              <View style={[styles.typeChip, { backgroundColor: meta.tint }]}>
+                <Ionicons name={meta.icon} size={11} color={meta.accent} />
+                <Text style={[styles.typeChipText, { color: meta.accent }]}>{meta.label}</Text>
+              </View>
+            </View>
+
+            {/* Context — goal progress / debt balance. */}
+            <Text style={styles.contextText} numberOfLines={2}>
+              {contextText}
+            </Text>
           </View>
 
           {/* Reorder control column */}
@@ -267,7 +251,7 @@ export default function PrioritiesScreen() {
               disabled={upDisabled}
               style={styles.reorderBtn}
               accessibilityRole="button"
-              accessibilityLabel={`Move ${p.title} up`}
+              accessibilityLabel={`Move ${t.name} up`}
               accessibilityState={{ disabled: upDisabled }}
               hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
             >
@@ -283,7 +267,7 @@ export default function PrioritiesScreen() {
               disabled={downDisabled}
               style={styles.reorderBtn}
               accessibilityRole="button"
-              accessibilityLabel={`Move ${p.title} down`}
+              accessibilityLabel={`Move ${t.name} down`}
               accessibilityState={{ disabled: downDisabled }}
               hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
             >
@@ -299,27 +283,14 @@ export default function PrioritiesScreen() {
 
         <View style={commonStyles.divider} />
 
-        {/* Action row */}
-        <View style={styles.cardActions}>
-          <TouchableOpacity
-            onPress={() => openEdit(p)}
-            style={styles.actionBtn}
-            accessibilityRole="button"
-            accessibilityLabel={`Edit ${p.title}`}
-          >
-            <Ionicons name="pencil" size={14} color={colors.primary2} />
-            <Text style={styles.actionText}>Edit</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => handleDelete(p)}
-            style={styles.actionBtn}
-            accessibilityRole="button"
-            accessibilityLabel={`Remove ${p.title}`}
-            accessibilityHint="Double tap to remove this priority."
-          >
-            <Ionicons name="trash-outline" size={14} color={colors.error} />
-            <Text style={[styles.actionText, styles.removeText]}>Remove</Text>
-          </TouchableOpacity>
+        {/* Funding row — effective monthly $ flowing from active plans. */}
+        <View style={styles.fundingRow}>
+          <Ionicons
+            name={funded ? 'trending-up' : 'remove-circle-outline'}
+            size={14}
+            color={funded ? colors.success : colors.textMuted}
+          />
+          <Text style={[styles.fundingText, !funded && styles.fundingMuted]}>{fundingText}</Text>
         </View>
       </View>
     );
@@ -351,101 +322,28 @@ export default function PrioritiesScreen() {
       );
     }
 
-    if (priorities.length === 0) {
+    if (targets.length === 0) {
       return (
         <EmptyState
           icon="flag-outline"
-          title="No priorities set"
-          description="Define your financial priorities to stay focused on what matters most."
-          actionLabel="Add Priority"
-          onAction={openCreate}
+          title="Nothing to rank yet"
+          description="Add savings goals or debts to rank them. Your targets show up here automatically."
+          actionLabel="Go to Goals"
+          onAction={() => router.push('/(tabs)/goals')}
         />
       );
     }
 
-    return <View>{priorities.map((p, index) => renderPriorityCard(p, index))}</View>;
+    return <View>{targets.map((t, index) => renderTargetCard(t, index))}</View>;
   };
 
   return (
     <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          showsVerticalScrollIndicator={false}
-        >
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {renderHeader()}
           <View style={styles.listWrap}>{renderContent()}</View>
         </ScrollView>
-
-        {/* Add/Edit bottom sheet */}
-        <Modal visible={showForm} animationType="slide" transparent onRequestClose={closeForm}>
-          <View style={styles.modalBackdrop}>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              style={styles.modalKav}
-            >
-              <View style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    {editing ? 'Edit Priority' : 'New Priority'}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={closeForm}
-                    style={styles.closeBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close"
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="close" size={24} color={colors.textMuted} />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.label}>Title</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Pay off student loans"
-                  placeholderTextColor={colors.textMuted}
-                  value={title}
-                  onChangeText={setTitle}
-                />
-
-                <Text style={styles.label}>Notes (optional)</Text>
-                <TextInput
-                  style={[styles.input, styles.inputMultiline]}
-                  placeholder="Why is this important?"
-                  placeholderTextColor={colors.textMuted}
-                  multiline
-                  value={notes}
-                  onChangeText={setNotes}
-                />
-
-                <TouchableOpacity
-                  onPress={handleSave}
-                  style={styles.saveBtn}
-                  disabled={saving}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel={editing ? 'Update' : 'Add Priority'}
-                >
-                  <LinearGradient
-                    colors={[...gradients.primaryGradient]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.saveBtnInner}
-                  >
-                    {saving ? (
-                      <ActivityIndicator color={colors.text} />
-                    ) : (
-                      <Text style={styles.saveBtnText}>
-                        {editing ? 'Update' : 'Add Priority'}
-                      </Text>
-                    )}
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </KeyboardAvoidingView>
-          </View>
-        </Modal>
       </SafeAreaView>
     </GradientBackground>
   );
@@ -468,12 +366,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     flex: 1,
   },
-  addBtn: {
+  headerSpacer: {
     width: 44,
     height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: -spacing.sm,
   },
   contextStrip: {
     ...typography.caption,
@@ -526,14 +421,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: radius.full,
-    backgroundColor: RANK1_TINT,
+    backgroundColor: 'rgba(234,179,8,0.12)', // colors.warning @ 12%
   },
   topPillText: {
     ...typography.caption,
     fontWeight: '700',
     color: colors.warning,
   },
-  notesText: {
+
+  // Type indicator
+  typeRow: {
+    flexDirection: 'row',
+    marginTop: spacing.xs,
+  },
+  typeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+  },
+  typeChipText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+
+  contextText: {
     ...typography.caption,
     color: colors.textMuted,
     marginTop: spacing.xs,
@@ -551,89 +465,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Action row
-  cardActions: {
-    flexDirection: 'row',
-    gap: spacing.lg,
-  },
-  actionBtn: {
+  // Funding row
+  fundingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    minHeight: 44,
   },
-  actionText: {
+  fundingText: {
     ...typography.smallBold,
-    color: colors.primary2,
+    color: colors.success,
   },
-  removeText: {
-    color: colors.error,
-  },
-
-  // Modal / bottom sheet
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  modalKav: {
-    width: '100%',
-  },
-  modalContent: {
-    backgroundColor: colors.surface2,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.lg,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  modalTitle: {
-    ...typography.h3,
-    color: colors.text,
-  },
-  closeBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: -spacing.sm,
-  },
-  label: {
-    ...typography.smallBold,
+  fundingMuted: {
     color: colors.textMuted,
-    marginBottom: spacing.sm,
-    marginTop: spacing.md,
-  },
-  input: {
-    ...glassEffects.glass,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.text,
-    ...typography.body,
-  },
-  inputMultiline: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  saveBtn: {
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    marginTop: spacing.xl,
-    marginBottom: spacing.lg,
-  },
-  saveBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.lg,
-  },
-  saveBtnText: {
-    ...typography.button,
-    color: colors.text,
+    fontWeight: '400',
   },
 });

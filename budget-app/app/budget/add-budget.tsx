@@ -286,7 +286,6 @@ export default function AddBudgetScreen() {
                       placeholder="0.00"
                       placeholderTextColor={colors.textMuted}
                       accessibilityLabel="Budget amount"
-                      adjustsFontSizeToFit={amountLen > 10}
                       numberOfLines={1}
                     />
                   </View>

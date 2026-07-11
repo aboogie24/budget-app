@@ -231,7 +231,7 @@ export default function AdvisorMemoryScreen() {
     [performDelete],
   );
 
-  const groups: MemoryGroup[] = [
+  const allGroups: MemoryGroup[] = [
     {
       title: 'Shared',
       scope: 'shared',
@@ -246,7 +246,8 @@ export default function AdvisorMemoryScreen() {
       subtitle: 'Only you — never shown to your partner',
       items: memories.filter((m) => m.scope === 'private'),
     },
-  ].filter((g) => g.items.length > 0);
+  ];
+  const groups = allGroups.filter((g) => g.items.length > 0);
 
   const isEmpty = !loading && !error && memories.length === 0;
 
