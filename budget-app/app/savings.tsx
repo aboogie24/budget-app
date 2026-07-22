@@ -2,17 +2,11 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   ScrollView,
-  Modal,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -30,8 +24,17 @@ import {
   radius,
   typography,
   glassEffects,
-  gradients,
 } from '@/utils/design-system';
+import {
+  FormSheet,
+  FormField,
+  FormInput,
+  AmountInput,
+  FormDateField,
+  FormPickerRow,
+  FormButton,
+} from '@/components/form';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 type SavingsGoal = {
   id: string;
@@ -133,9 +136,19 @@ export default function SavingsScreen() {
   const [targetAmount, setTargetAmount] = useState('');
   const [currentAmount, setCurrentAmount] = useState('');
   const [targetDate, setTargetDate] = useState('');
+  const [dateOpen, setDateOpen] = useState(false);
   const [priority, setPriority] = useState('');
   const [linkedBalanceId, setLinkedBalanceId] = useState<string | null>(null);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+
+  // Inline validation state
+  const [nameTouched, setNameTouched] = useState(false);
+  const [targetTouched, setTargetTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [progressTouched, setProgressTouched] = useState(false);
+  const [progressSaving, setProgressSaving] = useState(false);
+  const [progressError, setProgressError] = useState<string | null>(null);
 
   // Synced accounts for the "fund account" picker — loaded once, lazily.
   const accountsLoaded = useRef(false);
@@ -179,9 +192,13 @@ export default function SavingsScreen() {
     setTargetAmount('');
     setCurrentAmount('');
     setTargetDate('');
+    setDateOpen(false);
     setPriority('');
     setLinkedBalanceId(null);
     setEditing(null);
+    setNameTouched(false);
+    setTargetTouched(false);
+    setSaveError(null);
   };
 
   const openAdd = () => {
@@ -202,26 +219,32 @@ export default function SavingsScreen() {
     setShowForm(true);
   };
 
+  // Derived validity — the save CTA gates on this.
+  const parsedTarget = Number(targetAmount);
+  const goalNameValid = name.trim().length > 0;
+  const targetValid = !!targetAmount && Number.isFinite(parsedTarget) && parsedTarget > 0;
+  const isGoalFormValid = goalNameValid && targetValid;
+
   const handleSave = async () => {
-    if (!name.trim()) {
-      Alert.alert('Validation', 'Name is required.');
-      return;
-    }
-    if (!targetAmount || isNaN(Number(targetAmount)) || Number(targetAmount) <= 0) {
-      Alert.alert('Validation', 'Enter a valid target amount.');
+    if (!isGoalFormValid || saving) {
+      setNameTouched(true);
+      setTargetTouched(true);
       return;
     }
 
     const userId = await api.getUserId();
     if (!userId) {
-      Alert.alert('Error', 'No user session found.');
+      setSaveError('No user session found.');
       return;
     }
+
+    setSaving(true);
+    setSaveError(null);
 
     const payload = {
       user_id: userId,
       name: name.trim(),
-      target_amount: parseFloat(targetAmount),
+      target_amount: parsedTarget,
       current_amount: parseFloat(currentAmount) || 0,
       target_date: targetDate.trim(),
       priority: parseInt(priority) || 0,
@@ -237,45 +260,68 @@ export default function SavingsScreen() {
       } else {
         await api.post('/auth/savings-goals', payload);
       }
+      successHaptic();
       setShowForm(false);
       resetForm();
       loadGoals();
     } catch (e: any) {
       console.error('Save savings goal error:', e);
-      const msg =
+      errorHaptic();
+      setSaveError(
         e?.status === 409
           ? 'That account is already linked to another goal.'
-          : 'Failed to save savings goal.';
-      Alert.alert('Error', msg);
+          : 'Failed to save savings goal. Try again.',
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
+  const parsedProgress = Number(progressAmount);
+  const progressValid = !!progressAmount && Number.isFinite(parsedProgress);
+
   const handleUpdateProgress = async () => {
-    if (!progressAmount || isNaN(Number(progressAmount))) {
-      Alert.alert('Validation', 'Enter a valid amount.');
+    if (!progressValid || progressSaving) {
+      setProgressTouched(true);
       return;
     }
     const id = progressId;
-    const newAmount = parseFloat(progressAmount);
+
+    setProgressSaving(true);
+    setProgressError(null);
 
     // Optimistic bump — the bar (and possibly the status) reacts before refetch.
     setGoals((prev) =>
-      prev.map((g) => (g.id === id ? { ...g, current_amount: newAmount } : g)),
+      prev.map((g) => (g.id === id ? { ...g, current_amount: parsedProgress } : g)),
     );
 
     try {
       await api.patch(`/auth/savings-goals/${id}/progress`, {
-        current_amount: newAmount,
+        current_amount: parsedProgress,
       });
+      successHaptic();
       setProgressId(null);
       setProgressAmount('');
+      setProgressTouched(false);
       loadGoals();
     } catch (e) {
       console.error('Update progress error:', e);
-      Alert.alert('Error', 'Failed to update progress.');
+      errorHaptic();
+      setProgressError('Failed to update progress. Try again.');
       loadGoals(); // reconcile on failure
+    } finally {
+      setProgressSaving(false);
     }
   };
+
+  // Local-timezone YYYY-MM-DD (toISOString would shift the day near midnight).
+  const toISODate = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const parsedTargetDate = targetDate ? new Date(`${targetDate.slice(0, 10)}T00:00:00`) : null;
+  const targetDateValue =
+    parsedTargetDate && !isNaN(parsedTargetDate.getTime()) ? parsedTargetDate : new Date();
 
   const totalCurrent = goals.reduce((s, g) => s + (g.current_amount || 0), 0);
   const totalTarget = goals.reduce((s, g) => s + (g.target_amount || 0), 0);
@@ -534,183 +580,206 @@ export default function SavingsScreen() {
         </ScrollView>
 
         {/* ── Add / Edit Goal sheet ── */}
-        <Modal visible={showForm} animationType="slide" transparent>
-          <KeyboardAvoidingView
-            style={styles.modalBackdrop}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          >
-            <View style={styles.sheet}>
-              <ScrollView keyboardShouldPersistTaps="handled">
-                <View style={styles.sheetHeader}>
-                  <Text style={styles.sheetTitle}>
-                    {editing ? 'Edit Goal' : 'New Savings Goal'}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowForm(false);
-                      resetForm();
-                    }}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close"
-                  >
-                    <Ionicons name="close" size={24} color={colors.textMuted} />
-                  </TouchableOpacity>
+        <FormSheet
+          visible={showForm}
+          title={editing ? 'Edit Goal' : 'New Savings Goal'}
+          onClose={() => {
+            setShowForm(false);
+            resetForm();
+          }}
+          footer={
+            <>
+              {saveError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{saveError}</Text>
                 </View>
+              ) : null}
+              <FormButton
+                label={editing ? 'Update Goal' : 'Create Goal'}
+                onPress={handleSave}
+                disabled={!isGoalFormValid}
+                loading={saving}
+              />
+            </>
+          }
+        >
+          <FormField label="Name" error={nameTouched && !goalNameValid ? 'Name your goal' : null}>
+            <FormInput
+              icon="text-outline"
+              placeholder="e.g. Emergency Fund"
+              value={name}
+              onChangeText={setName}
+              onBlur={() => setNameTouched(true)}
+              error={nameTouched && !goalNameValid}
+            />
+          </FormField>
 
-                <Text style={styles.fieldLabel}>Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Emergency Fund"
-                  placeholderTextColor={colors.textMuted}
-                  value={name}
-                  onChangeText={setName}
+          <FormField
+            label="Target Amount"
+            error={targetTouched && !targetValid ? 'Enter a valid target amount' : null}
+          >
+            <AmountInput
+              compact
+              value={targetAmount}
+              onChangeText={setTargetAmount}
+              onBlur={() => setTargetTouched(true)}
+              error={targetTouched && !targetValid ? 'Enter a valid target amount' : null}
+              accessibilityLabel="Target amount"
+            />
+          </FormField>
+
+          {linkedBalanceId == null && (
+            <FormField label="Current Amount" optional>
+              <AmountInput
+                compact
+                value={currentAmount}
+                onChangeText={setCurrentAmount}
+                accessibilityLabel="Current amount"
+              />
+            </FormField>
+          )}
+
+          {bankAccounts.length > 0 && (
+            <FormField label="Fund Account" optional>
+              <Text style={styles.fieldHint}>
+                Link a real account (e.g. your HYSA) and this goal's progress will mirror its
+                balance automatically — no manual updates.
+              </Text>
+              <TouchableOpacity
+                style={[styles.accountOption, linkedBalanceId == null && styles.accountOptionActive]}
+                onPress={() => setLinkedBalanceId(null)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: linkedBalanceId == null }}
+              >
+                <Ionicons
+                  name={linkedBalanceId == null ? 'radio-button-on' : 'radio-button-off'}
+                  size={16}
+                  color={linkedBalanceId == null ? colors.primary2 : colors.textMuted}
                 />
-
-                <Text style={styles.fieldLabel}>Target Amount</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="$0.00"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={targetAmount}
-                  onChangeText={setTargetAmount}
-                />
-
-                {linkedBalanceId == null && (
-                  <>
-                    <Text style={styles.fieldLabel}>Current Amount</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="$0.00"
-                      placeholderTextColor={colors.textMuted}
-                      keyboardType="numeric"
-                      value={currentAmount}
-                      onChangeText={setCurrentAmount}
-                    />
-                  </>
-                )}
-
-                {bankAccounts.length > 0 && (
-                  <>
-                    <Text style={styles.fieldLabel}>Fund Account (optional)</Text>
-                    <Text style={styles.fieldHint}>
-                      Link a real account (e.g. your HYSA) and this goal's progress will
-                      mirror its balance automatically — no manual updates.
-                    </Text>
-                    <TouchableOpacity
-                      style={[styles.accountOption, linkedBalanceId == null && styles.accountOptionActive]}
-                      onPress={() => setLinkedBalanceId(null)}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: linkedBalanceId == null }}
-                    >
-                      <Ionicons
-                        name={linkedBalanceId == null ? 'radio-button-on' : 'radio-button-off'}
-                        size={16}
-                        color={linkedBalanceId == null ? colors.primary2 : colors.textMuted}
-                      />
-                      <Text style={styles.accountOptionText}>Track manually</Text>
-                    </TouchableOpacity>
-                    {bankAccounts.map((a) => {
-                      const selected = linkedBalanceId === a.id;
-                      return (
-                        <TouchableOpacity
-                          key={a.id}
-                          style={[styles.accountOption, selected && styles.accountOptionActive]}
-                          onPress={() => setLinkedBalanceId(a.id)}
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected }}
-                        >
-                          <Ionicons
-                            name={selected ? 'radio-button-on' : 'radio-button-off'}
-                            size={16}
-                            color={selected ? colors.primary2 : colors.textMuted}
-                          />
-                          <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text style={styles.accountOptionText} numberOfLines={1}>
-                              {a.name || 'Account'}
-                              {a.institution_name ? ` · ${a.institution_name}` : ''}
-                            </Text>
-                          </View>
-                          <Text style={styles.accountOptionBalance}>
-                            {fmtWhole(a.current_balance || 0)}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </>
-                )}
-
-                <Text style={styles.fieldLabel}>Target Date (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="2026-12-31"
-                  placeholderTextColor={colors.textMuted}
-                  value={targetDate}
-                  onChangeText={setTargetDate}
-                />
-
-                <Text style={styles.fieldLabel}>Priority (1 = highest)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="1"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={priority}
-                  onChangeText={setPriority}
-                />
-
-                <TouchableOpacity onPress={handleSave} style={styles.ctaBtn} activeOpacity={0.85}>
-                  <LinearGradient
-                    colors={[...gradients.primaryGradient]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.ctaInner}
+                <Text style={styles.accountOptionText}>Track manually</Text>
+              </TouchableOpacity>
+              {bankAccounts.map((a) => {
+                const selected = linkedBalanceId === a.id;
+                return (
+                  <TouchableOpacity
+                    key={a.id}
+                    style={[styles.accountOption, selected && styles.accountOptionActive]}
+                    onPress={() => setLinkedBalanceId(a.id)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
                   >
-                    <Text style={styles.ctaText}>{editing ? 'Update' : 'Create Goal'}</Text>
-                  </LinearGradient>
+                    <Ionicons
+                      name={selected ? 'radio-button-on' : 'radio-button-off'}
+                      size={16}
+                      color={selected ? colors.primary2 : colors.textMuted}
+                    />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.accountOptionText} numberOfLines={1}>
+                        {a.name || 'Account'}
+                        {a.institution_name ? ` · ${a.institution_name}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={styles.accountOptionBalance}>
+                      {fmtWhole(a.current_balance || 0)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </FormField>
+          )}
+
+          <FormField label="Target Date" optional>
+            {targetDate ? (
+              <>
+                <FormDateField
+                  value={targetDateValue}
+                  onChange={(d) => setTargetDate(toISODate(d))}
+                  open={dateOpen}
+                  onToggle={() => setDateOpen((o) => !o)}
+                  accessibilityLabel="Target date"
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    setTargetDate('');
+                    setDateOpen(false);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear target date"
+                >
+                  <Text style={styles.clearDateText}>Clear target date</Text>
                 </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+              </>
+            ) : (
+              <FormPickerRow
+                icon="calendar-outline"
+                value={null}
+                placeholder="No target date — tap to set"
+                onPress={() => {
+                  setTargetDate(toISODate(new Date()));
+                  setDateOpen(true);
+                }}
+                accessibilityLabel="Set a target date"
+              />
+            )}
+          </FormField>
+
+          <FormField label="Priority (1 = highest)" optional>
+            <FormInput
+              icon="flag-outline"
+              placeholder="1"
+              keyboardType="number-pad"
+              value={priority}
+              onChangeText={setPriority}
+            />
+          </FormField>
+        </FormSheet>
 
         {/* ── Update Progress sheet ── */}
-        <Modal visible={progressId !== null} animationType="fade" transparent>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setProgressId(null)}
+        <FormSheet
+          visible={progressId !== null}
+          title="Update Savings"
+          onClose={() => {
+            setProgressId(null);
+            setProgressAmount('');
+            setProgressTouched(false);
+            setProgressError(null);
+          }}
+          maxHeightPct={0.5}
+          footer={
+            <>
+              {progressError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{progressError}</Text>
+                </View>
+              ) : null}
+              <FormButton
+                label="Save Progress"
+                onPress={handleUpdateProgress}
+                disabled={!progressValid}
+                loading={progressSaving}
+              />
+            </>
+          }
+        >
+          <Text style={styles.sheetBody}>Enter the new total saved amount</Text>
+          <FormField
+            label="Current Amount Saved"
+            error={progressTouched && !progressValid ? 'Enter a valid amount' : null}
           >
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            >
-              <TouchableOpacity activeOpacity={1} style={styles.sheet}>
-                <Text style={styles.sheetTitle}>Update Savings</Text>
-                <Text style={styles.sheetBody}>Enter the new total saved amount</Text>
-                <TextInput
-                  style={[styles.input, { marginTop: spacing.md }]}
-                  placeholder="Current amount saved"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={progressAmount}
-                  onChangeText={setProgressAmount}
-                  autoFocus
-                />
-                <TouchableOpacity onPress={handleUpdateProgress} style={styles.ctaBtn} activeOpacity={0.85}>
-                  <LinearGradient
-                    colors={[...gradients.successGradient]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.ctaInner}
-                  >
-                    <Text style={styles.ctaText}>Save Progress</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </TouchableOpacity>
-            </KeyboardAvoidingView>
-          </TouchableOpacity>
-        </Modal>
+            <AmountInput
+              compact
+              value={progressAmount}
+              onChangeText={setProgressAmount}
+              onBlur={() => setProgressTouched(true)}
+              error={progressTouched && !progressValid ? 'Enter a valid amount' : null}
+              accessibilityLabel="Current amount saved"
+              autoFocus
+            />
+          </FormField>
+        </FormSheet>
       </SafeAreaView>
     </GradientBackground>
   );
@@ -949,64 +1018,27 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
 
-  // Modals / sheets
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: colors.surface2,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.xl,
-    maxHeight: '85%',
-  },
-  sheetHeader: {
+  // Form sheet extras
+  formErrorRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    gap: spacing.sm,
+    paddingBottom: spacing.xs,
   },
-  sheetTitle: {
-    ...typography.h3,
-    color: colors.text,
+  formErrorText: {
+    flex: 1,
+    ...typography.caption,
+    color: colors.error,
+  },
+  clearDateText: {
+    ...typography.caption,
+    color: colors.primary2,
+    fontWeight: '600',
+    marginTop: spacing.sm,
   },
   sheetBody: {
     ...typography.caption,
     color: colors.textMuted,
     marginTop: spacing.sm,
-  },
-  fieldLabel: {
-    ...typography.smallBold,
-    color: colors.textMuted,
-    marginBottom: spacing.sm,
-    marginTop: spacing.md,
-  },
-  input: {
-    backgroundColor: colors.glassLight,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.text,
-    ...typography.body,
-  },
-  ctaBtn: {
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    marginTop: spacing.xl,
-    marginBottom: spacing.lg,
-  },
-  ctaInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.lg,
-  },
-  ctaText: {
-    ...typography.button,
-    color: colors.text,
   },
 });

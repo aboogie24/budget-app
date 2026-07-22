@@ -1049,8 +1049,12 @@ func SyncAccountBalances(client *models.Client) http.HandlerFunc {
 			}
 		}
 
-		// Mirror fresh balances into any account-linked savings goals.
+		// Mirror fresh balances into any account-linked savings goals and debts.
 		bankprovider.SyncLinkedGoalBalances(dbClient.Conn, bankprovider.LinkedAccount{
+			UserID:      userID,
+			HouseholdID: hhID,
+		})
+		bankprovider.SyncLinkedDebtBalances(dbClient.Conn, bankprovider.LinkedAccount{
 			UserID:      userID,
 			HouseholdID: hhID,
 		})

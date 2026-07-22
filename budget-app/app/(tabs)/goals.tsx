@@ -39,7 +39,7 @@ import {
 
 // ── Types ──
 type Holding = { id: string; security_name?: string; ticker_symbol?: string; institution_value: number };
-type Debt = { id: string; name: string; balance: number; apr?: number; min_payment?: number; debt_category?: string; liability_type?: string; original_balance?: number; opening_balance?: number };
+type Debt = { id: string; name: string; balance: number; apr?: number; min_payment?: number; debt_category?: string; liability_type?: string; original_balance?: number; opening_balance?: number; linked_balance_id?: string | null };
 type Bill = { id: string; name: string; amount_due: number; status?: string };
 type Account = {
   id: string;
@@ -446,7 +446,18 @@ export default function FinancesScreen() {
           .reduce((s, a) => s + (a.current_balance || 0), 0);
         const localInvestments = nextHoldings.reduce((s, h) => s + (h.institution_value || 0), 0);
         const localProperties = nextProperties.reduce((s, p) => s + (p.zestimate || p.manual_value || 0), 0);
-        const localDebt = nextDebts.reduce((s, d) => s + (d.balance || 0), 0);
+        // Manual debts + synced credit/loan account balances — same liability
+        // set the screen displays, so snapshots match the live number.
+        // Accounts mirrored by a linked debt are excluded (no double-count).
+        const localDebt =
+          nextDebts.reduce((s, d) => s + (d.balance || 0), 0) +
+          nextAccounts
+            .filter(
+              (a) =>
+                (a.type === 'credit' || a.type === 'loan') &&
+                !nextDebts.some((d) => d.linked_balance_id === a.id),
+            )
+            .reduce((s, a) => s + Math.abs(a.current_balance || 0), 0);
         const snapTotal = localCash + localInvestments + localProperties - localDebt;
         const res = await recordNetWorthSnapshot(
           { cash: localCash, investments: localInvestments, properties: localProperties, debt: localDebt, total: snapTotal },
@@ -482,13 +493,30 @@ export default function FinancesScreen() {
     () => accounts.filter((a) => a.type !== 'credit' && a.type !== 'loan' && a.type !== 'investment'),
     [accounts],
   );
+  // Synced credit/loan accounts (e.g. a credit card from SimpleFIN) are
+  // liabilities: they belong in the Debts section and in net worth, not
+  // silently dropped by the asset filter. Accounts a debt already links to
+  // (balance-mirrored) are excluded — the debt row represents those dollars.
+  const liabilityAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (a) =>
+          (a.type === 'credit' || a.type === 'loan') &&
+          !debts.some((d) => d.linked_balance_id === a.id),
+      ),
+    [accounts, debts],
+  );
   const cashTotal = cashAccounts.reduce((sum, a) => sum + (a.current_balance || 0), 0);
   const investmentTotal = holdings.reduce((sum, h) => sum + (h.institution_value || 0), 0);
   const propertyTotal = properties.reduce((sum, p) => sum + (p.zestimate || p.manual_value || 0), 0);
   const debtTotal = debts.reduce((sum, d) => sum + (d.balance || 0), 0);
+  const liabilityAccountTotal = liabilityAccounts.reduce(
+    (sum, a) => sum + Math.abs(a.current_balance || 0),
+    0,
+  );
 
   const totalAssets = cashTotal + investmentTotal + propertyTotal;
-  const totalDebts = debtTotal;
+  const totalDebts = debtTotal + liabilityAccountTotal;
   const netWorth = totalAssets - totalDebts;
 
   // Real net-worth trend values for the sparkline (real snapshots only).
@@ -610,16 +638,27 @@ export default function FinancesScreen() {
   }, [properties, cashAccounts, holdings, investmentTotal]);
 
   const debtAccountList = useMemo<AccountItem[]>(
-    () =>
-      debts.map((d) => ({
+    () => [
+      ...debts.map((d) => ({
         name: d.name,
         subtitle: d.apr ? `${d.apr}% APR` : d.liability_type || 'Debt',
         iconName: (d.liability_type === 'mortgage' ? 'business' : d.liability_type === 'auto' ? 'car' : d.liability_type === 'student' ? 'school' : 'card') as keyof typeof Ionicons.glyphMap,
         iconColor: CATEGORY_COLORS.debt,
         balance: -(d.balance || 0),
-        route: '/debts',
+        route: '/debts' as const,
       })),
-    [debts],
+      ...liabilityAccounts.map((a) => ({
+        name: a.name || 'Credit account',
+        subtitle:
+          [a.institution_name, a.mask ? `··${a.mask}` : ''].filter(Boolean).join(' ') ||
+          (a.type === 'loan' ? 'Loan · synced' : 'Credit card · synced'),
+        iconName: (a.type === 'loan' ? 'cash-outline' : 'card') as keyof typeof Ionicons.glyphMap,
+        iconColor: CATEGORY_COLORS.debt,
+        balance: -Math.abs(a.current_balance || 0),
+        route: '/accounts' as const,
+      })),
+    ],
+    [debts, liabilityAccounts],
   );
 
   // ── Debt payoff items (color + status word, never color alone) ──

@@ -26,6 +26,7 @@ import { BackButton } from '@/components/BackButton';
 import GradientBackground from '@/components/GradientBackground';
 import { Skeleton } from '@/components/Skeleton';
 import CategoryPicker from '@/components/CategoryPicker';
+import { FormChips } from '@/components/form';
 import {
   colors,
   spacing,
@@ -532,36 +533,14 @@ export default function EditTransactionScreen() {
 
                   {/* Frequency */}
                   <Text style={[styles.fieldLabel, styles.fieldSpacer]}>Frequency</Text>
-                  <View
-                    style={styles.freqRow}
-                    accessibilityRole="radiogroup"
-                  >
-                    {frequencyOptions.map((option) => {
-                      const selected = frequency === option;
-                      return (
-                        <TouchableOpacity
-                          key={option}
-                          onPress={() => {
-                            lightHaptic();
-                            setFrequency(option);
-                          }}
-                          style={[styles.chip, selected && styles.chipSelected]}
-                          activeOpacity={0.75}
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected }}
-                        >
-                          <Text
-                            style={[
-                              styles.chipText,
-                              selected && styles.chipTextSelected,
-                            ]}
-                          >
-                            {option}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
+                  <FormChips
+                    options={frequencyOptions.map((o) => ({
+                      value: o as string,
+                      label: o === 'one-time' ? 'One-time' : o.charAt(0).toUpperCase() + o.slice(1),
+                    }))}
+                    value={frequency}
+                    onChange={setFrequency}
+                  />
 
                   {/* Due day (conditional) */}
                   {dueDayRequired && (
@@ -1096,32 +1075,11 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
 
-  // Frequency chips
+  // Frequency chips (skeleton row only — live chips are the shared FormChips)
   freqRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
-  },
-  chip: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.glassMedium,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-  },
-  chipSelected: {
-    backgroundColor: `${colors.primary2}2E`,
-    borderColor: `${colors.primary2}B3`,
-  },
-  chipText: {
-    ...typography.small,
-    color: colors.text,
-    textTransform: 'capitalize',
-  },
-  chipTextSelected: {
-    color: colors.text,
-    fontWeight: '700',
   },
 
   // Field validation hint

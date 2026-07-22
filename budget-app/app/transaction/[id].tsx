@@ -259,67 +259,49 @@ export default function TransactionDetail() {
     </View>
   );
 
-  // ── State: loading skeleton ──
-  if (loadState === 'loading') {
-    return (
-      <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
-        <SafeAreaView style={{ flex: 1 }}>
-          {header}
-          <View style={styles.body}>
-            {/* Hero shell */}
-            <View style={[styles.heroCard, styles.center]}>
-              <Skeleton width={72} height={20} borderRadius={radius.full} />
-              <View style={{ height: spacing.md }} />
-              <Skeleton width={180} height={36} borderRadius={radius.md} />
-              <View style={{ height: spacing.md }} />
-              <Skeleton width={120} height={20} borderRadius={radius.full} />
-            </View>
-            {/* Details shell */}
-            <View style={[styles.card, { marginTop: spacing.xl }]}>
-              <SkeletonStack count={4} height={14} gap={spacing.lg} />
-            </View>
-          </View>
-        </SafeAreaView>
-      </GradientBackground>
-    );
-  }
+  // ── Non-ready states share one shell (header + body) instead of four
+  //    duplicated GradientBackground/SafeAreaView trees. ──
+  const stateBody =
+    loadState === 'loading' ? (
+      <>
+        {/* Hero shell */}
+        <View style={[styles.heroCard, styles.center]}>
+          <Skeleton width={72} height={20} borderRadius={radius.full} />
+          <View style={{ height: spacing.md }} />
+          <Skeleton width={180} height={36} borderRadius={radius.md} />
+          <View style={{ height: spacing.md }} />
+          <Skeleton width={120} height={20} borderRadius={radius.full} />
+        </View>
+        {/* Details shell */}
+        <View style={[styles.card, { marginTop: spacing.xl }]}>
+          <SkeletonStack count={4} height={14} gap={spacing.lg} />
+        </View>
+      </>
+    ) : loadState === 'not-found' ? (
+      <EmptyState
+        icon="receipt-outline"
+        title="Transaction not found"
+        description="It may have been deleted or moved. Head back to your activity to find it."
+        actionLabel="Back to activity"
+        onAction={() => router.replace('/transaction/list')}
+      />
+    ) : loadState === 'error' ? (
+      <ErrorState
+        title="Couldn't load this transaction"
+        message="Check your connection and try again."
+        retryLabel="Try again"
+        onRetry={load}
+        dismissLabel="Go back"
+        onDismiss={() => router.replace('/transaction/list')}
+      />
+    ) : null;
 
-  // ── State: not found ──
-  if (loadState === 'not-found') {
+  if (stateBody) {
     return (
       <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
         <SafeAreaView style={{ flex: 1 }}>
           {header}
-          <View style={styles.body}>
-            <EmptyState
-              icon="receipt-outline"
-              title="Transaction not found"
-              description="It may have been deleted or moved. Head back to your activity to find it."
-              actionLabel="Back to activity"
-              onAction={() => router.replace('/transaction/list')}
-            />
-          </View>
-        </SafeAreaView>
-      </GradientBackground>
-    );
-  }
-
-  // ── State: error ──
-  if (loadState === 'error') {
-    return (
-      <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
-        <SafeAreaView style={{ flex: 1 }}>
-          {header}
-          <View style={styles.body}>
-            <ErrorState
-              title="Couldn't load this transaction"
-              message="Check your connection and try again."
-              retryLabel="Try again"
-              onRetry={load}
-              dismissLabel="Go back"
-              onDismiss={() => router.replace('/transaction/list')}
-            />
-          </View>
+          <View style={styles.body}>{stateBody}</View>
         </SafeAreaView>
       </GradientBackground>
     );

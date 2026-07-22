@@ -1,14 +1,11 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   Alert,
   ScrollView,
-  Modal,
-  Switch,
   RefreshControl,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
+import { fetchAccountBalances } from '../utils/api';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { BackButton } from '@/components/BackButton';
@@ -31,6 +29,16 @@ import {
   radius,
   typography,
 } from '@/utils/design-system';
+import {
+  FormSheet,
+  FormField,
+  FormInput,
+  AmountInput,
+  FormChips,
+  FormSwitchRow,
+  FormButton,
+} from '@/components/form';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 // ── Types ──
 type Debt = {
@@ -48,6 +56,9 @@ type Debt = {
   debt_category: 'attack' | 'structured';
   liability_type: string;
   asset_depreciates?: boolean;
+  /** When set, this debt's balance mirrors the linked bank account on every sync. */
+  linked_balance_id?: string | null;
+  linked_account_name?: string;
 };
 
 type Bill = {
@@ -310,18 +321,31 @@ const DebtCard = ({
             ))}
           </View>
 
-          {/* Action buttons */}
+          {/* Action buttons — linked debts mirror their account, so manual
+              payments are replaced by a synced indicator. */}
           <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-            <TouchableOpacity style={{ flex: 1 }} onPress={onMakePayment} activeOpacity={0.8}>
-              <LinearGradient
-                colors={[...gradients.primaryGradient]}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                style={styles.actionBtnPrimary}
-              >
-                <Ionicons name="cash-outline" size={14} color="white" />
-                <Text style={{ ...typography.button, fontSize: 13, color: 'white' }}>Make Payment</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+            {debt.linked_balance_id ? (
+              <View style={[styles.actionBtnSecondary, { flex: 1, flexDirection: 'row', gap: spacing.xs }]}>
+                <Ionicons name="link" size={14} color={colors.primary2} />
+                <Text
+                  style={{ ...typography.smallBold, fontWeight: '600', color: colors.primary2, fontSize: 13 }}
+                  numberOfLines={1}
+                >
+                  Synced · {debt.linked_account_name || 'linked account'}
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={{ flex: 1 }} onPress={onMakePayment} activeOpacity={0.8}>
+                <LinearGradient
+                  colors={[...gradients.primaryGradient]}
+                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                  style={styles.actionBtnPrimary}
+                >
+                  <Ionicons name="cash-outline" size={14} color="white" />
+                  <Text style={{ ...typography.button, fontSize: 13, color: 'white' }}>Make Payment</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[styles.actionBtnSecondary, { flex: 1 }]}
               onPress={onEditDetails}
@@ -444,6 +468,36 @@ export default function DebtsScreen() {
   const [isShared, setIsShared] = useState(true);
   const [liabilityType, setLiabilityType] = useState('other');
   const [debtCategory, setDebtCategory] = useState<'attack' | 'structured'>('attack');
+  const [linkedBalanceId, setLinkedBalanceId] = useState<string | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+
+  // Synced credit/loan accounts for the "linked account" picker — loaded once, lazily.
+  const accountsLoaded = useRef(false);
+  const ensureAccounts = useCallback(async () => {
+    if (accountsLoaded.current) return;
+    accountsLoaded.current = true;
+    try {
+      const accts = await fetchAccountBalances();
+      setBankAccounts(
+        (Array.isArray(accts) ? accts : []).filter(
+          (a: any) => a.type === 'credit' || a.type === 'loan',
+        ),
+      );
+    } catch (e) {
+      console.log('Account list load failed (link picker hidden):', e);
+    }
+  }, []);
+
+  // Inline validation state (hints on blur, CTA gates on validity)
+  const [nameTouched, setNameTouched] = useState(false);
+  const [balanceTouched, setBalanceTouched] = useState(false);
+  const [dueDayTouched, setDueDayTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [paymentTouched, setPaymentTouched] = useState(false);
+  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [billCreating, setBillCreating] = useState(false);
 
   const loadDebts = useCallback(async () => {
     try {
@@ -486,7 +540,12 @@ export default function DebtsScreen() {
     setIsShared(true);
     setLiabilityType('other');
     setDebtCategory('attack');
+    setLinkedBalanceId(null);
     setEditing(null);
+    setNameTouched(false);
+    setBalanceTouched(false);
+    setDueDayTouched(false);
+    setSaveError(null);
   };
 
   const openEdit = (d: Debt) => {
@@ -500,29 +559,43 @@ export default function DebtsScreen() {
     setIsShared(d.is_shared);
     setLiabilityType(d.liability_type || 'other');
     setDebtCategory(d.debt_category || 'attack');
+    setLinkedBalanceId(d.linked_balance_id || null);
+    ensureAccounts();
     setShowForm(true);
   };
 
+  // Derived validity — single source of truth for the save CTA. A linked
+  // debt's balance comes from the account, so the manual field doesn't gate.
+  const parsedBalance = Number(balance);
+  const debtNameValid = name.trim().length > 0;
+  const balanceValid = linkedBalanceId != null || (!!balance && Number.isFinite(parsedBalance));
+  const debtDueDayNum = parseInt(dueDay, 10);
+  const debtDueDayValid =
+    !dueDay || (Number.isInteger(debtDueDayNum) && debtDueDayNum >= 1 && debtDueDayNum <= 31);
+  const isDebtFormValid = debtNameValid && balanceValid && debtDueDayValid;
+
   const handleSave = async () => {
-    if (!name.trim()) {
-      Alert.alert('Validation', 'Name is required.');
-      return;
-    }
-    if (!balance || isNaN(Number(balance))) {
-      Alert.alert('Validation', 'Enter a valid balance.');
+    if (!isDebtFormValid || saving) {
+      setNameTouched(true);
+      setBalanceTouched(true);
+      setDueDayTouched(true);
       return;
     }
 
     const userId = await api.getUserId();
     if (!userId) {
-      Alert.alert('Error', 'No user session found.');
+      setSaveError('No user session found.');
       return;
     }
+
+    setSaving(true);
+    setSaveError(null);
 
     const payload = {
       user_id: userId,
       name: name.trim(),
-      balance: parseFloat(balance),
+      // Linked debts mirror the account; the backend snaps the real number.
+      balance: linkedBalanceId ? 0 : parseFloat(balance),
       apr: parseFloat(apr) || 0,
       min_payment: parseFloat(minPayment) || 0,
       due_day: dueDay ? parseInt(dueDay) : null,
@@ -530,6 +603,7 @@ export default function DebtsScreen() {
       is_shared: isShared,
       liability_type: liabilityType,
       debt_category: debtCategory,
+      linked_balance_id: linkedBalanceId,
     };
 
     try {
@@ -556,40 +630,60 @@ export default function DebtsScreen() {
           }
         }
       }
+      successHaptic();
       setShowForm(false);
       resetForm();
       loadDebts();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Save debt error:', e);
-      Alert.alert('Error', 'Failed to save debt.');
+      errorHaptic();
+      setSaveError(
+        e?.status === 409
+          ? 'That account is already linked to another debt.'
+          : 'Failed to save debt. Check your connection and try again.',
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
+  const parsedPayment = Number(paymentAmount);
+  const paymentValid =
+    !!paymentAmount && Number.isFinite(parsedPayment) && parsedPayment > 0;
+
   const handlePayment = async () => {
-    if (!paymentAmount || isNaN(Number(paymentAmount)) || Number(paymentAmount) <= 0) {
-      Alert.alert('Validation', 'Enter a valid payment amount.');
+    if (!paymentValid || paymentSaving) {
+      setPaymentTouched(true);
       return;
     }
+    setPaymentSaving(true);
+    setPaymentError(null);
     try {
       await api.patch(`/auth/debts/${paymentId}/payment`, {
-        amount: parseFloat(paymentAmount),
+        amount: parsedPayment,
       });
+      successHaptic();
       setPaymentId(null);
       setPaymentAmount('');
+      setPaymentTouched(false);
       loadDebts();
     } catch (e) {
       console.error('Payment error:', e);
-      Alert.alert('Error', 'Failed to apply payment.');
+      errorHaptic();
+      setPaymentError('Failed to apply payment. Try again.');
+    } finally {
+      setPaymentSaving(false);
     }
   };
 
   const handleCreateBillFromDebt = async () => {
-    if (!billDebt) return;
+    if (!billDebt || billCreating) return;
     const userId = await api.getUserId();
     if (!userId) {
       Alert.alert('Error', 'No user session found.');
       return;
     }
+    setBillCreating(true);
     try {
       await api.post('/auth/bills', {
         user_id: userId,
@@ -601,13 +695,17 @@ export default function DebtsScreen() {
         is_autopay: false,
         is_shared: false,
       });
+      successHaptic();
       Alert.alert('Success', `Bill created for "${billDebt.name}".`);
       setBillDebt(null);
       setBillFreq('monthly');
       loadDebts();
     } catch (e) {
       console.error('Create bill error:', e);
+      errorHaptic();
       Alert.alert('Error', 'Failed to create bill.');
+    } finally {
+      setBillCreating(false);
     }
   };
 
@@ -693,7 +791,7 @@ export default function DebtsScreen() {
       .sort((a, b) => a.estMonths - b.estMonths);
   }, [debts]);
 
-  const openAddForm = () => { resetForm(); setShowForm(true); };
+  const openAddForm = () => { resetForm(); ensureAccounts(); setShowForm(true); };
 
   return (
     <GradientBackground variant="bgDarkPurple">
@@ -938,353 +1036,381 @@ export default function DebtsScreen() {
           )}
         </ScrollView>
 
-        {/* ── Add/Edit Modal ── */}
-        <Modal visible={showForm} animationType="slide" transparent>
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalContent}>
-              <ScrollView>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    {editing ? 'Edit Debt' : 'Add Debt'}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => { setShowForm(false); resetForm(); }}
-                  >
-                    <Ionicons name="close" size={24} color={colors.textMuted} />
-                  </TouchableOpacity>
+        {/* ── Add/Edit Debt Sheet ── */}
+        <FormSheet
+          visible={showForm}
+          title={editing ? 'Edit Debt' : 'Add Debt'}
+          onClose={() => {
+            setShowForm(false);
+            resetForm();
+          }}
+          footer={
+            <>
+              {saveError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{saveError}</Text>
                 </View>
-
-                <Text style={styles.label}>Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Chase Credit Card"
-                  placeholderTextColor={colors.textMuted}
-                  value={name}
-                  onChangeText={setName}
-                />
-
-                <Text style={styles.label}>Balance</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="$0.00"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={balance}
-                  onChangeText={setBalance}
-                />
-
-                <Text style={styles.label}>APR (%)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={apr}
-                  onChangeText={setApr}
-                />
-
-                <Text style={styles.label}>Min Payment</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="$0.00"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={minPayment}
-                  onChangeText={setMinPayment}
-                />
-
-                <Text style={styles.label}>Due Day (1-31)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="15"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={dueDay}
-                  onChangeText={setDueDay}
-                />
-
-                <Text style={styles.label}>Debt Type</Text>
-                <View style={styles.freqRow}>
-                  {LIABILITY_TYPES.map((t) => (
-                    <TouchableOpacity
-                      key={t.value}
-                      style={[styles.freqBtn, liabilityType === t.value && styles.freqBtnActive]}
-                      onPress={() => {
-                        setLiabilityType(t.value);
-                        setDebtCategory((DEFAULT_CATEGORIES[t.value] || 'attack') as 'attack' | 'structured');
-                      }}
-                    >
-                      <Text style={[styles.freqText, liabilityType === t.value && styles.freqTextActive]}>
-                        {t.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={styles.label}>Category</Text>
-                <View style={styles.strategyRow}>
-                  {(['attack', 'structured'] as const).map((c) => (
-                    <TouchableOpacity
-                      key={c}
-                      style={[
-                        styles.strategyBtn,
-                        debtCategory === c && {
-                          backgroundColor: bucketColor(c) + '2e',
-                          borderColor: bucketColor(c) + 'b3',
-                        },
-                      ]}
-                      onPress={() => setDebtCategory(c)}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
-                        <Ionicons
-                          name={c === 'attack' ? 'flame' : 'shield-checkmark'}
-                          size={14}
-                          color={debtCategory === c ? bucketColor(c) : colors.textMuted}
-                        />
-                        <Text style={[
-                          styles.strategyText,
-                          debtCategory === c && { color: colors.text, fontWeight: '700' },
-                        ]}>
-                          {c === 'attack' ? 'Attack' : 'Structured'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={{ color: colors.textMuted, ...typography.caption, marginTop: spacing.xs }}>
-                  {debtCategory === 'attack' ? 'Pay off aggressively with extra payments' : 'Pay minimums on schedule (e.g., mortgage)'}
-                </Text>
-
-                <Text style={styles.label}>Strategy</Text>
-                <View style={styles.strategyRow}>
-                  {['avalanche', 'snowball', ''].map((s) => (
-                    <TouchableOpacity
-                      key={s}
-                      style={[styles.strategyBtn, strategy === s && styles.strategyBtnActive]}
-                      onPress={() => setStrategy(s)}
-                    >
-                      <Text style={[styles.strategyText, strategy === s && styles.strategyTextActive]}>
-                        {s || 'None'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <View style={styles.billToggleRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.billToggleLabel}>Share with partner</Text>
-                    <Text style={styles.billToggleDesc}>Visible to your household partner</Text>
-                  </View>
-                  <Switch
-                    value={isShared}
-                    onValueChange={setIsShared}
-                    trackColor={{ false: colors.glassMedium, true: colors.primary + '66' }}
-                    thumbColor={isShared ? colors.accent : colors.textMuted}
-                  />
-                </View>
-
-                {/* Create Associated Bill toggle - only for new debts */}
-                {!editing && (
-                  <>
-                    <View style={styles.billToggleRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.billToggleLabel}>Create associated bill</Text>
-                        <Text style={styles.billToggleDesc}>Auto-create a recurring bill linked to this debt</Text>
-                      </View>
-                      <Switch
-                        value={createBill}
-                        onValueChange={setCreateBill}
-                        trackColor={{ false: colors.glassMedium, true: colors.primary + '66' }}
-                        thumbColor={createBill ? colors.accent : colors.textMuted}
-                      />
-                    </View>
-
-                    {createBill && (
-                      <View style={styles.billOptionsCard}>
-                        <Ionicons name="receipt-outline" size={16} color={colors.info} style={{ marginBottom: spacing.sm }} />
-                        <Text style={styles.billOptionsHint}>
-                          Bill: "{name.trim() || '...'} Payment" for {minPayment ? `$${minPayment}` : '$0'} due day {dueDay || '1'}
-                        </Text>
-                        <Text style={[styles.label, { marginTop: spacing.sm }]}>Frequency</Text>
-                        <View style={styles.freqRow}>
-                          {(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map((f) => (
-                            <TouchableOpacity
-                              key={f}
-                              style={[styles.freqBtn, billFrequency === f && styles.freqBtnActive]}
-                              onPress={() => setBillFrequency(f)}
-                            >
-                              <Text style={[styles.freqText, billFrequency === f && styles.freqTextActive]}>
-                                {f.charAt(0).toUpperCase() + f.slice(1)}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                    )}
-                  </>
-                )}
-
-                <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
-                  <LinearGradient
-                    colors={[...gradients.primaryGradient]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.saveBtnInner}
-                  >
-                    <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Debt'}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        {/* ── Payment Modal ── */}
-        <Modal visible={paymentId !== null} animationType="fade" transparent>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setPaymentId(null)}
-          >
-            <View style={styles.paymentSheet}>
-              <Text style={styles.modalTitle}>Apply Payment</Text>
-              <TextInput
-                style={[styles.input, { marginTop: spacing.md }]}
-                placeholder="Payment amount"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="numeric"
-                value={paymentAmount}
-                onChangeText={setPaymentAmount}
+              ) : null}
+              <FormButton
+                label={editing ? 'Update Debt' : 'Add Debt'}
+                onPress={handleSave}
+                disabled={!isDebtFormValid}
+                loading={saving}
               />
-              <TouchableOpacity onPress={handlePayment} style={styles.saveBtn}>
-                <LinearGradient
-                  colors={[...gradients.successGradient]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.saveBtnInner}
-                >
-                  <Text style={styles.saveBtnText}>Apply Payment</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
+            </>
+          }
+        >
+          <FormField label="Name" error={nameTouched && !debtNameValid ? 'Name is required' : null}>
+            <FormInput
+              icon="text-outline"
+              placeholder="e.g. Chase Credit Card"
+              value={name}
+              onChangeText={setName}
+              onBlur={() => setNameTouched(true)}
+              error={nameTouched && !debtNameValid}
+            />
+          </FormField>
 
-        {/* ── Create Bill from Debt Modal ── */}
-        <Modal visible={billDebt !== null} animationType="fade" transparent>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setBillDebt(null)}
-          >
-            <View style={styles.paymentSheet}>
-              <Text style={styles.modalTitle}>Create Bill</Text>
-              {billDebt && (
-                <View style={styles.billPreview}>
-                  <Ionicons name="receipt-outline" size={16} color={colors.info} style={{ marginBottom: spacing.xs }} />
-                  <Text style={styles.billPreviewText}>
-                    "{billDebt.name} Payment" for {fmt(billDebt.min_payment || 0)} due day {billDebt.due_day ?? 1}
-                  </Text>
-                </View>
-              )}
-              <Text style={[styles.label, { marginTop: spacing.md }]}>Frequency</Text>
-              <View style={styles.freqRow}>
-                {(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map((f) => (
+          {bankAccounts.length > 0 && (
+            <FormField label="Linked Account" optional>
+              <Text style={styles.linkedHint}>
+                Link a synced credit card or loan account and this debt's balance will mirror it
+                automatically on every sync.
+              </Text>
+              <TouchableOpacity
+                style={[styles.accountOption, linkedBalanceId == null && styles.accountOptionActive]}
+                onPress={() => setLinkedBalanceId(null)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: linkedBalanceId == null }}
+              >
+                <Ionicons
+                  name={linkedBalanceId == null ? 'radio-button-on' : 'radio-button-off'}
+                  size={16}
+                  color={linkedBalanceId == null ? colors.primary2 : colors.textMuted}
+                />
+                <Text style={styles.accountOptionText}>Track manually</Text>
+              </TouchableOpacity>
+              {bankAccounts.map((a) => {
+                const selected = linkedBalanceId === a.id;
+                return (
                   <TouchableOpacity
-                    key={f}
-                    style={[styles.freqBtn, billFreq === f && styles.freqBtnActive]}
-                    onPress={() => setBillFreq(f)}
+                    key={a.id}
+                    style={[styles.accountOption, selected && styles.accountOptionActive]}
+                    onPress={() => setLinkedBalanceId(a.id)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
                   >
-                    <Text style={[styles.freqText, billFreq === f && styles.freqTextActive]}>
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
+                    <Ionicons
+                      name={selected ? 'radio-button-on' : 'radio-button-off'}
+                      size={16}
+                      color={selected ? colors.primary2 : colors.textMuted}
+                    />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.accountOptionText} numberOfLines={1}>
+                        {a.name || 'Account'}
+                        {a.institution_name ? ` · ${a.institution_name}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={styles.accountOptionBalance}>
+                      {fmt(Math.abs(a.current_balance || 0))}
                     </Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-              <TouchableOpacity onPress={handleCreateBillFromDebt} style={styles.saveBtn}>
-                <LinearGradient
-                  colors={[...gradients.infoGradient]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.saveBtnInner}
-                >
-                  <Text style={styles.saveBtnText}>Create Bill</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-
-        {/* ── Link Existing Bill to Debt Modal ── */}
-        <Modal visible={linkBillDebt !== null} animationType="fade" transparent>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setLinkBillDebt(null)}
-          >
-            <View style={styles.paymentSheet}>
-              <Text style={styles.modalTitle}>Link Bill to Debt</Text>
-              <Text style={{ color: colors.textMuted, ...typography.small, marginBottom: spacing.md }}>
-                Select a bill to link to "{linkBillDebt?.name}"
-              </Text>
-              {(() => {
-                const unlinkedBills = bills.filter(b => !b.debt_account_id);
-                if (unlinkedBills.length === 0) {
-                  return (
-                    <View style={{ alignItems: 'center', paddingVertical: spacing.xl }}>
-                      <Ionicons name="receipt-outline" size={32} color={colors.textDark} />
-                      <Text style={{ color: colors.textMuted, ...typography.small, marginTop: spacing.sm }}>No unlinked bills available</Text>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setLinkBillDebt(null);
-                          if (linkBillDebt) {
-                            setBillDebt(linkBillDebt);
-                            setBillFreq('monthly');
-                          }
-                        }}
-                        style={{ marginTop: spacing.md }}
-                      >
-                        <Text style={{ color: colors.primary2, fontWeight: '700', ...typography.small }}>Create a new bill instead</Text>
-                      </TouchableOpacity>
-                    </View>
-                  );
-                }
-                return (
-                  <ScrollView style={{ maxHeight: 300 }}>
-                    {unlinkedBills.map(bill => (
-                      <TouchableOpacity
-                        key={bill.id}
-                        style={styles.linkBillRow}
-                        onPress={async () => {
-                          try {
-                            await api.put(`/auth/bills/${bill.id}`, {
-                              ...bill,
-                              debt_account_id: linkBillDebt?.id,
-                            });
-                            Alert.alert('Success', `"${bill.name}" linked to "${linkBillDebt?.name}".`);
-                            setLinkBillDebt(null);
-                            loadDebts();
-                          } catch (e) {
-                            console.error('Link bill error:', e);
-                            Alert.alert('Error', 'Failed to link bill.');
-                          }
-                        }}
-                      >
-                        <View>
-                          <Text style={{ color: colors.text, fontWeight: '600', ...typography.smallBold }}>{bill.name}</Text>
-                          <Text style={{ color: colors.textMuted, ...typography.caption, marginTop: 2 }}>
-                            ${bill.amount_due?.toFixed(2)} · Due {bill.due_day}{bill.due_day === 1 ? 'st' : bill.due_day === 2 ? 'nd' : bill.due_day === 3 ? 'rd' : 'th'}
-                          </Text>
-                        </View>
-                        <Ionicons name="link" size={16} color={colors.primary2} />
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
                 );
-              })()}
+              })}
+            </FormField>
+          )}
+
+          {linkedBalanceId == null ? (
+            <FormField
+              label="Balance"
+              error={balanceTouched && !balanceValid ? 'Enter a valid balance' : null}
+            >
+              <AmountInput
+                compact
+                value={balance}
+                onChangeText={setBalance}
+                onBlur={() => setBalanceTouched(true)}
+                error={balanceTouched && !balanceValid ? 'Enter a valid balance' : null}
+                accessibilityLabel="Balance"
+              />
+            </FormField>
+          ) : (
+            <FormField label="Balance">
+              <Text style={styles.linkedHint}>
+                Mirrors the linked account — updates automatically on every sync.
+              </Text>
+            </FormField>
+          )}
+
+          <FormField label="APR (%)" optional>
+            <FormInput
+              icon="trending-up-outline"
+              placeholder="0"
+              keyboardType="decimal-pad"
+              value={apr}
+              onChangeText={setApr}
+            />
+          </FormField>
+
+          <FormField label="Min Payment" optional>
+            <AmountInput
+              compact
+              value={minPayment}
+              onChangeText={setMinPayment}
+              accessibilityLabel="Minimum payment"
+            />
+          </FormField>
+
+          <FormField
+            label="Due Day"
+            optional
+            error={dueDayTouched && !debtDueDayValid ? 'Due day must be between 1 and 31' : null}
+          >
+            <FormInput
+              icon="calendar-number-outline"
+              placeholder="15"
+              keyboardType="number-pad"
+              value={dueDay}
+              onChangeText={setDueDay}
+              onBlur={() => setDueDayTouched(true)}
+              error={dueDayTouched && !debtDueDayValid}
+            />
+          </FormField>
+
+          <FormField label="Debt Type">
+            <FormChips
+              options={LIABILITY_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+              value={liabilityType}
+              onChange={(v) => {
+                setLiabilityType(v);
+                setDebtCategory((DEFAULT_CATEGORIES[v] || 'attack') as 'attack' | 'structured');
+              }}
+            />
+          </FormField>
+
+          <FormField label="Category">
+            <FormChips
+              options={[
+                { value: 'attack' as const, label: 'Attack', icon: 'flame' as const },
+                { value: 'structured' as const, label: 'Structured', icon: 'shield-checkmark' as const },
+              ]}
+              value={debtCategory}
+              onChange={setDebtCategory}
+            />
+            <Text style={styles.categoryHint}>
+              {debtCategory === 'attack'
+                ? 'Pay off aggressively with extra payments'
+                : 'Pay minimums on schedule (e.g., mortgage)'}
+            </Text>
+          </FormField>
+
+          <FormField label="Strategy" optional>
+            <FormChips
+              options={[
+                { value: 'avalanche', label: 'Avalanche' },
+                { value: 'snowball', label: 'Snowball' },
+                { value: 'none', label: 'None' },
+              ]}
+              value={strategy || 'none'}
+              onChange={(v) => setStrategy(v === 'none' ? '' : v)}
+            />
+          </FormField>
+
+          <FormSwitchRow
+            label="Share with partner"
+            sublabel="Visible to your household partner"
+            value={isShared}
+            onValueChange={setIsShared}
+          />
+
+          {/* Create Associated Bill toggle - only for new debts */}
+          {!editing && (
+            <>
+              <FormSwitchRow
+                label="Create associated bill"
+                sublabel="Auto-create a recurring bill linked to this debt"
+                value={createBill}
+                onValueChange={setCreateBill}
+              />
+
+              {createBill && (
+                <View style={styles.billOptionsCard}>
+                  <Ionicons
+                    name="receipt-outline"
+                    size={16}
+                    color={colors.info}
+                    style={{ marginBottom: spacing.sm }}
+                  />
+                  <Text style={styles.billOptionsHint}>
+                    Bill: "{name.trim() || '...'} Payment" for {minPayment ? `$${minPayment}` : '$0'}{' '}
+                    due day {dueDay || '1'}
+                  </Text>
+                  <FormField label="Frequency">
+                    <FormChips
+                      options={(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map(
+                        (f) => ({ value: f, label: f.charAt(0).toUpperCase() + f.slice(1) }),
+                      )}
+                      value={billFrequency}
+                      onChange={setBillFrequency}
+                    />
+                  </FormField>
+                </View>
+              )}
+            </>
+          )}
+        </FormSheet>
+
+        {/* ── Payment Sheet ── */}
+        <FormSheet
+          visible={paymentId !== null}
+          title="Apply Payment"
+          onClose={() => {
+            setPaymentId(null);
+            setPaymentAmount('');
+            setPaymentTouched(false);
+            setPaymentError(null);
+          }}
+          maxHeightPct={0.5}
+          footer={
+            <>
+              {paymentError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{paymentError}</Text>
+                </View>
+              ) : null}
+              <FormButton
+                label="Apply Payment"
+                onPress={handlePayment}
+                disabled={!paymentValid}
+                loading={paymentSaving}
+              />
+            </>
+          }
+        >
+          <FormField
+            label="Payment Amount"
+            error={paymentTouched && !paymentValid ? 'Enter a valid payment amount' : null}
+          >
+            <AmountInput
+              compact
+              value={paymentAmount}
+              onChangeText={setPaymentAmount}
+              onBlur={() => setPaymentTouched(true)}
+              error={paymentTouched && !paymentValid ? 'Enter a valid payment amount' : null}
+              accessibilityLabel="Payment amount"
+              autoFocus
+            />
+          </FormField>
+        </FormSheet>
+
+        {/* ── Create Bill from Debt Sheet ── */}
+        <FormSheet
+          visible={billDebt !== null}
+          title="Create Bill"
+          onClose={() => setBillDebt(null)}
+          maxHeightPct={0.6}
+          footer={
+            <FormButton label="Create Bill" onPress={handleCreateBillFromDebt} loading={billCreating} />
+          }
+        >
+          {billDebt && (
+            <View style={styles.billPreview}>
+              <Ionicons
+                name="receipt-outline"
+                size={16}
+                color={colors.info}
+                style={{ marginBottom: spacing.xs }}
+              />
+              <Text style={styles.billPreviewText}>
+                "{billDebt.name} Payment" for {fmt(billDebt.min_payment || 0)} due day{' '}
+                {billDebt.due_day ?? 1}
+              </Text>
             </View>
-          </TouchableOpacity>
-        </Modal>
+          )}
+          <FormField label="Frequency">
+            <FormChips
+              options={(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map(
+                (f) => ({ value: f, label: f.charAt(0).toUpperCase() + f.slice(1) }),
+              )}
+              value={billFreq}
+              onChange={setBillFreq}
+            />
+          </FormField>
+        </FormSheet>
+
+        {/* ── Link Existing Bill to Debt Sheet ── */}
+        <FormSheet
+          visible={linkBillDebt !== null}
+          title="Link Bill to Debt"
+          onClose={() => setLinkBillDebt(null)}
+          maxHeightPct={0.6}
+        >
+          <Text style={{ color: colors.textMuted, ...typography.small, marginBottom: spacing.md }}>
+            Select a bill to link to "{linkBillDebt?.name}"
+          </Text>
+          {(() => {
+            const unlinkedBills = bills.filter((b) => !b.debt_account_id);
+            if (unlinkedBills.length === 0) {
+              return (
+                <View style={{ alignItems: 'center', paddingVertical: spacing.xl }}>
+                  <Ionicons name="receipt-outline" size={32} color={colors.textDark} />
+                  <Text style={{ color: colors.textMuted, ...typography.small, marginTop: spacing.sm }}>
+                    No unlinked bills available
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLinkBillDebt(null);
+                      if (linkBillDebt) {
+                        setBillDebt(linkBillDebt);
+                        setBillFreq('monthly');
+                      }
+                    }}
+                    style={{ marginTop: spacing.md }}
+                  >
+                    <Text style={{ color: colors.primary2, fontWeight: '700', ...typography.small }}>
+                      Create a new bill instead
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            }
+            return unlinkedBills.map((bill) => (
+              <TouchableOpacity
+                key={bill.id}
+                style={styles.linkBillRow}
+                onPress={async () => {
+                  try {
+                    await api.put(`/auth/bills/${bill.id}`, {
+                      ...bill,
+                      debt_account_id: linkBillDebt?.id,
+                    });
+                    successHaptic();
+                    Alert.alert('Success', `"${bill.name}" linked to "${linkBillDebt?.name}".`);
+                    setLinkBillDebt(null);
+                    loadDebts();
+                  } catch (e) {
+                    console.error('Link bill error:', e);
+                    errorHaptic();
+                    Alert.alert('Error', 'Failed to link bill.');
+                  }
+                }}
+              >
+                <View>
+                  <Text style={{ color: colors.text, fontWeight: '600', ...typography.smallBold }}>
+                    {bill.name}
+                  </Text>
+                  <Text style={{ color: colors.textMuted, ...typography.caption, marginTop: 2 }}>
+                    ${bill.amount_due?.toFixed(2)} · Due {bill.due_day}
+                    {bill.due_day === 1 ? 'st' : bill.due_day === 2 ? 'nd' : bill.due_day === 3 ? 'rd' : 'th'}
+                  </Text>
+                </View>
+                <Ionicons name="link" size={16} color={colors.primary2} />
+              </TouchableOpacity>
+            ));
+          })()}
+        </FormSheet>
       </SafeAreaView>
     </GradientBackground>
   );
@@ -1481,96 +1607,50 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
 
-  // Modal styles
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: colors.surface2,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: colors.glassStrong,
-    padding: spacing.lg,
-    maxHeight: '85%',
-  },
-  modalHeader: {
+  // Form sheet extras
+  formErrorRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  modalTitle: {
-    ...typography.h3,
-    fontSize: 18,
-    color: colors.text,
-  },
-  label: {
-    ...typography.smallBold,
-    color: colors.text,
-    fontSize: 13,
-    marginBottom: spacing.xs,
-    marginTop: spacing.md,
-  },
-  input: {
-    backgroundColor: colors.glassMedium,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    ...typography.body,
-    fontSize: 15,
-  },
-  strategyRow: {
-    flexDirection: 'row',
     gap: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
+  formErrorText: {
+    flex: 1,
+    ...typography.caption,
+    color: colors.error,
+  },
+  categoryHint: {
+    color: colors.textMuted,
+    ...typography.caption,
     marginTop: spacing.xs,
   },
-  strategyBtn: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.glassMedium,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-  },
-  strategyBtnActive: {
-    backgroundColor: colors.primary + '2e',
-    borderColor: colors.primary + 'b3',
-  },
-  strategyText: {
-    ...typography.small,
-    color: colors.text,
-    textTransform: 'capitalize',
-    fontSize: 13,
-  },
-  strategyTextActive: {
-    color: colors.text,
-    fontWeight: '700',
-  },
-  billToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: spacing.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.info + '10',
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.info + '2e',
-  },
-  billToggleLabel: {
-    ...typography.smallBold,
-    color: colors.text,
-  },
-  billToggleDesc: {
+  linkedHint: {
     ...typography.caption,
     color: colors.textMuted,
-    marginTop: 2,
+    marginBottom: spacing.sm,
+  },
+  accountOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    marginBottom: spacing.xs,
+  },
+  accountOptionActive: {
+    borderColor: colors.primary2,
+    backgroundColor: `${colors.primary}1a`,
+  },
+  accountOptionText: {
+    ...typography.small,
+    color: colors.text,
+  },
+  accountOptionBalance: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontVariant: ['tabular-nums'],
   },
   billOptionsCard: {
     marginTop: spacing.sm,
@@ -1584,56 +1664,6 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     lineHeight: 18,
-  },
-  freqRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginTop: spacing.xs,
-  },
-  freqBtn: {
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.glassMedium,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-  },
-  freqBtnActive: {
-    backgroundColor: colors.primary + '2e',
-    borderColor: colors.primary + '80',
-  },
-  freqText: {
-    ...typography.caption,
-    color: colors.text,
-  },
-  freqTextActive: {
-    color: colors.text,
-    fontWeight: '700',
-  },
-  saveBtn: {
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    marginTop: spacing.lg,
-    marginBottom: spacing.lg,
-  },
-  saveBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.lg,
-  },
-  saveBtnText: {
-    ...typography.button,
-    color: '#fff',
-  },
-  paymentSheet: {
-    backgroundColor: colors.surface2,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: colors.glassStrong,
-    padding: spacing.lg,
   },
   billPreview: {
     marginTop: spacing.md,

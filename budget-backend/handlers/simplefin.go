@@ -126,6 +126,9 @@ func SimpleFINConnect(w http.ResponseWriter, r *http.Request) {
 				} else if m > 0 {
 					log.Printf("simplefin: post-sync AI categorization for %s: merchants=%d classified=%d applied=%d", linkedID, m, c, a)
 				}
+				if d := detectBillPayments(bg.Conn, userID); len(d) > 0 {
+					log.Printf("simplefin: post-sync bill payment detection for %s: %d payment(s)", linkedID, len(d))
+				}
 			}
 		}
 		if updated, berr := provider.SyncBalances(bg.Conn, acct); berr != nil {

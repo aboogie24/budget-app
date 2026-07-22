@@ -40,6 +40,10 @@ type DebtAccount struct {
 	DebtCategory     string  `json:"debt_category"`  // "attack" or "structured"
 	LiabilityType    string  `json:"liability_type"` // credit, auto, mortgage, student, personal, medical, other
 	AssetDepreciates *bool   `json:"asset_depreciates,omitempty"`
+	// When set, this debt's balance mirrors the linked bank account's balance
+	// on every sync (e.g. a synced credit card).
+	LinkedBalanceID   *string `json:"linked_balance_id,omitempty"`
+	LinkedAccountName string  `json:"linked_account_name,omitempty"`
 }
 
 // FinancialPriority captures a ranked priority item for the couple.

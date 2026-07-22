@@ -7,14 +7,10 @@ import {
   TouchableOpacity,
   Alert,
   ScrollView,
-  Modal,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   type TextStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +21,13 @@ import { BackButton } from '@/components/BackButton';
 import GradientBackground from '@/components/GradientBackground';
 import { Skeleton } from '@/components/Skeleton';
 import { colors, spacing, radius, typography, glassEffects, gradients } from '@/utils/design-system';
+import {
+  FormSheet as SheetBase,
+  FormButton,
+  FormDateField,
+  FormSwitchRow,
+} from '@/components/form';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -250,17 +253,19 @@ function ProgressBar({ ratio, color }: { ratio: number; color?: string }) {
 
 // ─── Component ──────────────────────────────────────────────────
 
-// FormSheet is a bottom-sheet modal wrapper. It MUST be a module-scope
-// component (not defined inside PlansScreen) so its identity is stable across
-// re-renders — otherwise TextInputs inside it remount on every keystroke and the
-// keyboard dismisses.
+// FormSheet is a thin preset over the shared bottom-sheet kit that keeps this
+// screen's submit-footer API. It MUST stay a module-scope component (not
+// defined inside PlansScreen) so its identity is stable across re-renders —
+// otherwise TextInputs inside it remount on every keystroke and the keyboard
+// dismisses.
 function FormSheet({
   visible,
   title,
   onClose,
   children,
   submitLabel,
-  submitGradient = [...gradients.primaryGradient] as string[],
+  submitVariant = 'primary',
+  submitDisabled = false,
   onSubmit,
   submitting,
 }: {
@@ -269,50 +274,28 @@ function FormSheet({
   onClose: () => void;
   children: React.ReactNode;
   submitLabel: string;
-  submitGradient?: string[];
+  submitVariant?: 'primary' | 'destructive';
+  submitDisabled?: boolean;
   onSubmit: () => void;
   submitting: boolean;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.sheetBackdrop}
-      >
-        <View style={styles.sheet}>
-          <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>{title}</Text>
-            <TouchableOpacity
-              onPress={onClose}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              accessibilityLabel="Close"
-            >
-              <Ionicons name="close" size={24} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
-          <TouchableOpacity
-            onPress={onSubmit}
-            style={[styles.sheetSubmit, submitting && styles.disabledBtn]}
-            disabled={submitting}
-            activeOpacity={0.85}
-          >
-            <LinearGradient
-              colors={submitGradient as any}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.sheetSubmitInner}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.sheetSubmitText}>{submitLabel}</Text>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+    <SheetBase
+      visible={visible}
+      title={title}
+      onClose={onClose}
+      footer={
+        <FormButton
+          label={submitLabel}
+          onPress={onSubmit}
+          variant={submitVariant}
+          disabled={submitDisabled}
+          loading={submitting}
+        />
+      }
+    >
+      {children}
+    </SheetBase>
   );
 }
 
@@ -422,11 +405,6 @@ function SavingsGoalSheet({
     };
   }, [visible, name, targetNum, currentNum, targetDateStr]);
 
-  const handleDateChange = (_e: unknown, selected?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(false);
-    if (selected) setTargetDate(selected);
-  };
-
   // Not-feasible option handlers: (a) push the date, (b) lower the target. Both
   // mutate the inputs, which re-arms the debounced fetch for a fresh readout.
   const applyRealisticDate = () => {
@@ -439,15 +417,11 @@ function SavingsGoalSheet({
     if (feas?.lower_target != null) setTargetAmount(String(feas.lower_target));
   };
 
+  // The CTA disables until these hold — no validation popups.
+  const submittable = name.trim().length > 0 && !isNaN(targetNum) && targetNum > 0;
+
   const handleSubmit = () => {
-    if (!name.trim()) {
-      Alert.alert('Validation', 'Tell us what you’re saving for.');
-      return;
-    }
-    if (isNaN(targetNum) || targetNum <= 0) {
-      Alert.alert('Validation', 'Enter a valid target amount.');
-      return;
-    }
+    if (!submittable) return;
     // Prefer the honest available number when the goal isn't feasible; otherwise
     // the required monthly. Fall back to required if the readout is missing.
     const monthly = feas
@@ -480,7 +454,7 @@ function SavingsGoalSheet({
       title="New savings goal"
       onClose={onClose}
       submitLabel="Create goal & plan"
-      submitGradient={[...gradients.successGradient]}
+      submitDisabled={!submittable}
       onSubmit={handleSubmit}
       submitting={submitting}
     >
@@ -519,62 +493,21 @@ function SavingsGoalSheet({
 
       {/* 4 — By when? (reveal-on-tap date picker) */}
       <Text style={styles.fieldLabel}>By when?</Text>
-      <TouchableOpacity
-        style={styles.dateField}
-        onPress={() => setShowDatePicker((s) => !s)}
-        activeOpacity={0.75}
-        accessibilityRole="button"
-        accessibilityLabel={`Target date, ${formatDate(targetDateStr)}, opens date picker`}
-      >
-        <Ionicons name="calendar-outline" size={18} color={colors.textMuted} style={{ marginRight: spacing.sm }} />
-        <Text style={styles.dateFieldValue} numberOfLines={1}>
-          {formatDate(targetDateStr)}
-        </Text>
-        <Ionicons
-          name={showDatePicker ? 'chevron-up' : 'chevron-forward'}
-          size={18}
-          color={colors.textDark}
-        />
-      </TouchableOpacity>
-      {showDatePicker && Platform.OS === 'ios' && (
-        <View style={styles.datePickerInset}>
-          <DateTimePicker
-            value={targetDate}
-            mode="date"
-            display="spinner"
-            onChange={handleDateChange}
-            themeVariant="dark"
-            minimumDate={new Date()}
-            style={{ height: 150 }}
-          />
-        </View>
-      )}
-      {showDatePicker && Platform.OS === 'android' && (
-        <DateTimePicker
-          value={targetDate}
-          mode="date"
-          display="calendar"
-          minimumDate={new Date()}
-          onChange={handleDateChange}
-        />
-      )}
+      <FormDateField
+        value={targetDate}
+        onChange={setTargetDate}
+        open={showDatePicker}
+        onToggle={() => setShowDatePicker((s) => !s)}
+        accessibilityLabel="Target date"
+        minimumDate={new Date()}
+      />
 
       {/* Shared with partner toggle */}
-      <TouchableOpacity
-        style={styles.sharedToggle}
-        onPress={() => setIsShared((s) => !s)}
-        activeOpacity={0.75}
-        accessibilityRole="switch"
-        accessibilityState={{ checked: isShared }}
-        accessibilityLabel="Share this goal with your partner"
-      >
-        <Ionicons
-          name={isShared ? 'checkbox' : 'square-outline'}
-          size={20}
-          color={isShared ? colors.success : colors.textMuted}
-        />
-        <Text style={styles.sharedToggleText}>Share this goal with your partner</Text>
-      </TouchableOpacity>
+      <FormSwitchRow
+        label="Share this goal with your partner"
+        value={isShared}
+        onValueChange={setIsShared}
+      />
 
       {/* ── Live feasibility readout ── */}
       {feasLoading && (
@@ -826,15 +759,15 @@ export default function PlansScreen() {
 
   // ─── Actions ────────────────────────────────────────────────
 
+  // The Create Plan CTA disables until these hold — no validation popups.
+  const createValid =
+    createName.trim().length > 0 &&
+    !!createContribution &&
+    Number.isFinite(Number(createContribution)) &&
+    Number(createContribution) > 0;
+
   const handleCreate = async () => {
-    if (!createName.trim()) {
-      Alert.alert('Validation', 'Plan name is required.');
-      return;
-    }
-    if (!createContribution || isNaN(Number(createContribution)) || Number(createContribution) <= 0) {
-      Alert.alert('Validation', 'Enter a valid monthly contribution.');
-      return;
-    }
+    if (!createValid || creating) return;
 
     setCreating(true);
     try {
@@ -843,6 +776,7 @@ export default function PlansScreen() {
         plan_type: createType,
         monthly_contribution: parseFloat(createContribution),
       });
+      successHaptic();
       setShowCreate(false);
       resetCreateForm();
       await loadPlans();
@@ -851,6 +785,7 @@ export default function PlansScreen() {
       }
     } catch (e) {
       console.error('Create plan error:', e);
+      errorHaptic();
       Alert.alert('Error', 'Failed to create plan.');
     } finally {
       setCreating(false);
@@ -1660,7 +1595,7 @@ export default function PlansScreen() {
               setRejectFeedback('');
             }}
             submitLabel="Reject Plan"
-            submitGradient={[...gradients.errorGradient]}
+            submitVariant="destructive"
             onSubmit={handleReject}
             submitting={actionLoading}
           >
@@ -1935,6 +1870,7 @@ export default function PlansScreen() {
             resetCreateForm();
           }}
           submitLabel="Create Plan"
+          submitDisabled={!createValid}
           onSubmit={handleCreate}
           submitting={creating}
         >
@@ -2490,42 +2426,6 @@ const styles = StyleSheet.create({
   },
 
   // Sheets
-  sheetBackdrop: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  sheet: {
-    backgroundColor: colors.surface2,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.xl,
-    maxHeight: '85%',
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  sheetTitle: {
-    ...typography.h3,
-    color: colors.text,
-  },
-  sheetSubmit: {
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    marginTop: spacing.lg,
-  },
-  sheetSubmitInner: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.md,
-  },
-  sheetSubmitText: {
-    ...typography.button,
-    color: '#fff',
-  },
 
   // Form fields
   fieldLabel: {
@@ -2612,39 +2512,8 @@ const styles = StyleSheet.create({
   },
 
   // Date field (guided savings sheet)
-  dateField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 48,
-    ...glassEffects.glass,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-  },
-  dateFieldValue: {
-    flex: 1,
-    ...typography.body,
-    color: colors.text,
-  },
-  datePickerInset: {
-    marginTop: spacing.sm,
-    backgroundColor: colors.glassLight,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-  },
 
   // Shared toggle
-  sharedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  sharedToggleText: {
-    ...typography.small,
-    color: colors.text,
-    flex: 1,
-  },
 
   // Feasibility readout
   feasCard: {

@@ -2,16 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   Alert,
   ScrollView,
-  Modal,
   ActivityIndicator,
-  Switch,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,6 +27,15 @@ import {
   getValueColor,
 } from '@/utils/design-system';
 import { BackButton } from '@/components/BackButton';
+import {
+  FormSheet,
+  FormField,
+  FormInput,
+  AmountInput,
+  FormSwitchRow,
+  FormButton,
+} from '@/components/form';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 type Property = {
   id: string;
@@ -94,6 +98,14 @@ export default function PropertiesScreen() {
   const [debtAccountId, setDebtAccountId] = useState<string | null>(null);
   const [isShared, setIsShared] = useState(true);
 
+  // Inline validation state
+  const [addressTouched, setAddressTouched] = useState(false);
+  const [cityTouched, setCityTouched] = useState(false);
+  const [stateTouched, setStateTouched] = useState(false);
+  const [zipTouched, setZipTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const loadData = useCallback(async () => {
     try {
       setError(null);
@@ -129,6 +141,11 @@ export default function PropertiesScreen() {
     setDebtAccountId(null);
     setIsShared(true);
     setEditing(null);
+    setAddressTouched(false);
+    setCityTouched(false);
+    setStateTouched(false);
+    setZipTouched(false);
+    setSaveError(null);
   };
 
   const openEdit = (p: Property) => {
@@ -148,17 +165,30 @@ export default function PropertiesScreen() {
     setShowForm(true);
   };
 
+  // Derived validity — the save CTA gates on this.
+  const addressValid = streetAddress.trim().length > 0;
+  const cityValid = city.trim().length > 0;
+  const stateValid = state.trim().length > 0;
+  const zipValid = zipCode.trim().length > 0;
+  const isPropertyFormValid = addressValid && cityValid && stateValid && zipValid;
+
   const handleSave = async () => {
-    if (!streetAddress.trim() || !city.trim() || !state.trim() || !zipCode.trim()) {
-      Alert.alert('Validation', 'Address, city, state, and zip are required.');
+    if (!isPropertyFormValid || saving) {
+      setAddressTouched(true);
+      setCityTouched(true);
+      setStateTouched(true);
+      setZipTouched(true);
       return;
     }
 
     const userId = await api.getUserId();
     if (!userId) {
-      Alert.alert('Error', 'No user session found.');
+      setSaveError('No user session found.');
       return;
     }
+
+    setSaving(true);
+    setSaveError(null);
 
     const payload = {
       user_id: userId,
@@ -177,12 +207,16 @@ export default function PropertiesScreen() {
       } else {
         await api.post('/auth/properties', payload);
       }
+      successHaptic();
       setShowForm(false);
       resetForm();
       loadData();
     } catch (e) {
       console.error('Save property error:', e);
-      Alert.alert('Error', 'Failed to save property.');
+      errorHaptic();
+      setSaveError('Failed to save property. Try again.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -196,9 +230,16 @@ export default function PropertiesScreen() {
           try {
             const userId = await api.getUserId();
             await api.delete(`/auth/properties/${p.id}?user_id=${userId}`);
+            successHaptic();
+            // Deleting the property that's open in the editor closes the sheet.
+            if (editing?.id === p.id) {
+              setShowForm(false);
+              resetForm();
+            }
             loadData();
           } catch (e) {
             console.error('Delete error:', e);
+            errorHaptic();
             Alert.alert('Error', 'Failed to delete property.');
           }
         },
@@ -535,168 +576,162 @@ export default function PropertiesScreen() {
           )}
         </ScrollView>
 
-        {/* Add/Edit Modal */}
-        <Modal visible={showForm} animationType="slide" transparent>
-          <KeyboardAvoidingView
-            style={styles.modalBackdrop}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        {/* Add/Edit Property Sheet */}
+        <FormSheet
+          visible={showForm}
+          title={editing ? 'Edit Property' : 'Add Property'}
+          onClose={() => {
+            setShowForm(false);
+            resetForm();
+          }}
+          footer={
+            <>
+              {saveError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{saveError}</Text>
+                </View>
+              ) : null}
+              <FormButton
+                label={editing ? 'Update Property' : 'Add Property'}
+                onPress={handleSave}
+                disabled={!isPropertyFormValid}
+                loading={saving}
+              />
+              {editing ? (
+                <FormButton
+                  label="Delete Property"
+                  variant="destructive"
+                  onPress={() => handleDelete(editing)}
+                />
+              ) : null}
+            </>
+          }
+        >
+          <FormField
+            label="Street Address"
+            error={addressTouched && !addressValid ? 'Street address is required' : null}
           >
-            <View style={styles.modalContent}>
-              <ScrollView keyboardShouldPersistTaps="handled">
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    {editing ? 'Edit Property' : 'Add Property'}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowForm(false);
-                      resetForm();
-                    }}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close"
-                  >
-                    <Ionicons name="close" size={24} color={colors.textMuted} />
-                  </TouchableOpacity>
-                </View>
+            <FormInput
+              icon="home-outline"
+              placeholder="123 Main Street"
+              value={streetAddress}
+              onChangeText={setStreetAddress}
+              onBlur={() => setAddressTouched(true)}
+              error={addressTouched && !addressValid}
+              accessibilityLabel="Street Address"
+            />
+          </FormField>
 
-                <Text style={styles.label}>Street Address</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="123 Main Street"
-                  placeholderTextColor={colors.textMuted}
-                  value={streetAddress}
-                  onChangeText={setStreetAddress}
-                  accessibilityLabel="Street Address"
+          <FormField label="City" error={cityTouched && !cityValid ? 'City is required' : null}>
+            <FormInput
+              icon="business-outline"
+              placeholder="Brooklyn"
+              value={city}
+              onChangeText={setCity}
+              onBlur={() => setCityTouched(true)}
+              error={cityTouched && !cityValid}
+              accessibilityLabel="City"
+            />
+          </FormField>
+
+          <View style={{ flexDirection: 'row', gap: spacing.md }}>
+            <View style={{ flex: 1 }}>
+              <FormField
+                label="State"
+                error={stateTouched && !stateValid ? 'Required' : null}
+              >
+                <FormInput
+                  placeholder="NY"
+                  value={state}
+                  onChangeText={setState}
+                  onBlur={() => setStateTouched(true)}
+                  error={stateTouched && !stateValid}
+                  maxLength={2}
+                  autoCapitalize="characters"
+                  accessibilityLabel="State"
                 />
-
-                <Text style={styles.label}>City</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Brooklyn"
-                  placeholderTextColor={colors.textMuted}
-                  value={city}
-                  onChangeText={setCity}
-                  accessibilityLabel="City"
-                />
-
-                <View style={{ flexDirection: 'row', gap: spacing.md }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.label}>State</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="NY"
-                      placeholderTextColor={colors.textMuted}
-                      value={state}
-                      onChangeText={setState}
-                      maxLength={2}
-                      autoCapitalize="characters"
-                      accessibilityLabel="State"
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.label}>ZIP Code</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="11201"
-                      placeholderTextColor={colors.textMuted}
-                      value={zipCode}
-                      onChangeText={setZipCode}
-                      keyboardType="numeric"
-                      maxLength={5}
-                      accessibilityLabel="ZIP Code"
-                    />
-                  </View>
-                </View>
-
-                <Text style={styles.label}>Manual Value (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Override Zestimate"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={manualValue}
-                  onChangeText={setManualValue}
-                  accessibilityLabel="Manual Value"
-                />
-
-                <Text style={styles.label}>Link Mortgage</Text>
-                <View style={styles.mortgagePicker}>
-                  <TouchableOpacity
-                    style={[styles.mortgageOption, !debtAccountId && styles.mortgageOptionActive]}
-                    onPress={() => setDebtAccountId(null)}
-                  >
-                    <Text style={[styles.mortgageText, !debtAccountId && styles.mortgageTextActive]}>
-                      None
-                    </Text>
-                  </TouchableOpacity>
-                  {debts.map((d) => (
-                    <TouchableOpacity
-                      key={d.id}
-                      style={[
-                        styles.mortgageOption,
-                        debtAccountId === d.id && styles.mortgageOptionActive,
-                      ]}
-                      onPress={() => setDebtAccountId(d.id)}
-                    >
-                      <Text
-                        style={[
-                          styles.mortgageText,
-                          debtAccountId === d.id && styles.mortgageTextActive,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {d.name} ({fmt(d.balance)})
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <View style={styles.sharedToggle}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.sharedLabel}>Share with partner</Text>
-                    <Text style={styles.sharedDesc}>Visible to your household partner</Text>
-                  </View>
-                  <Switch
-                    value={isShared}
-                    onValueChange={setIsShared}
-                    trackColor={{ false: colors.glassLight, true: tint.primary40 }}
-                    thumbColor={isShared ? colors.accent : colors.textDark}
-                    accessibilityLabel={`Share with partner, ${isShared ? 'on' : 'off'}`}
-                  />
-                </View>
-
-                {!editing && (
-                  <View style={styles.infoCard}>
-                    <Ionicons
-                      name="information-circle-outline"
-                      size={16}
-                      color={colors.primary2}
-                    />
-                    <Text style={styles.infoText}>
-                      We'll automatically look up the Zestimate from Zillow when you save.
-                    </Text>
-                  </View>
-                )}
-
-                <TouchableOpacity
-                  onPress={handleSave}
-                  style={styles.saveBtn}
-                  accessibilityRole="button"
-                >
-                  <LinearGradient
-                    colors={[...gradients.primaryGradient]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.saveBtnInner}
-                  >
-                    <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Property'}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </ScrollView>
+              </FormField>
             </View>
-          </KeyboardAvoidingView>
-        </Modal>
+            <View style={{ flex: 1 }}>
+              <FormField label="ZIP Code" error={zipTouched && !zipValid ? 'Required' : null}>
+                <FormInput
+                  placeholder="11201"
+                  value={zipCode}
+                  onChangeText={setZipCode}
+                  onBlur={() => setZipTouched(true)}
+                  error={zipTouched && !zipValid}
+                  keyboardType="number-pad"
+                  maxLength={5}
+                  accessibilityLabel="ZIP Code"
+                />
+              </FormField>
+            </View>
+          </View>
+
+          <FormField label="Manual Value" optional>
+            <AmountInput
+              compact
+              value={manualValue}
+              onChangeText={setManualValue}
+              placeholder="Override Zestimate"
+              accessibilityLabel="Manual Value"
+            />
+          </FormField>
+
+          <FormField label="Link Mortgage" optional>
+            <View style={styles.mortgagePicker}>
+              <TouchableOpacity
+                style={[styles.mortgageOption, !debtAccountId && styles.mortgageOptionActive]}
+                onPress={() => setDebtAccountId(null)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: !debtAccountId }}
+              >
+                <Text style={[styles.mortgageText, !debtAccountId && styles.mortgageTextActive]}>
+                  None
+                </Text>
+              </TouchableOpacity>
+              {debts.map((d) => (
+                <TouchableOpacity
+                  key={d.id}
+                  style={[
+                    styles.mortgageOption,
+                    debtAccountId === d.id && styles.mortgageOptionActive,
+                  ]}
+                  onPress={() => setDebtAccountId(d.id)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: debtAccountId === d.id }}
+                >
+                  <Text
+                    style={[
+                      styles.mortgageText,
+                      debtAccountId === d.id && styles.mortgageTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {d.name} ({fmt(d.balance)})
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </FormField>
+
+          <FormSwitchRow
+            label="Share with partner"
+            sublabel="Visible to your household partner"
+            value={isShared}
+            onValueChange={setIsShared}
+          />
+
+          {!editing && (
+            <View style={styles.infoCard}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.primary2} />
+              <Text style={styles.infoText}>
+                We'll automatically look up the Zestimate from Zillow when you save.
+              </Text>
+            </View>
+          )}
+        </FormSheet>
       </SafeAreaView>
     </GradientBackground>
   );
@@ -972,45 +1007,17 @@ const styles = StyleSheet.create({
     ...typography.button,
   },
 
-  // ── Modal ──
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.lg,
-    maxHeight: '85%',
-  },
-  modalHeader: {
+  // ── Form sheet extras ──
+  formErrorRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    gap: spacing.sm,
+    paddingBottom: spacing.xs,
   },
-  modalTitle: {
-    color: colors.text,
-    ...typography.h3,
-  },
-  label: {
-    color: colors.text,
-    ...typography.smallBold,
-    marginBottom: spacing.xs,
-    marginTop: spacing.md,
-  },
-  input: {
-    backgroundColor: colors.glassLight,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    ...typography.body,
-    minHeight: 44,
+  formErrorText: {
+    flex: 1,
+    ...typography.caption,
+    color: colors.error,
   },
   mortgagePicker: {
     flexDirection: 'row',
@@ -1041,25 +1048,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     ...typography.smallBold,
   },
-  sharedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: spacing.lg,
-    padding: spacing.md,
-    backgroundColor: tint.info8,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: tint.info29,
-  },
-  sharedLabel: {
-    color: colors.text,
-    ...typography.smallBold,
-  },
-  sharedDesc: {
-    color: colors.textMuted,
-    ...typography.caption,
-    marginTop: 2,
-  },
   infoCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1075,21 +1063,5 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     ...typography.caption,
     flex: 1,
-  },
-  saveBtn: {
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    marginTop: spacing.lg,
-    marginBottom: spacing.lg,
-  },
-  saveBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.lg,
-  },
-  saveBtnText: {
-    color: colors.text,
-    ...typography.button,
   },
 });

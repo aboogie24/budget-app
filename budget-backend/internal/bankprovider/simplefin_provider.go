@@ -205,6 +205,7 @@ func (s *SimpleFINProvider) SyncBalances(conn *sql.DB, account LinkedAccount) (i
 
 	log.Printf("simplefin: updated %d balances for linked account %s", updated, account.ID)
 	SyncLinkedGoalBalances(conn, account)
+	SyncLinkedDebtBalances(conn, account)
 	return updated, nil
 }
 

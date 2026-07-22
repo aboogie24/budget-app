@@ -227,6 +227,7 @@ func (f *FlinksProvider) SyncBalances(conn *sql.DB, account LinkedAccount) (int,
 
 	log.Printf("flinks: synced %d account balances for account %s", updated, account.ID)
 	SyncLinkedGoalBalances(conn, account)
+	SyncLinkedDebtBalances(conn, account)
 	return updated, nil
 }
 

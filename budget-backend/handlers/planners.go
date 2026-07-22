@@ -334,12 +334,14 @@ func ListDebts(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	rows, err := client.Query(`
-		SELECT id, user_id, COALESCE(household_id::text, ''), name, balance,
-		       COALESCE(original_balance, balance), apr, min_payment, due_day,
-		       COALESCE(strategy, ''), is_shared, COALESCE(source, 'manual'),
-		       COALESCE(debt_category, 'attack'), COALESCE(liability_type, 'other'), asset_depreciates
-		FROM debt_accounts
-		WHERE user_id = $1
+		SELECT d.id, d.user_id, COALESCE(d.household_id::text, ''), d.name, d.balance,
+		       COALESCE(d.original_balance, d.balance), d.apr, d.min_payment, d.due_day,
+		       COALESCE(d.strategy, ''), d.is_shared, COALESCE(d.source, 'manual'),
+		       COALESCE(d.debt_category, 'attack'), COALESCE(d.liability_type, 'other'), d.asset_depreciates,
+		       COALESCE(d.linked_balance_id::text, ''), COALESCE(ab.name, '')
+		FROM debt_accounts d
+		LEFT JOIN account_balances ab ON d.linked_balance_id = ab.id
+		WHERE d.user_id = $1
 	`, userID)
 
 	if err != nil {
@@ -352,11 +354,13 @@ func ListDebts(w http.ResponseWriter, r *http.Request) {
 	var debts []models.DebtAccount
 	for rows.Next() {
 		var (
-			d      models.DebtAccount
-			dueDay sql.NullInt32
-			hhID   string
+			d          models.DebtAccount
+			dueDay     sql.NullInt32
+			hhID       string
+			linkedID   string
+			linkedName string
 		)
-		if err := rows.Scan(&d.ID, &d.UserID, &hhID, &d.Name, &d.Balance, &d.OriginalBalance, &d.APR, &d.MinPayment, &dueDay, &d.Strategy, &d.IsShared, &d.Source, &d.DebtCategory, &d.LiabilityType, &d.AssetDepreciates); err != nil {
+		if err := rows.Scan(&d.ID, &d.UserID, &hhID, &d.Name, &d.Balance, &d.OriginalBalance, &d.APR, &d.MinPayment, &dueDay, &d.Strategy, &d.IsShared, &d.Source, &d.DebtCategory, &d.LiabilityType, &d.AssetDepreciates, &linkedID, &linkedName); err != nil {
 			log.Printf("ListDebts scan error: %v", err)
 			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
@@ -367,6 +371,10 @@ func ListDebts(w http.ResponseWriter, r *http.Request) {
 			d.DueDay = &val
 		} else {
 			d.DueDay = nil
+		}
+		if linkedID != "" {
+			d.LinkedBalanceID = &linkedID
+			d.LinkedAccountName = linkedName
 		}
 		debts = append(debts, d)
 	}
@@ -434,18 +442,53 @@ func CreateDebt(w http.ResponseWriter, r *http.Request) {
 		d.LiabilityType = "other"
 	}
 
+	var linkedVal any
+	if d.LinkedBalanceID != nil && *d.LinkedBalanceID != "" {
+		if !balanceOwnedBy(client.Raw(), *d.LinkedBalanceID, d.UserID) {
+			http.Error(w, "Linked account not found for this user", http.StatusBadRequest)
+			return
+		}
+		linkedVal = *d.LinkedBalanceID
+	}
+
 	_, err = client.Exec(`
-		INSERT INTO debt_accounts (id, user_id, household_id, name, balance, original_balance, apr, min_payment, due_day, strategy, is_shared, debt_category, liability_type, asset_depreciates)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-	`, d.ID, d.UserID, hhVal, d.Name, d.Balance, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, d.DebtCategory, d.LiabilityType, d.AssetDepreciates)
+		INSERT INTO debt_accounts (id, user_id, household_id, name, balance, original_balance, apr, min_payment, due_day, strategy, is_shared, debt_category, liability_type, asset_depreciates, linked_balance_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	`, d.ID, d.UserID, hhVal, d.Name, d.Balance, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, d.DebtCategory, d.LiabilityType, d.AssetDepreciates, linkedVal)
 	if err != nil {
+		if strings.Contains(err.Error(), "idx_debt_accounts_linked_balance") {
+			http.Error(w, "That account is already linked to another debt", http.StatusConflict)
+			return
+		}
 		log.Printf("CreateDebt insert error: %v", err)
 		http.Error(w, "Insert error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// A linked debt's balance IS the account balance — snap it immediately.
+	if linkedVal != nil {
+		snapLinkedDebtBalance(client.Raw(), d.ID)
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(d)
+}
+
+// snapLinkedDebtBalance mirrors the linked account's balance into one debt's
+// balance (used right after linking; syncs keep it fresh afterwards). Credit
+// and loan balances arrive negative from some providers — what's owed is the
+// magnitude. The opening balance rises with it so "% paid" never reads
+// negative.
+func snapLinkedDebtBalance(conn *sql.DB, debtID string) {
+	if _, err := conn.Exec(`
+		UPDATE debt_accounts d
+		SET balance = ABS(ab.current_balance),
+		    original_balance = GREATEST(COALESCE(d.original_balance, 0), ABS(ab.current_balance))
+		FROM account_balances ab
+		WHERE d.id = $1 AND d.linked_balance_id = ab.id
+	`, debtID); err != nil {
+		log.Printf("snapLinkedDebtBalance error: %v", err)
+	}
 }
 
 func UpdateDebt(w http.ResponseWriter, r *http.Request) {
@@ -468,16 +511,34 @@ func UpdateDebt(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
+	var linkedVal any
+	linking := d.LinkedBalanceID != nil && *d.LinkedBalanceID != ""
+	if linking {
+		if d.UserID == "" {
+			d.UserID = r.URL.Query().Get("user_id")
+		}
+		if !balanceOwnedBy(client.Raw(), *d.LinkedBalanceID, d.UserID) {
+			http.Error(w, "Linked account not found for this user", http.StatusBadRequest)
+			return
+		}
+		linkedVal = *d.LinkedBalanceID
+	}
+
 	// A manual balance edit above the recorded opening balance means the debt
 	// grew (new charges, corrected entry) — raise the baseline so "% paid"
 	// never reads negative.
 	res, err := client.Exec(`
 		UPDATE debt_accounts
 		SET name=$1, balance=$2, apr=$3, min_payment=$4, due_day=$5, strategy=$6, is_shared=$7,
-		    original_balance = GREATEST(COALESCE(original_balance, $2), $2)
-		WHERE id=$8
-	`, d.Name, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, debtID)
+		    original_balance = GREATEST(COALESCE(original_balance, $2), $2),
+		    linked_balance_id = $8
+		WHERE id=$9
+	`, d.Name, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, linkedVal, debtID)
 	if err != nil {
+		if strings.Contains(err.Error(), "idx_debt_accounts_linked_balance") {
+			http.Error(w, "That account is already linked to another debt", http.StatusConflict)
+			return
+		}
 		http.Error(w, "Update error", http.StatusInternalServerError)
 		return
 	}
@@ -485,6 +546,12 @@ func UpdateDebt(w http.ResponseWriter, r *http.Request) {
 	if affected == 0 {
 		http.Error(w, "Debt not found", http.StatusNotFound)
 		return
+	}
+
+	// A linked debt's balance IS the account balance — the client-sent balance
+	// is overridden by the real number.
+	if linking {
+		snapLinkedDebtBalance(client.Raw(), debtID)
 	}
 
 	d.ID = debtID
@@ -512,6 +579,15 @@ func ApplyDebtPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
+
+	// Balance-linked debts mirror a real account — a manual payment entry
+	// would be overwritten on the next sync and misstate what's owed.
+	var linked sql.NullString
+	_ = client.QueryRow(`SELECT linked_balance_id::text FROM debt_accounts WHERE id = $1`, debtID).Scan(&linked)
+	if linked.Valid && linked.String != "" {
+		http.Error(w, "This debt tracks a linked bank account — its balance updates automatically from the account", http.StatusConflict)
+		return
+	}
 
 	// Decrease balance but not below zero
 	_, err = client.Exec(`

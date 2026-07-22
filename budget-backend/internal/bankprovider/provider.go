@@ -60,6 +60,29 @@ func SyncLinkedGoalBalances(conn *sql.DB, account LinkedAccount) {
 	}
 }
 
+// SyncLinkedDebtBalances mirrors freshly synced account balances into debts
+// that designate a synced account as their source (linked_balance_id) — e.g.
+// "this debt IS my synced credit card". Credit balances arrive negative from
+// some providers; what's owed is the magnitude. The opening balance ratchets
+// up with new charges so "% paid" never reads negative.
+func SyncLinkedDebtBalances(conn *sql.DB, account LinkedAccount) {
+	res, err := conn.Exec(`
+		UPDATE debt_accounts d
+		SET balance = ABS(ab.current_balance),
+		    original_balance = GREATEST(COALESCE(d.original_balance, 0), ABS(ab.current_balance))
+		FROM account_balances ab
+		WHERE d.linked_balance_id = ab.id
+		  AND (d.user_id = $1 OR ($2 <> '' AND d.household_id::text = $2))
+	`, account.UserID, account.HouseholdID)
+	if err != nil {
+		log.Printf("linked-debt balance sync error: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("linked-debt balance sync: updated %d debt(s) for user %s", n, account.UserID)
+	}
+}
+
 // GetProvider returns the appropriate provider implementation based on the provider name.
 func GetProvider(name string) Provider {
 	switch name {

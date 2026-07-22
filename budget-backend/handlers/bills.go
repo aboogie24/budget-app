@@ -271,6 +271,13 @@ func CreateBill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A bill created mid-period may already be paid — match it against synced
+	// transactions right away so it doesn't show "overdue" until the next
+	// manual auto-detect.
+	if d := detectBillPayments(client, b.UserID); len(d) > 0 {
+		log.Printf("CreateBill: auto-detected %d bill payment(s) for user %s", len(d), b.UserID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(b)
@@ -565,16 +572,38 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
+	detected := detectBillPayments(client, userID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"detected": detected,
+		"count":    len(detected),
+	})
+}
+
+// billDetectDB is the slice of DB behavior detectBillPayments needs, satisfied
+// by both db.DBTX (handlers) and *sql.DB (post-sync hooks).
+type billDetectDB interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+// detectBillPayments scans every bill for the user and records a bill_payment
+// for any unpaid current period that has a matching bank transaction. Runs
+// from the manual Auto-Detect endpoint, after bank syncs, and after creating a
+// bill (so a bill created mid-period picks up a payment that already synced).
+// Idempotent: periods with an existing bill_payment are skipped.
+func detectBillPayments(client billDetectDB, userID string) []map[string]any {
 	now := time.Now().UTC()
 
-	// Get all bills for user
 	billRows, err := client.Query(`
 		SELECT id, user_id, COALESCE(household_id::text, ''), name, amount_due, due_day, frequency, category_id, debt_account_id
 		FROM bills WHERE user_id = $1
 	`, userID)
 	if err != nil {
-		http.Error(w, "Query error", http.StatusInternalServerError)
-		return
+		log.Printf("detectBillPayments query error: %v", err)
+		return []map[string]any{}
 	}
 	defer billRows.Close()
 
@@ -606,7 +635,7 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 		bills = append(bills, b)
 	}
 
-	var detected []map[string]any
+	detected := []map[string]any{}
 
 	for _, bill := range bills {
 		periodStart, periodEnd := computeBillingPeriod(bill.DueDay, bill.Frequency, now)
@@ -620,8 +649,11 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Try to match a bank-synced transaction
-		// Match criteria: source='bank', amount within 5%, date in period, same category (if set)
+		// Try to match a bank-synced transaction. Baseline: amount within ±5%,
+		// date in period, same category when the bill has one. With a category
+		// match we ALSO accept overpayments (amount above the bill) — paying
+		// extra on a mortgage/car note is normal and shouldn't read as unpaid.
+		// Closest amount wins when several qualify.
 		tolerance := bill.AmountDue * 0.05
 		lowerBound := bill.AmountDue - tolerance
 		upperBound := bill.AmountDue + tolerance
@@ -632,28 +664,32 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 			matchQuery = `
 				SELECT id, amount FROM transactions
 				WHERE user_id = $1
-				  AND source IN `+bankSourcesSQL+`
+				  AND source IN ` + bankSourcesSQL + `
 			  AND type = 'expense'
-				  AND amount >= $2 AND amount <= $3
+				  AND amount >= $2
+				  AND (amount <= $3 OR amount >= $6)
 				  AND date >= $4 AND date <= $5
-				  AND category_id = $6
+				  AND category_id = $7
+				ORDER BY ABS(amount - $6) ASC
 				LIMIT 1
 			`
 			matchArgs = []any{bill.UserID, lowerBound, upperBound,
 				periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"),
-				*bill.CategoryID}
+				bill.AmountDue, *bill.CategoryID}
 		} else {
 			matchQuery = `
 				SELECT id, amount FROM transactions
 				WHERE user_id = $1
-				  AND source IN `+bankSourcesSQL+`
+				  AND source IN ` + bankSourcesSQL + `
 			  AND type = 'expense'
 				  AND amount >= $2 AND amount <= $3
 				  AND date >= $4 AND date <= $5
+				ORDER BY ABS(amount - $6) ASC
 				LIMIT 1
 			`
 			matchArgs = []any{bill.UserID, lowerBound, upperBound,
-				periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02")}
+				periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"),
+				bill.AmountDue}
 		}
 
 		var txID string
@@ -682,11 +718,18 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// If linked to debt, decrease balance
+		// If linked to a debt, decrease its balance — but only for payments
+		// dated after the debt was created (a payment that predates the debt
+		// record is already reflected in the balance the user entered), and
+		// never for account-linked debts, whose balance mirrors the bank.
 		if bill.DebtAccountID != nil && *bill.DebtAccountID != "" {
 			_, _ = client.Exec(`
-				UPDATE debt_accounts SET balance = GREATEST(balance - $1, 0) WHERE id = $2
-			`, txAmount, *bill.DebtAccountID)
+				UPDATE debt_accounts
+				SET balance = GREATEST(balance - $1, 0)
+				WHERE id = $2
+				  AND linked_balance_id IS NULL
+				  AND created_at < (SELECT date FROM transactions WHERE id = $3)
+			`, txAmount, *bill.DebtAccountID, txID)
 		}
 
 		detected = append(detected, map[string]any{
@@ -697,12 +740,5 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if detected == nil {
-		detected = []map[string]any{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"detected": detected,
-		"count":    len(detected),
-	})
+	return detected
 }

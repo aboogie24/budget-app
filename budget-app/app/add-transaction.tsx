@@ -32,8 +32,14 @@ import {
   glassEffects,
   gradients,
 } from '@/utils/design-system';
+import { FormChips } from '@/components/form';
 
-const frequencyOptions = ['one-time', 'weekly', 'biweekly', 'monthly'] as const;
+const FREQUENCY_OPTIONS = [
+  { value: 'one-time', label: 'One-time' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'biweekly', label: 'Biweekly' },
+  { value: 'monthly', label: 'Monthly' },
+];
 type TxType = 'income' | 'expense';
 
 /**
@@ -367,25 +373,7 @@ export default function AddTransactionScreen() {
               {/* Frequency */}
               <View style={styles.fieldBlock}>
                 <Text style={styles.fieldLabel}>Frequency</Text>
-                <View style={styles.chipRow} accessibilityRole="radiogroup">
-                  {frequencyOptions.map((option) => {
-                    const selected = frequency === option;
-                    return (
-                      <TouchableOpacity
-                        key={option}
-                        onPress={() => setFrequency(option)}
-                        activeOpacity={0.7}
-                        style={[styles.chip, selected && styles.chipSelected]}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: selected }}
-                      >
-                        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                          {option}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                <FormChips options={FREQUENCY_OPTIONS} value={frequency} onChange={setFrequency} />
               </View>
 
               {/* Due day (conditional) */}
@@ -682,33 +670,6 @@ const styles = StyleSheet.create({
     color: colors.primary2,
     flexShrink: 0,
   },
-
-  // Frequency chips
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  chip: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.glassMedium,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-  },
-  chipSelected: {
-    backgroundColor: withAlpha(colors.primary2, 0.18),
-    borderColor: withAlpha(colors.primary2, 0.7),
-  },
-  chipText: {
-    ...typography.small,
-    color: colors.text,
-    textTransform: 'capitalize',
-  },
-  chipTextSelected: { fontWeight: '700', color: colors.text },
 
   // Inline hints
   hintRow: {

@@ -2,17 +2,12 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   Alert,
   ScrollView,
-  Modal,
   ActivityIndicator,
-  Switch,
   RefreshControl,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +19,7 @@ import { Skeleton, SkeletonStack } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { BackButton } from '@/components/BackButton';
+import CategoryPicker from '@/components/CategoryPicker';
 import {
   colors,
   spacing,
@@ -32,6 +28,17 @@ import {
   glassEffects,
   gradients,
 } from '@/utils/design-system';
+import {
+  FormSheet,
+  FormField,
+  FormInput,
+  AmountInput,
+  FormChips,
+  FormPickerRow,
+  FormSwitchRow,
+  FormButton,
+} from '@/components/form';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 type Bill = {
   id: string;
@@ -375,6 +382,49 @@ function BillRow({
   );
 }
 
+/* ---- Option picker sheet (module scope so rows keep stable identity) ----
+   Nested inside the bill FormSheet so it presents above it on both platforms. */
+function OptionSheet({
+  visible,
+  title,
+  options,
+  selected,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  title: string;
+  options: { label: string; value: string }[];
+  selected: string;
+  onSelect: (value: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <FormSheet visible={visible} title={title} onClose={onClose} maxHeightPct={0.6}>
+      {options.map((opt) => {
+        const active = selected === opt.value;
+        return (
+          <TouchableOpacity
+            key={opt.value || '__none__'}
+            style={[styles.pickerOption, active && styles.pickerOptionActive]}
+            onPress={() => onSelect(opt.value)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: active }}
+          >
+            <Text
+              style={[styles.pickerOptionText, active && styles.pickerOptionTextActive]}
+              numberOfLines={1}
+            >
+              {opt.label}
+            </Text>
+            {active && <Ionicons name="checkmark" size={16} color={colors.primary2} />}
+          </TouchableOpacity>
+        );
+      })}
+    </FormSheet>
+  );
+}
+
 /* ---- Main Screen ---- */
 export default function BillsScreen() {
   const [bills, setBills] = useState<Bill[]>([]);
@@ -393,9 +443,9 @@ export default function BillsScreen() {
   // Dropdown data
   const [categories, setCategories] = useState<Category[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
+  const [userId, setUserId] = useState('');
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showDebtPicker, setShowDebtPicker] = useState(false);
-  const [showFrequencyPicker, setShowFrequencyPicker] = useState(false);
 
   // Form state
   const [name, setName] = useState('');
@@ -404,9 +454,19 @@ export default function BillsScreen() {
   const [frequency, setFrequency] = useState('monthly');
   const [payee, setPayee] = useState('');
   const [categoryId, setCategoryId] = useState('');
+  // Display label for the selected category ("Parent > Sub" for subcategories),
+  // since the flat `categories` list can't name a nested selection.
+  const [categoryLabel, setCategoryLabel] = useState('');
   const [debtAccountId, setDebtAccountId] = useState('');
   const [isAutopay, setIsAutopay] = useState(false);
   const [isShared, setIsShared] = useState(true);
+
+  // Inline validation (gentle: hints appear after blur, CTA gates on validity)
+  const [nameTouched, setNameTouched] = useState(false);
+  const [amountTouched, setAmountTouched] = useState(false);
+  const [dueDayTouched, setDueDayTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const loadBills = useCallback(async () => {
     try {
@@ -426,12 +486,13 @@ export default function BillsScreen() {
 
   const loadDropdownData = useCallback(async () => {
     try {
-      const userId = await api.getUserId();
-      if (!userId) return;
+      const uid = await api.getUserId();
+      if (!uid) return;
+      setUserId(uid);
 
       const [cats, userDebts] = await Promise.all([
-        api.get<Category[]>(`/auth/categories/user/${userId}`).catch(() => []),
-        api.get<Debt[]>('/auth/debts', { user_id: userId }).catch(() => []),
+        api.get<Category[]>(`/auth/categories/user/${uid}`).catch(() => []),
+        api.get<Debt[]>('/auth/debts', { user_id: uid }).catch(() => []),
       ]);
       setCategories(Array.isArray(cats) ? cats : []);
       setDebts(Array.isArray(userDebts) ? userDebts : []);
@@ -527,10 +588,15 @@ export default function BillsScreen() {
     setFrequency('monthly');
     setPayee('');
     setCategoryId('');
+    setCategoryLabel('');
     setDebtAccountId('');
     setIsAutopay(false);
     setIsShared(true);
     setEditing(null);
+    setNameTouched(false);
+    setAmountTouched(false);
+    setDueDayTouched(false);
+    setSaveError(null);
   };
 
   const openEdit = (b: Bill) => {
@@ -541,37 +607,42 @@ export default function BillsScreen() {
     setFrequency(b.frequency || 'monthly');
     setPayee(b.payee || '');
     setCategoryId(b.category_id || '');
+    setCategoryLabel(b.category_name || getCategoryName(b.category_id) || '');
     setDebtAccountId(b.debt_account_id || '');
     setIsAutopay(b.is_autopay);
     setIsShared(b.is_shared);
     setShowForm(true);
   };
 
+  // Derived validity — single source of truth for the save CTA.
+  const parsedAmountDue = Number(amountDue);
+  const nameValid = name.trim().length > 0;
+  const amountValid = !!amountDue && Number.isFinite(parsedAmountDue) && parsedAmountDue > 0;
+  const dueDayNum = parseInt(dueDay, 10);
+  const dueDayValid = !!dueDay && Number.isInteger(dueDayNum) && dueDayNum >= 1 && dueDayNum <= 31;
+  const isFormValid = nameValid && amountValid && dueDayValid;
+
   const handleSave = async () => {
-    if (!name.trim()) {
-      Alert.alert('Validation', 'Bill name is required.');
-      return;
-    }
-    if (!amountDue || isNaN(Number(amountDue)) || Number(amountDue) <= 0) {
-      Alert.alert('Validation', 'Enter a valid amount.');
-      return;
-    }
-    const dueDayNum = parseInt(dueDay);
-    if (!dueDay || isNaN(dueDayNum) || dueDayNum < 1 || dueDayNum > 31) {
-      Alert.alert('Validation', 'Due day must be between 1 and 31.');
+    if (!isFormValid || saving) {
+      setNameTouched(true);
+      setAmountTouched(true);
+      setDueDayTouched(true);
       return;
     }
 
     const userId = await api.getUserId();
     if (!userId) {
-      Alert.alert('Error', 'No user session found.');
+      setSaveError('No user session found.');
       return;
     }
+
+    setSaving(true);
+    setSaveError(null);
 
     const payload: any = {
       user_id: userId,
       name: name.trim(),
-      amount_due: parseFloat(amountDue),
+      amount_due: parsedAmountDue,
       due_day: dueDayNum,
       frequency,
       payee: payee.trim() || null,
@@ -587,12 +658,16 @@ export default function BillsScreen() {
       } else {
         await api.post('/auth/bills', payload);
       }
+      successHaptic();
       setShowForm(false);
       resetForm();
       loadBills();
     } catch (e) {
       console.error('Save bill error:', e);
-      Alert.alert('Error', 'Failed to save bill.');
+      errorHaptic();
+      setSaveError('Failed to save bill. Check your connection and try again.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -610,9 +685,16 @@ export default function BillsScreen() {
               return;
             }
             await api.delete(`/auth/bills/${billId}`, { user_id: userId });
+            successHaptic();
+            // Deleting the bill that's open in the editor closes the sheet too.
+            if (editing?.id === billId) {
+              setShowForm(false);
+              resetForm();
+            }
             loadBills();
           } catch (e) {
             console.error('Delete bill error:', e);
+            errorHaptic();
             Alert.alert('Error', 'Failed to delete bill.');
           }
         },
@@ -1038,266 +1120,173 @@ export default function BillsScreen() {
           )}
         </ScrollView>
 
-        {/* Add/Edit Modal */}
-        <Modal visible={showForm} animationType="slide" transparent>
-          <KeyboardAvoidingView
-            style={styles.modalBackdrop}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        {/* Add/Edit Bill Sheet */}
+        <FormSheet
+          visible={showForm}
+          title={editing ? 'Edit Bill' : 'Add Bill'}
+          onClose={() => {
+            setShowForm(false);
+            resetForm();
+          }}
+          footer={
+            <>
+              {saveError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{saveError}</Text>
+                </View>
+              ) : null}
+              <FormButton
+                label={editing ? 'Update Bill' : 'Add Bill'}
+                onPress={handleSave}
+                disabled={!isFormValid}
+                loading={saving}
+              />
+              {editing ? (
+                <FormButton
+                  label="Delete Bill"
+                  variant="destructive"
+                  onPress={() => handleDelete(editing.id)}
+                />
+              ) : null}
+            </>
+          }
+        >
+          <FormField label="Name" error={nameTouched && !nameValid ? 'Bill name is required' : null}>
+            <FormInput
+              icon="text-outline"
+              placeholder="e.g. Rent, Netflix, Car Payment"
+              value={name}
+              onChangeText={setName}
+              onBlur={() => setNameTouched(true)}
+              error={nameTouched && !nameValid}
+            />
+          </FormField>
+
+          <FormField
+            label="Amount Due"
+            error={amountTouched && !amountValid ? 'Enter a valid amount' : null}
           >
-            <View style={styles.modalContent}>
-              <ScrollView keyboardShouldPersistTaps="handled">
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>{editing ? 'Edit Bill' : 'Add Bill'}</Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowForm(false);
-                      resetForm();
-                    }}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    accessibilityLabel="Close"
-                  >
-                    <Ionicons name="close" size={24} color={colors.textMuted} />
-                  </TouchableOpacity>
-                </View>
+            <AmountInput
+              compact
+              value={amountDue}
+              onChangeText={setAmountDue}
+              onBlur={() => setAmountTouched(true)}
+              error={amountTouched && !amountValid ? 'Enter a valid amount' : null}
+              accessibilityLabel="Amount due"
+            />
+          </FormField>
 
-                <Text style={styles.label}>Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Rent, Netflix, Car Payment"
-                  placeholderTextColor={colors.textMuted}
-                  value={name}
-                  onChangeText={setName}
-                />
+          <FormField
+            label="Due Day"
+            error={dueDayTouched && !dueDayValid ? 'Due day must be between 1 and 31' : null}
+          >
+            <FormInput
+              icon="calendar-number-outline"
+              placeholder="15"
+              keyboardType="number-pad"
+              value={dueDay}
+              onChangeText={setDueDay}
+              onBlur={() => setDueDayTouched(true)}
+              error={dueDayTouched && !dueDayValid}
+            />
+          </FormField>
 
-                <Text style={styles.label}>Amount Due</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="$0.00"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={amountDue}
-                  onChangeText={setAmountDue}
-                />
+          <FormField label="Frequency">
+            <FormChips
+              options={FREQUENCY_OPTIONS.map((f) => ({ value: f.value, label: f.label }))}
+              value={frequency}
+              onChange={setFrequency}
+            />
+          </FormField>
 
-                <Text style={styles.label}>Due Day (1-31)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="15"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={dueDay}
-                  onChangeText={setDueDay}
-                />
+          <FormField label="Payee" optional>
+            <FormInput
+              icon="business-outline"
+              placeholder="e.g. Landlord, Netflix Inc."
+              value={payee}
+              onChangeText={setPayee}
+            />
+          </FormField>
 
-                <Text style={styles.label}>Frequency</Text>
-                <TouchableOpacity
-                  style={styles.pickerBtn}
-                  onPress={() => setShowFrequencyPicker(true)}
-                >
-                  <Text style={styles.pickerBtnText}>{getFrequencyLabel(frequency)}</Text>
-                  <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
-                </TouchableOpacity>
+          <FormField label="Category" optional>
+            <FormPickerRow
+              icon="pricetag-outline"
+              value={categoryLabel || getCategoryName(categoryId) || null}
+              placeholder="None"
+              onPress={() => setShowCategoryPicker(true)}
+              accessibilityLabel="Category, opens picker"
+            />
+            {categoryId ? (
+              <TouchableOpacity
+                onPress={() => {
+                  setCategoryId('');
+                  setCategoryLabel('');
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Clear category"
+              >
+                <Text style={styles.clearCategoryText}>Clear category</Text>
+              </TouchableOpacity>
+            ) : null}
+          </FormField>
 
-                <Text style={styles.label}>Payee</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Landlord, Netflix Inc."
-                  placeholderTextColor={colors.textMuted}
-                  value={payee}
-                  onChangeText={setPayee}
-                />
+          <FormField label="Linked Debt Account" optional>
+            <FormPickerRow
+              icon="card-outline"
+              value={getDebtName(debtAccountId) || null}
+              placeholder="None"
+              onPress={() => setShowDebtPicker(true)}
+              accessibilityLabel="Linked debt account, opens picker"
+            />
+          </FormField>
 
-                <Text style={styles.label}>Category</Text>
-                <TouchableOpacity
-                  style={styles.pickerBtn}
-                  onPress={() => setShowCategoryPicker(true)}
-                >
-                  <Text style={styles.pickerBtnText}>{getCategoryName(categoryId) || 'None'}</Text>
-                  <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
-                </TouchableOpacity>
+          <FormSwitchRow
+            label="Autopay Enabled"
+            value={isAutopay}
+            onValueChange={setIsAutopay}
+            tint={colors.info}
+          />
+          <FormSwitchRow
+            label="Share with partner"
+            value={isShared}
+            onValueChange={setIsShared}
+          />
 
-                <Text style={styles.label}>Linked Debt Account</Text>
-                <TouchableOpacity
-                  style={styles.pickerBtn}
-                  onPress={() => setShowDebtPicker(true)}
-                >
-                  <Text style={styles.pickerBtnText}>{getDebtName(debtAccountId) || 'None'}</Text>
-                  <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
-                </TouchableOpacity>
-
-                <View style={styles.switchRow}>
-                  <Text style={styles.switchLabel}>Autopay Enabled</Text>
-                  <Switch
-                    value={isAutopay}
-                    onValueChange={setIsAutopay}
-                    trackColor={{ false: colors.glassMedium, true: 'rgba(59,130,246,0.4)' }}
-                    thumbColor={isAutopay ? colors.info : colors.textMuted}
-                  />
-                </View>
-
-                <View style={styles.switchRow}>
-                  <Text style={styles.switchLabel}>Share with partner</Text>
-                  <Switch
-                    value={isShared}
-                    onValueChange={setIsShared}
-                    trackColor={{ false: colors.glassMedium, true: 'rgba(168,85,247,0.4)' }}
-                    thumbColor={isShared ? colors.primary2 : colors.textMuted}
-                  />
-                </View>
-
-                <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
-                  <LinearGradient
-                    colors={gradients.primaryGradient}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.saveBtnInner}
-                  >
-                    <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Bill'}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </ScrollView>
-
-              {/* Frequency Picker */}
-              {showFrequencyPicker && (
-                <TouchableOpacity
-                  style={styles.pickerOverlayBackdrop}
-                  activeOpacity={1}
-                  onPress={() => setShowFrequencyPicker(false)}
-                >
-                  <View style={styles.pickerSheet}>
-                    <Text style={styles.pickerSheetTitle}>Frequency</Text>
-                    {FREQUENCY_OPTIONS.map((opt) => (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[
-                          styles.pickerOption,
-                          frequency === opt.value && styles.pickerOptionActive,
-                        ]}
-                        onPress={() => {
-                          setFrequency(opt.value);
-                          setShowFrequencyPicker(false);
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.pickerOptionText,
-                            frequency === opt.value && styles.pickerOptionTextActive,
-                          ]}
-                        >
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </TouchableOpacity>
-              )}
-
-              {/* Category Picker */}
-              {showCategoryPicker && (
-                <TouchableOpacity
-                  style={styles.pickerOverlayBackdrop}
-                  activeOpacity={1}
-                  onPress={() => setShowCategoryPicker(false)}
-                >
-                  <View style={styles.pickerSheet}>
-                    <Text style={styles.pickerSheetTitle}>Category</Text>
-                    <TouchableOpacity
-                      style={[styles.pickerOption, !categoryId && styles.pickerOptionActive]}
-                      onPress={() => {
-                        setCategoryId('');
-                        setShowCategoryPicker(false);
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.pickerOptionText,
-                          !categoryId && styles.pickerOptionTextActive,
-                        ]}
-                      >
-                        None
-                      </Text>
-                    </TouchableOpacity>
-                    <ScrollView style={{ maxHeight: 300 }}>
-                      {categories.map((cat) => (
-                        <TouchableOpacity
-                          key={cat.id}
-                          style={[
-                            styles.pickerOption,
-                            categoryId === cat.id && styles.pickerOptionActive,
-                          ]}
-                          onPress={() => {
-                            setCategoryId(cat.id);
-                            setShowCategoryPicker(false);
-                          }}
-                        >
-                          <Text
-                            style={[
-                              styles.pickerOptionText,
-                              categoryId === cat.id && styles.pickerOptionTextActive,
-                            ]}
-                          >
-                            {cat.name}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  </View>
-                </TouchableOpacity>
-              )}
-
-              {/* Debt Account Picker */}
-              {showDebtPicker && (
-                <TouchableOpacity
-                  style={styles.pickerOverlayBackdrop}
-                  activeOpacity={1}
-                  onPress={() => setShowDebtPicker(false)}
-                >
-                  <View style={styles.pickerSheet}>
-                    <Text style={styles.pickerSheetTitle}>Linked Debt Account</Text>
-                    <TouchableOpacity
-                      style={[styles.pickerOption, !debtAccountId && styles.pickerOptionActive]}
-                      onPress={() => {
-                        setDebtAccountId('');
-                        setShowDebtPicker(false);
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.pickerOptionText,
-                          !debtAccountId && styles.pickerOptionTextActive,
-                        ]}
-                      >
-                        None
-                      </Text>
-                    </TouchableOpacity>
-                    {debts.map((d) => (
-                      <TouchableOpacity
-                        key={d.id}
-                        style={[
-                          styles.pickerOption,
-                          debtAccountId === d.id && styles.pickerOptionActive,
-                        ]}
-                        onPress={() => {
-                          setDebtAccountId(d.id);
-                          setShowDebtPicker(false);
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.pickerOptionText,
-                            debtAccountId === d.id && styles.pickerOptionTextActive,
-                          ]}
-                        >
-                          {d.name} ({fmt(d.balance)})
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+          {/* Nested pickers (render inside the sheet so they stack above it).
+              Category uses the shared tree picker — parents, subcategories,
+              search, and inline create — same as the transaction forms. */}
+          {userId !== '' && (
+            <CategoryPicker
+              visible={showCategoryPicker}
+              onClose={() => setShowCategoryPicker(false)}
+              onSelect={(selected) => {
+                setCategoryId(selected.id);
+                setCategoryLabel(
+                  selected.parent_name ? `${selected.parent_name} > ${selected.name}` : selected.name,
+                );
+                setShowCategoryPicker(false);
+              }}
+              type="expense"
+              userId={userId}
+            />
+          )}
+          <OptionSheet
+            visible={showDebtPicker}
+            title="Linked Debt Account"
+            options={[
+              { label: 'None', value: '' },
+              ...debts.map((d) => ({ label: `${d.name} (${fmt(d.balance)})`, value: d.id })),
+            ]}
+            selected={debtAccountId}
+            onSelect={(v) => {
+              setDebtAccountId(v);
+              setShowDebtPicker(false);
+            }}
+            onClose={() => setShowDebtPicker(false)}
+          />
+        </FormSheet>
       </SafeAreaView>
     </GradientBackground>
   );
@@ -1833,123 +1822,40 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
 
-  /* ---- Modal Styles ---- */
-  modalBackdrop: {
+  /* ---- Form sheet extras ---- */
+  formErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
+  formErrorText: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
+    ...typography.caption,
+    color: colors.error,
   },
-  modalContent: {
-    backgroundColor: colors.surface2,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.xl,
-    maxHeight: '90%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  modalTitle: {
-    color: colors.text,
-    ...typography.h3,
-    fontWeight: '800',
-  },
-  label: {
-    color: colors.text,
-    ...typography.smallBold,
-    marginBottom: spacing.xs + 2,
-    marginTop: spacing.md,
-  },
-  input: {
-    backgroundColor: colors.glassLight,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md + 2,
-    paddingVertical: spacing.md,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    ...typography.small,
-    minHeight: 44,
-  },
-  pickerBtn: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: colors.glassLight,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md + 2,
-    paddingVertical: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    minHeight: 44,
-  },
-  pickerBtnText: {
-    color: colors.text,
-    ...typography.small,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: spacing.lg,
-  },
-  switchLabel: {
-    color: colors.text,
-    ...typography.smallBold,
-  },
-  saveBtn: {
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    marginTop: spacing.xl,
-    marginBottom: spacing.xl,
-  },
-  saveBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 52,
-  },
-  saveBtnText: {
-    color: colors.text,
-    ...typography.button,
-    fontWeight: '800',
-  },
-
-  /* ---- Picker Overlay ---- */
-  pickerOverlayBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-    zIndex: 10,
-  },
-  pickerSheet: {
-    backgroundColor: colors.surface2,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.xl,
-    maxHeight: '60%',
-  },
-  pickerSheetTitle: {
-    color: colors.text,
-    ...typography.bodyBold,
-    fontWeight: '800',
-    marginBottom: spacing.md,
+  clearCategoryText: {
+    ...typography.caption,
+    color: colors.primary2,
+    fontWeight: '600',
+    marginTop: spacing.sm,
   },
   pickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md + 2,
+    paddingHorizontal: spacing.md,
     borderRadius: radius.sm,
     marginBottom: spacing.xs,
     minHeight: 44,
-    justifyContent: 'center',
   },
   pickerOptionActive: {
     backgroundColor: 'rgba(124,58,237,0.18)',
   },
   pickerOptionText: {
+    flex: 1,
     color: colors.text,
     ...typography.small,
   },

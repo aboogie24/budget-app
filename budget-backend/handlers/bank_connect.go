@@ -231,12 +231,19 @@ func SyncAllBankAccounts(w http.ResponseWriter, r *http.Request) {
 		log.Printf("sync-all: transfer detection error (non-fatal): %v", terr)
 	}
 
+	// Then settle bills against the fresh transactions (idempotent per period).
+	billPayments := detectBillPayments(dbClient.Conn, userID)
+	if len(billPayments) > 0 {
+		log.Printf("sync-all: auto-detected %d bill payment(s)", len(billPayments))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"synced":          totalSynced,
 		"per_provider":    perProvider,
 		"accounts":        results,
 		"transfer_pairs":  pairsCreated,
+		"bill_payments":   len(billPayments),
 	})
 }
 

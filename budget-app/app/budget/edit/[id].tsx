@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
-  Switch,
   KeyboardAvoidingView,
   ActivityIndicator,
 } from 'react-native';
@@ -17,7 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { v4 as uuidv4 } from 'uuid';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { FormDateField, FormChips, FormSwitchRow } from '@/components/form';
 import { BackButton } from '@/components/BackButton';
 import GradientBackground from '@/components/GradientBackground';
 import { Skeleton } from '@/components/Skeleton';
@@ -42,7 +41,12 @@ type BudgetData = {
   updated_at?: string;
 };
 
-const FREQUENCIES = ['monthly', 'weekly', 'biweekly', '1st-15th'] as const;
+const FREQUENCY_OPTIONS = [
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'biweekly', label: 'Biweekly' },
+  { value: '1st-15th', label: '1st & 15th' },
+];
 
 // ── Relative-time helper (additive; degrades gracefully on missing/invalid) ──
 function relativeTime(iso?: string): string | null {
@@ -222,12 +226,6 @@ export default function EditBudget() {
       : colors.info
     : colors.textMuted;
   const glyph = budgetData?.updated_by ? (glyphIsA ? '◑' : '◐') : '•';
-
-  const formattedDate = startDate.toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
 
   // ─────────────────────────────────────────────────────────────
   // Header (shared across all states)
@@ -508,87 +506,29 @@ export default function EditBudget() {
               {/* Frequency chips */}
               <View>
                 <Text style={styles.fieldLabel}>Frequency</Text>
-                <View style={styles.chipRow}>
-                  {FREQUENCIES.map((f) => {
-                    const active = frequency === f;
-                    return (
-                      <TouchableOpacity
-                        key={f}
-                        style={[styles.chip, active && styles.chipActive]}
-                        onPress={() => setFrequency(f)}
-                        activeOpacity={0.7}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: active }}
-                        accessibilityLabel={f}
-                      >
-                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{f}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                <FormChips options={FREQUENCY_OPTIONS} value={frequency} onChange={setFrequency} />
               </View>
 
               {/* Start date (§5.4) */}
               <View>
                 <Text style={styles.fieldLabel}>Start date</Text>
-                <TouchableOpacity
-                  style={styles.inputRow}
-                  onPress={() => setShowDatePicker(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Start date, ${formattedDate}, opens date picker`}
-                >
-                  <Ionicons name="calendar-outline" size={16} color={colors.primary2} />
-                  <Text style={styles.inputText}>{formattedDate}</Text>
-                </TouchableOpacity>
-                {showDatePicker && (
-                  <DateTimePicker
-                    value={startDate}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
-                    onChange={(_, selected) => {
-                      if (Platform.OS === 'android') setShowDatePicker(false);
-                      if (selected) setStartDate(selected);
-                    }}
-                    themeVariant="dark"
-                  />
-                )}
-                {showDatePicker && Platform.OS === 'ios' && (
-                  <TouchableOpacity
-                    style={styles.datePickerDone}
-                    onPress={() => setShowDatePicker(false)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="Done selecting date"
-                  >
-                    <Text style={styles.datePickerDoneText}>Done</Text>
-                  </TouchableOpacity>
-                )}
+                <FormDateField
+                  value={startDate}
+                  onChange={setStartDate}
+                  open={showDatePicker}
+                  onToggle={() => setShowDatePicker((s) => !s)}
+                  accessibilityLabel="Start date"
+                />
               </View>
 
               {/* Share with household (§5.5) */}
               <View style={commonStyles.divider} />
-              <View
-                style={styles.shareRow}
-                accessible
-                accessibilityRole="switch"
-                accessibilityState={{ checked: shared }}
-                accessibilityLabel="Share with household"
-                accessibilityHint="Let your partner view and edit this budget"
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.shareTitle}>Share with household</Text>
-                  <Text style={styles.shareSubcopy}>
-                    Let your partner view and edit this budget
-                  </Text>
-                </View>
-                <Switch
-                  value={shared}
-                  onValueChange={setShared}
-                  thumbColor="#fff"
-                  trackColor={{ true: colors.primary2, false: colors.textDark }}
-                />
-              </View>
+              <FormSwitchRow
+                label="Share with household"
+                sublabel="Let your partner view and edit this budget"
+                value={shared}
+                onValueChange={setShared}
+              />
             </View>
 
             {/* Save error (§3.4) — sits above the sticky CTA */}
@@ -780,45 +720,6 @@ const styles = StyleSheet.create({
   },
   emptyCategoryText: { flex: 1, color: colors.textMuted, ...typography.small },
   emptyCategoryAction: { color: colors.primary2, ...typography.smallBold, fontWeight: '700' },
-
-  // Frequency chips
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  chip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    minHeight: 44,
-    justifyContent: 'center',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    backgroundColor: colors.glassLight,
-  },
-  chipActive: { borderColor: colors.primary2, backgroundColor: 'rgba(168,85,247,0.16)' },
-  chipText: { color: colors.textMuted, ...typography.smallBold, textTransform: 'capitalize' },
-  chipTextActive: { color: colors.text, fontWeight: '800' },
-
-  // Date "Done" pill
-  datePickerDone: {
-    alignSelf: 'flex-end',
-    marginTop: spacing.sm,
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.md,
-    backgroundColor: 'rgba(168,85,247,0.15)',
-  },
-  datePickerDoneText: { color: colors.primary2, ...typography.smallBold, fontWeight: '700' },
-
-  // Share row
-  shareRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  shareTitle: { color: colors.text, ...typography.smallBold, fontWeight: '700' },
-  shareSubcopy: { color: colors.textMuted, ...typography.caption, marginTop: spacing.xs },
 
   // Inline error card
   inlineErrorCard: {
