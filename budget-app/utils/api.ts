@@ -39,12 +39,38 @@ export type AttentionItem = {
   icon: string;
   color: string;
   cta_label: string;
-  action: 'reconnect' | 'mark_paid' | 'review' | 'open_budget' | 'ai_categorize';
+  // ask_ai → open the advisor chat seeded with payload.seed;
+  // navigate → push payload.href. Both are used for AI nudges merged in
+  // client-side; the rest come from GET /auth/dashboard/attention.
+  action:
+    | 'reconnect'
+    | 'mark_paid'
+    | 'review'
+    | 'open_budget'
+    | 'ai_categorize'
+    | 'ask_ai'
+    | 'navigate';
   payload?: Record<string, any>;
 };
 
 export async function fetchAttention() {
   return api.get<{ items: AttentionItem[]; count: number }>('/auth/dashboard/attention');
+}
+
+// ─── AI nudges (proactive advisor cards) ───────────────────────
+export type AINudgeItem = {
+  id: string;
+  nudge_type: string;
+  title: string;
+  body: string;
+  action_type?: 'ask_ai' | 'navigate_to' | string;
+  action_data?: string;
+  priority: number;
+  is_read: boolean;
+};
+
+export async function fetchAINudges() {
+  return api.get<AINudgeItem[]>('/auth/ai/nudges');
 }
 
 // ─── Dashboard status verdict ───────────────────────────────────

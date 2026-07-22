@@ -86,7 +86,8 @@ func RunAICategorization(dbClient *db.DB, userID string) (int, int, int, error) 
 		SELECT merchant_normalized, MIN(note)
 		FROM transactions
 		WHERE user_id = $1
-		  AND source IN ('bank', 'flinks', 'teller')
+		  AND source IN `+bankSourcesSQL+`
+		  AND type != 'transfer'
 		  AND merchant_normalized IS NOT NULL AND merchant_normalized <> ''
 		  AND category_id IS NULL
 		  AND COALESCE(user_verified, false) = false

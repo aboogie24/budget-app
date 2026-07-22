@@ -166,13 +166,21 @@ function SwipeableRow({
     }),
   ).current;
 
+  // The confirm surface fades in with swipe progress — full opacity only as
+  // the gesture approaches commitment, so the green never pops at a 2px drag.
+  const bgOpacity = translateX.interpolate({
+    inputRange: [0, SWIPE_THRESHOLD],
+    outputRange: [0.35, 1],
+    extrapolate: 'clamp',
+  });
+
   return (
     <View style={styles.swipeWrap}>
       {/* Background revealed on swipe */}
-      <View style={styles.swipeBg}>
-        <Ionicons name="checkmark-circle" size={22} color={colors.text} />
+      <Animated.View style={[styles.swipeBg, { opacity: bgOpacity }]}>
+        <Ionicons name="checkmark-circle" size={22} color={colors.success} />
         <Text style={styles.swipeText}>Confirm</Text>
-      </View>
+      </Animated.View>
       <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
         {children}
       </Animated.View>
@@ -266,18 +274,21 @@ export default function TransactionReviewScreen() {
   const confirmAll = async () => {
     setConfirmingAll(true);
     try {
-      const promises = unverifiedTransactions.map((t) =>
-        api.patch(`/auth/transactions/${t.id}/verify`, { user_id: userId }),
-      );
-      await Promise.all(promises);
+      // One batch request — firing a request per transaction tripped the
+      // API rate limiter (120/min) on large review queues.
+      const ids = unverifiedTransactions.map((t) => t.id);
+      await api.patch(`/auth/transactions/verify-batch`, {
+        user_id: userId,
+        transaction_ids: ids,
+      });
       successHaptic();
-      const ids = new Set(unverifiedTransactions.map((t) => t.id));
+      const idSet = new Set(ids);
       setTransactions((prev) =>
-        prev.map((t) => (ids.has(t.id) ? { ...t, user_verified: true } : t)),
+        prev.map((t) => (idSet.has(t.id) ? { ...t, user_verified: true } : t)),
       );
     } catch (e) {
       console.error('Failed to confirm all:', e);
-      Alert.alert('Error', 'Some transactions could not be confirmed.');
+      Alert.alert('Error', 'Could not confirm transactions. Please try again.');
     } finally {
       setConfirmingAll(false);
     }
@@ -844,7 +855,9 @@ const styles = StyleSheet.create({
   },
   swipeBg: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.success,
+    // Deep green surface + bright green icon: the saturated hue lives on the
+    // small mark, not the whole slab (design-system successDeep note).
+    backgroundColor: colors.successDeep,
     borderRadius: radius.lg,
     flexDirection: 'row',
     alignItems: 'center',

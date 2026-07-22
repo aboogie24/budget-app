@@ -409,7 +409,7 @@ export default function FrameworkScreen() {
   // the pre-redesign dashboard, relocated to the framework (progress) surface.
   const achievements = useMemo<Achievement[]>(() => {
     const hasBankSyncedTx = transactions.some((t: any) =>
-      ['teller', 'bank', 'flinks'].includes(String(t.source || ''))
+      ['teller', 'bank', 'flinks', 'simplefin'].includes(String(t.source || ''))
     );
     const verifiedCount = transactions.filter((t: any) => t.user_verified).length;
     const netWorthNow = cashTotal + investmentTotal + propertyTotal - debtTotal;

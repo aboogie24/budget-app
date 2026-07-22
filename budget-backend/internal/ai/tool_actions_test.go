@@ -88,7 +88,7 @@ func TestUpdateSavingsGoal_RejectsForeignGoal(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery(`SELECT EXISTS`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+		WillReturnRows(sqlmock.NewRows([]string{"exists", "linked_id", "linked_name"}).AddRow(false, "", ""))
 
 	_, err := updateSavingsGoalTool(db, "user-1", "hh-1", json.RawMessage(`{"goal_id":"other-goal","add_amount":100}`))
 	if err == nil || !strings.Contains(err.Error(), "not found") {
@@ -101,7 +101,7 @@ func TestUpdateSavingsGoal_AddsProgress(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery(`SELECT EXISTS`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+		WillReturnRows(sqlmock.NewRows([]string{"exists", "linked_id", "linked_name"}).AddRow(true, "", ""))
 	mock.ExpectQuery(`UPDATE savings_goals`).
 		WillReturnRows(sqlmock.NewRows([]string{"name", "current_amount", "target_amount"}).AddRow("Jamaica", 700.0, 4200.0))
 	mock.ExpectExec(`INSERT INTO activity_events`).
@@ -118,6 +118,34 @@ func TestUpdateSavingsGoal_AddsProgress(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestUpdateSavingsGoal_BlocksManualProgressOnLinkedGoal(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT EXISTS`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists", "linked_id", "linked_name"}).AddRow(true, "bal-1", "USAA Savings"))
+
+	_, err := updateSavingsGoalTool(db, "user-1", "hh-1", json.RawMessage(`{"goal_id":"goal-1","add_amount":200}`))
+	if err == nil || !strings.Contains(err.Error(), "USAA Savings") {
+		t.Fatalf("expected linked-goal guardrail mentioning the account, got %v", err)
+	}
+	// Target/date changes remain allowed (no add_amount).
+	mock.ExpectQuery(`SELECT EXISTS`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists", "linked_id", "linked_name"}).AddRow(true, "bal-1", "USAA Savings"))
+	mock.ExpectQuery(`UPDATE savings_goals`).
+		WillReturnRows(sqlmock.NewRows([]string{"name", "current_amount", "target_amount"}).AddRow("Emergency fund", 9000.0, 12000.0))
+
+	out, err := updateSavingsGoalTool(db, "user-1", "hh-1", json.RawMessage(`{"goal_id":"goal-1","target_amount":12000}`))
+	if err != nil {
+		t.Fatalf("target change on linked goal should be allowed: %v", err)
+	}
+	var res map[string]interface{}
+	_ = json.Unmarshal([]byte(out), &res)
+	if res["target_amount"] != 12000.0 {
+		t.Fatalf("unexpected result: %v", res)
 	}
 }
 

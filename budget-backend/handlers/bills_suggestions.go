@@ -130,7 +130,7 @@ func GetBillSuggestions(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.user_id = $1
 		  AND t.type = 'expense'
-		  AND t.source IN ('teller','bank','flinks')
+		  AND t.source IN `+bankSourcesSQL+`
 		  AND t.merchant_normalized IS NOT NULL
 		  AND t.merchant_normalized <> ''
 		  AND t.date >= $2
@@ -343,7 +343,7 @@ func AcceptBillSuggestion(w http.ResponseWriter, r *http.Request) {
 		SELECT id, date, amount FROM transactions
 		WHERE user_id = $1
 		  AND type = 'expense'
-		  AND source IN ('teller','bank','flinks')
+		  AND source IN `+bankSourcesSQL+`
 		  AND merchant_normalized = $2
 		ORDER BY date
 	`, userID, req.MerchantNormalized)

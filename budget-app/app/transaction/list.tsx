@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/utils/apiClient';
+import { aiCategorizeTransactions } from '@/utils/api';
 import { getCurrentUser } from '@/utils/storage';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
@@ -160,6 +161,7 @@ export default function TransactionList() {
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [aiCategorizing, setAiCategorizing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState('');
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -167,6 +169,9 @@ export default function TransactionList() {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense' | 'transfer'>('all');
+  // Toggle, not part of the type segment — combines with type and search
+  // ("uncategorized expenses" is a real query).
+  const [uncatOnly, setUncatOnly] = useState(false);
 
   // Server search fires on the debounced value so we don't hit the API per keystroke.
   useEffect(() => {
@@ -175,7 +180,7 @@ export default function TransactionList() {
   }, [query]);
 
   const hasFilter = !!(params.category_id || params.date);
-  const searching = debouncedQuery.length > 0 || typeFilter !== 'all';
+  const searching = debouncedQuery.length > 0 || typeFilter !== 'all' || uncatOnly;
 
   const headerTitle = params.category_name
     ? params.category_name
@@ -262,6 +267,7 @@ export default function TransactionList() {
         };
         if (debouncedQuery) req.q = debouncedQuery;
         if (typeFilter !== 'all') req.type = typeFilter;
+        if (uncatOnly) req.uncategorized = '1';
         if (params.category_id) req.category_id = params.category_id;
         if (params.date) req.date = params.date;
 
@@ -286,7 +292,7 @@ export default function TransactionList() {
         inFlight.current = false;
       }
     },
-    [transactions.length, debouncedQuery, typeFilter, params.category_id, params.date]
+    [transactions.length, debouncedQuery, typeFilter, uncatOnly, params.category_id, params.date]
   );
 
   // Keep a stable ref so focus/filter effects don't need `load` (whose identity
@@ -305,7 +311,7 @@ export default function TransactionList() {
   useFocusEffect(
     useCallback(() => {
       loadRef.current('reset');
-    }, [debouncedQuery, typeFilter, params.category_id, params.date])
+    }, [debouncedQuery, typeFilter, uncatOnly, params.category_id, params.date])
   );
 
   /* Open the category picker for a transaction. */
@@ -439,7 +445,64 @@ export default function TransactionList() {
                 </Text>
               </TouchableOpacity>
             ))}
+            <TouchableOpacity
+              style={[
+                styles.chip,
+                { flexDirection: 'row', alignItems: 'center', gap: 4 },
+                uncatOnly && styles.chipActive,
+              ]}
+              onPress={() => setUncatOnly((v) => !v)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: uncatOnly }}
+              accessibilityLabel="Show only uncategorized transactions"
+            >
+              <Ionicons
+                name="pricetag-outline"
+                size={11}
+                color={uncatOnly ? colors.text : colors.textMuted}
+              />
+              <Text style={[styles.chipText, uncatOnly && styles.chipTextActive]}>
+                Uncategorized
+              </Text>
+            </TouchableOpacity>
           </View>
+
+          {/* One-tap AI sweep over whatever the uncategorized filter shows. */}
+          {uncatOnly && total > 0 && (
+            <TouchableOpacity
+              style={[styles.aiSweepBtn, aiCategorizing && { opacity: 0.6 }]}
+              disabled={aiCategorizing}
+              onPress={async () => {
+                setAiCategorizing(true);
+                try {
+                  const res = await aiCategorizeTransactions();
+                  const applied = res?.applied ?? 0;
+                  Alert.alert(
+                    'AI Categorize',
+                    applied > 0
+                      ? `Categorized ${applied} transaction${applied !== 1 ? 's' : ''} across ${res?.classified ?? 0} merchant${(res?.classified ?? 0) !== 1 ? 's' : ''}.`
+                      : 'The AI could not confidently place the remaining merchants — assign those by tapping their category chip.',
+                  );
+                  loadRef.current('reset');
+                } catch (e: any) {
+                  Alert.alert('Error', 'AI categorization failed: ' + (e?.message || String(e)));
+                } finally {
+                  setAiCategorizing(false);
+                }
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Run AI categorization on ${total} uncategorized transactions`}
+            >
+              {aiCategorizing ? (
+                <ActivityIndicator size="small" color={colors.primary2} />
+              ) : (
+                <Ionicons name="sparkles" size={14} color={colors.primary2} />
+              )}
+              <Text style={styles.aiSweepText}>
+                {aiCategorizing ? 'Categorizing…' : `AI categorize these (${total})`}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {showSkeleton ? (
@@ -540,6 +603,7 @@ export default function TransactionList() {
                     onAction={() => {
                       setQuery('');
                       setTypeFilter('all');
+                      setUncatOnly(false);
                     }}
                   />
                 ) : (
@@ -920,6 +984,7 @@ const styles = StyleSheet.create({
   },
   chipRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
   },
   chip: {
@@ -939,6 +1004,22 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: colors.text,
+  },
+  aiSweepBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    minHeight: 40,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${colors.primary2}66`,
+    backgroundColor: `${colors.primary}1f`,
+  },
+  aiSweepText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.primary2,
   },
   footerLoading: {
     paddingVertical: spacing.lg,

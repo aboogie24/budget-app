@@ -128,14 +128,26 @@ func updateSavingsGoalTool(conn *sql.DB, userID, householdID string, input json.
 	}
 
 	// Ownership: the goal must belong to this user or their household.
+	// Also fetch the account link — balance-linked goals reject manual
+	// progress changes (the linked account balance is the source of truth).
 	var owned bool
+	var linkedID, linkedName string
 	if err := conn.QueryRow(`
 		SELECT EXISTS(
 			SELECT 1 FROM savings_goals
 			WHERE id = $1 AND (user_id = $2 OR ($3 != '' AND household_id::text = $3))
-		)
-	`, params.GoalID, userID, householdID).Scan(&owned); err != nil || !owned {
+		),
+		COALESCE((SELECT sg.linked_balance_id::text FROM savings_goals sg WHERE sg.id = $1), ''),
+		COALESCE((SELECT ab.name FROM savings_goals sg JOIN account_balances ab ON sg.linked_balance_id = ab.id WHERE sg.id = $1), '')
+	`, params.GoalID, userID, householdID).Scan(&owned, &linkedID, &linkedName); err != nil || !owned {
 		return "", fmt.Errorf("update_savings_goal: goal not found for this user")
+	}
+	if linkedID != "" && params.AddAmount != 0 {
+		label := linkedName
+		if label == "" {
+			label = "a bank account"
+		}
+		return "", fmt.Errorf("update_savings_goal: this goal's progress mirrors the balance of %s — it updates automatically when the account syncs. To count new savings, the user should transfer money into that account. Target amount and date can still be changed", label)
 	}
 
 	var name string
@@ -336,4 +348,220 @@ func pctOf(current, target float64) int {
 		p = 0
 	}
 	return p
+}
+
+// ── Category management tools ────────────────────────────────────
+
+// resolveCategoryByName finds a category (system or the user's own) by
+// case-insensitive name, optionally constrained to a type.
+func resolveCategoryByName(conn *sql.DB, userID, name, catType string) (id, resolvedName string, err error) {
+	if strings.TrimSpace(name) == "" {
+		return "", "", fmt.Errorf("category name is required")
+	}
+	q := `
+		SELECT c.id::text, c.name FROM categories c
+		WHERE (c.user_id IS NULL OR c.user_id = $1) AND c.name ILIKE $2`
+	args := []interface{}{userID, strings.TrimSpace(name)}
+	if catType != "" {
+		q += ` AND c.type = $3`
+		args = append(args, catType)
+	}
+	q += ` ORDER BY (c.user_id IS NOT NULL) DESC LIMIT 1`
+	err = conn.QueryRow(q, args...).Scan(&id, &resolvedName)
+	if err == sql.ErrNoRows {
+		return "", "", fmt.Errorf("no category named %q — use create_category first or pick an existing one", name)
+	}
+	return id, resolvedName, err
+}
+
+func createCategoryTool(conn *sql.DB, userID, householdID string, input json.RawMessage) (string, error) {
+	var params struct {
+		Name       string `json:"name"`
+		Type       string `json:"type"`
+		ParentName string `json:"parent_name"`
+		Color      string `json:"color"`
+		Icon       string `json:"icon"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("create_category: parse input: %w", err)
+	}
+	if strings.TrimSpace(params.Name) == "" {
+		return "", fmt.Errorf("create_category: name is required")
+	}
+	if params.Type != "income" {
+		params.Type = "expense"
+	}
+
+	// Refuse duplicates instead of silently creating near-identical categories.
+	var exists bool
+	_ = conn.QueryRow(`
+		SELECT EXISTS(SELECT 1 FROM categories WHERE (user_id IS NULL OR user_id = $1) AND name ILIKE $2 AND type = $3)
+	`, userID, strings.TrimSpace(params.Name), params.Type).Scan(&exists)
+	if exists {
+		return "", fmt.Errorf("create_category: a %s category named %q already exists — assign to it instead", params.Type, params.Name)
+	}
+
+	var parentVal interface{}
+	if params.ParentName != "" {
+		pid, _, err := resolveCategoryByName(conn, userID, params.ParentName, params.Type)
+		if err != nil {
+			return "", fmt.Errorf("create_category: parent: %v", err)
+		}
+		parentVal = pid
+	}
+
+	color := params.Color
+	if color == "" {
+		color = "#a855f7"
+	}
+
+	var catID string
+	err := conn.QueryRow(`
+		INSERT INTO categories (id, name, user_id, type, color, icon, parent_id)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, NULLIF($5, ''), $6)
+		RETURNING id
+	`, strings.TrimSpace(params.Name), userID, params.Type, color, params.Icon, parentVal).Scan(&catID)
+	if err != nil {
+		log.Printf("create_category insert error: %v", err)
+		return "", fmt.Errorf("create_category: save failed")
+	}
+
+	recordAIActivity(conn, householdID, userID, "category_created", catID, "category", 0,
+		fmt.Sprintf("AI advisor created category %q", params.Name))
+
+	out, _ := json.Marshal(map[string]interface{}{
+		"category_id": catID,
+		"name":        params.Name,
+		"type":        params.Type,
+		"visible_at":  "Settings → Categories",
+	})
+	return string(out), nil
+}
+
+func assignTransactionCategoryTool(conn *sql.DB, userID, householdID string, input json.RawMessage) (string, error) {
+	var params struct {
+		TransactionID string `json:"transaction_id"`
+		Merchant      string `json:"merchant"`
+		CategoryName  string `json:"category_name"`
+		CreateRule    bool   `json:"create_rule"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("assign_transaction_category: parse input: %w", err)
+	}
+	if params.TransactionID == "" && strings.TrimSpace(params.Merchant) == "" {
+		return "", fmt.Errorf("assign_transaction_category: provide transaction_id or merchant")
+	}
+
+	catID, catName, err := resolveCategoryByName(conn, userID, params.CategoryName, "")
+	if err != nil {
+		return "", fmt.Errorf("assign_transaction_category: %v", err)
+	}
+
+	// Approval-gated: reaching here means the user said yes, so the result is
+	// user-confirmed ('exact'), not tentative 'ai'.
+	var updated int64
+	if params.TransactionID != "" {
+		res, uerr := conn.Exec(`
+			UPDATE transactions
+			SET category_id = $1, match_confidence = 'exact', user_verified = true, updated_at = NOW()
+			WHERE id = $2 AND user_id = $3
+		`, catID, params.TransactionID, userID)
+		if uerr != nil {
+			return "", fmt.Errorf("assign_transaction_category: update failed")
+		}
+		updated, _ = res.RowsAffected()
+		if updated == 0 {
+			return "", fmt.Errorf("assign_transaction_category: transaction not found for this user")
+		}
+	} else {
+		res, uerr := conn.Exec(`
+			UPDATE transactions
+			SET category_id = $1, match_confidence = 'exact', user_verified = true, updated_at = NOW()
+			WHERE user_id = $2 AND merchant_normalized ILIKE $3
+		`, catID, userID, "%"+strings.ToLower(strings.TrimSpace(params.Merchant))+"%")
+		if uerr != nil {
+			return "", fmt.Errorf("assign_transaction_category: update failed")
+		}
+		updated, _ = res.RowsAffected()
+	}
+
+	// Optionally persist the mapping so future syncs categorize automatically.
+	ruleCreated := false
+	if params.CreateRule && strings.TrimSpace(params.Merchant) != "" {
+		if err := upsertRule(conn, userID, householdID, "merchant", strings.ToLower(strings.TrimSpace(params.Merchant)), catID); err == nil {
+			ruleCreated = true
+		}
+	}
+
+	recordAIActivity(conn, householdID, userID, "transactions_categorized", catID, "category", 0,
+		fmt.Sprintf("AI advisor categorized %d transaction(s) as %q", updated, catName))
+
+	out, _ := json.Marshal(map[string]interface{}{
+		"updated":      updated,
+		"category":     catName,
+		"rule_created": ruleCreated,
+		"visible_at":   "Transactions",
+	})
+	return string(out), nil
+}
+
+// upsertRule mirrors handlers.upsertMerchantRule (import cycle) for merchant
+// and keyword rules created through the advisor.
+func upsertRule(conn *sql.DB, userID, householdID, ruleType, matchValue, categoryID string) error {
+	var hhVal interface{}
+	if householdID != "" {
+		hhVal = householdID
+	}
+	_, err := conn.Exec(`
+		INSERT INTO category_mapping_rules
+			(user_id, household_id, rule_type, match_value, category_id, auto_created, priority)
+		VALUES ($1, $2, $3, $4, $5, false, 10)
+		ON CONFLICT (user_id, rule_type, match_value) WHERE user_id IS NOT NULL
+		DO UPDATE SET
+			category_id = EXCLUDED.category_id,
+			household_id = EXCLUDED.household_id,
+			auto_created = false,
+			updated_at = NOW()
+	`, userID, hhVal, ruleType, matchValue, categoryID)
+	if err != nil {
+		log.Printf("advisor upsertRule (%s %q -> %s): %v", ruleType, matchValue, categoryID, err)
+	}
+	return err
+}
+
+func upsertCategoryRuleTool(conn *sql.DB, userID, householdID string, input json.RawMessage) (string, error) {
+	var params struct {
+		Merchant     string `json:"merchant"`
+		Keyword      string `json:"keyword"`
+		CategoryName string `json:"category_name"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("upsert_category_rule: parse input: %w", err)
+	}
+	ruleType, matchValue := "merchant", strings.ToLower(strings.TrimSpace(params.Merchant))
+	if matchValue == "" {
+		ruleType, matchValue = "keyword", strings.ToLower(strings.TrimSpace(params.Keyword))
+	}
+	if matchValue == "" {
+		return "", fmt.Errorf("upsert_category_rule: provide merchant or keyword")
+	}
+
+	catID, catName, err := resolveCategoryByName(conn, userID, params.CategoryName, "")
+	if err != nil {
+		return "", fmt.Errorf("upsert_category_rule: %v", err)
+	}
+	if err := upsertRule(conn, userID, householdID, ruleType, matchValue, catID); err != nil {
+		return "", fmt.Errorf("upsert_category_rule: save failed")
+	}
+
+	recordAIActivity(conn, householdID, userID, "rule_created", catID, "category_rule", 0,
+		fmt.Sprintf("AI advisor set rule: %s %q → %q", ruleType, matchValue, catName))
+
+	out, _ := json.Marshal(map[string]interface{}{
+		"rule_type":   ruleType,
+		"match_value": matchValue,
+		"category":    catName,
+		"visible_at":  "Settings → Category Rules",
+	})
+	return string(out), nil
 }

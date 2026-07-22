@@ -1,6 +1,9 @@
 package bankprovider
 
-import "database/sql"
+import (
+	"database/sql"
+	"log"
+)
 
 // LinkedAccount represents a linked bank account with provider-specific fields.
 type LinkedAccount struct {
@@ -34,6 +37,27 @@ type Provider interface {
 
 	// SyncLiabilities fetches and stores liabilities/debts.
 	SyncLiabilities(conn *sql.DB, account LinkedAccount) (int, error)
+}
+
+// SyncLinkedGoalBalances mirrors freshly synced account balances into savings
+// goals that designate an account as their fund (linked_balance_id) — e.g.
+// "this HYSA is our emergency fund". Call after any balance sync; goal
+// progress then tracks real money instead of manual entries.
+func SyncLinkedGoalBalances(conn *sql.DB, account LinkedAccount) {
+	res, err := conn.Exec(`
+		UPDATE savings_goals sg
+		SET current_amount = GREATEST(ab.current_balance, 0)
+		FROM account_balances ab
+		WHERE sg.linked_balance_id = ab.id
+		  AND (sg.user_id = $1 OR ($2 <> '' AND sg.household_id::text = $2))
+	`, account.UserID, account.HouseholdID)
+	if err != nil {
+		log.Printf("linked-goal balance sync error: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("linked-goal balance sync: updated %d goal(s) for user %s", n, account.UserID)
+	}
 }
 
 // GetProvider returns the appropriate provider implementation based on the provider name.

@@ -32,7 +32,10 @@ func (s *SimpleFINProvider) SyncTransactions(conn *sql.DB, account LinkedAccount
 		return 0, fmt.Errorf("simplefin: linked account has no access url")
 	}
 
-	start := time.Now().AddDate(0, 0, -transactionLookbackDays)
+	// One day inside the bridge's 90-day range limit: asking for exactly 90
+	// days (plus time-of-day) trips its "range exceeds limit and was capped"
+	// warning on every sync.
+	start := time.Now().AddDate(0, 0, -(transactionLookbackDays - 1))
 	set, err := simplefin.FetchAccounts(account.AccessToken, start, false)
 	if err != nil {
 		return 0, fmt.Errorf("simplefin fetch accounts: %w", err)
@@ -201,6 +204,7 @@ func (s *SimpleFINProvider) SyncBalances(conn *sql.DB, account LinkedAccount) (i
 	}
 
 	log.Printf("simplefin: updated %d balances for linked account %s", updated, account.ID)
+	SyncLinkedGoalBalances(conn, account)
 	return updated, nil
 }
 

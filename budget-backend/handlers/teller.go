@@ -9,6 +9,7 @@ import (
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/bankprovider"
 	"github.com/aboogie/budget-backend/internal/teller"
+	"github.com/aboogie/budget-backend/internal/transfers"
 	"github.com/gofrs/uuid"
 )
 
@@ -217,8 +218,14 @@ func TellerConnect(w http.ResponseWriter, r *http.Request) {
 			// Auto-run the LLM categorization fallback over whatever the
 			// deterministic rules couldn't place — a freshly linked account
 			// arrives categorized without the user pressing anything. Skipped
-			// silently when no API key is configured.
+			// silently when no API key is configured. Transfer pairing runs
+			// first so inter-account moves stop reading as income/expense.
 			if synced > 0 {
+				if pairs, terr := transfers.DetectPairs(bg.Conn, userID); terr != nil {
+					log.Printf("teller: post-sync transfer detection failed for %s: %v", linkedID, terr)
+				} else if pairs > 0 {
+					log.Printf("teller: post-sync transfer detection for %s: %d pairs", linkedID, pairs)
+				}
 				if m, c, a, aerr := RunAICategorization(bg, userID); aerr != nil {
 					log.Printf("teller: post-sync AI categorization failed for %s: %v", linkedID, aerr)
 				} else if m > 0 {

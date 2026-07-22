@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/aboogie/budget-backend/internal/recurrence"
 	"github.com/aboogie/budget-backend/models"
 )
 
@@ -246,6 +248,48 @@ func GetToolDefinitions() []models.ClaudeToolDef {
 			},
 		},
 		{
+			Name:        "create_category",
+			Description: "Create a new transaction category (optionally as a subcategory). This SAVES to the database and appears in Settings → Categories. Fails if a same-named category already exists — assign to the existing one instead.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string", "description": "Category name, e.g. 'Pet Care'."},
+					"type":        map[string]interface{}{"type": "string", "enum": []string{"expense", "income"}, "description": "Defaults to expense."},
+					"parent_name": map[string]interface{}{"type": "string", "description": "Optional parent category name to nest under."},
+					"color":       map[string]interface{}{"type": "string", "description": "Optional hex color."},
+					"icon":        map[string]interface{}{"type": "string", "description": "Optional Ionicons icon name."},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "assign_transaction_category",
+			Description: "Categorize transactions: either ONE transaction by id, or ALL of the user's transactions matching a merchant name. Assignments are marked user-verified (the user approves every action). Set create_rule=true with a merchant to also save the mapping so future syncs categorize automatically.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"transaction_id": map[string]interface{}{"type": "string", "description": "A single transaction to categorize."},
+					"merchant":       map[string]interface{}{"type": "string", "description": "Merchant name — categorizes every matching transaction (e.g. 'starbucks')."},
+					"category_name":  map[string]interface{}{"type": "string", "description": "Existing category name to assign."},
+					"create_rule":    map[string]interface{}{"type": "boolean", "description": "Also save a merchant→category rule for future syncs."},
+				},
+				"required": []string{"category_name"},
+			},
+		},
+		{
+			Name:        "upsert_category_rule",
+			Description: "Create or update an auto-categorization rule: merchant (exact normalized name) or keyword (substring) → category. Future synced transactions matching it categorize automatically. Visible in Settings → Category Rules.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"merchant":      map[string]interface{}{"type": "string", "description": "Normalized merchant name for an exact-match rule."},
+					"keyword":       map[string]interface{}{"type": "string", "description": "Substring keyword rule (used when merchant is not given)."},
+					"category_name": map[string]interface{}{"type": "string", "description": "Existing category name the rule maps to."},
+				},
+				"required": []string{"category_name"},
+			},
+		},
+		{
 			Name:        "log_transaction",
 			Description: "Record a manual income or expense transaction the user tells you about (e.g. 'I put $200 aside for the trip', 'log $45 for dinner'). This SAVES to the database and appears in Transactions. Do NOT invent transactions — only log what the user explicitly states. If they name a category, it is matched to their existing categories when possible.",
 			InputSchema: map[string]interface{}{
@@ -322,6 +366,12 @@ func ExecuteTool(conn *sql.DB, userID string, householdID string, toolName strin
 		return createBudgetTool(conn, userID, householdID, input)
 	case "log_transaction":
 		return logTransactionTool(conn, userID, householdID, input)
+	case "create_category":
+		return createCategoryTool(conn, userID, householdID, input)
+	case "assign_transaction_category":
+		return assignTransactionCategoryTool(conn, userID, householdID, input)
+	case "upsert_category_rule":
+		return upsertCategoryRuleTool(conn, userID, householdID, input)
 	case "web_search":
 		return executeWebSearch(userID, input)
 	default:
@@ -332,49 +382,54 @@ func ExecuteTool(conn *sql.DB, userID string, householdID string, toolName strin
 func getFinancialSnapshot(conn *sql.DB, userID, householdID string) (string, error) {
 	snapshot := map[string]interface{}{}
 
-	// Budgeted income (expected monthly from budget entries)
-	var budgetedIncome sql.NullFloat64
-	err := conn.QueryRow(`
-		SELECT COALESCE(SUM(
-			CASE frequency
-				WHEN 'weekly' THEN amount * 4
-				WHEN 'biweekly' THEN amount * 2
-				WHEN '1st-15th' THEN amount * 2
-				ELSE amount
-			END
-		), 0) FROM budgets WHERE user_id = $1 AND type = 'income'
-	`, userID).Scan(&budgetedIncome)
-	if err != nil {
+	// Budgeted income — the PLAN, using the same real-calendar occurrence math
+	// as the budget tab (weekly budgets count actual paydays this month).
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	var budgetedIncome float64
+	if budgetRows, err := conn.Query(`
+		SELECT amount, COALESCE(frequency, ''), start_date
+		FROM budgets WHERE user_id = $1 AND type = 'income'
+	`, userID); err != nil {
 		log.Printf("snapshot budgeted income query error: %v", err)
+	} else {
+		for budgetRows.Next() {
+			var amount float64
+			var freq string
+			var start sql.NullTime
+			if budgetRows.Scan(&amount, &freq, &start) == nil {
+				var startPtr *time.Time
+				if start.Valid {
+					startPtr = &start.Time
+				}
+				budgetedIncome += amount * float64(recurrence.OccurrencesInMonth(startPtr, freq, monthStart, monthEnd))
+			}
+		}
+		budgetRows.Close()
 	}
-	snapshot["budgeted_monthly_income"] = budgetedIncome.Float64
+	snapshot["budgeted_monthly_income"] = budgetedIncome
 
-	// Actual income received (transactions this month)
-	var actualIncome sql.NullFloat64
-	err = conn.QueryRow(`
-		SELECT COALESCE(SUM(amount), 0)
+	// Actuals — CALENDAR month (matches the dashboard and budget tab, so the
+	// advisor quotes the same numbers the user sees on screen). Transfers are
+	// excluded by type; run transfer detection before trusting these on a
+	// freshly synced account.
+	var actualIncome, actualExpenses sql.NullFloat64
+	err := conn.QueryRow(`
+		SELECT
+			COALESCE(SUM(amount) FILTER (WHERE type = 'income'), 0),
+			COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0)
 		FROM transactions
-		WHERE user_id = $1 AND type = 'income'
-		  AND date >= NOW() - INTERVAL '30 days'
-	`, userID).Scan(&actualIncome)
+		WHERE user_id = $1
+		  AND date >= date_trunc('month', CURRENT_DATE)
+	`, userID).Scan(&actualIncome, &actualExpenses)
 	if err != nil {
-		log.Printf("snapshot actual income query error: %v", err)
+		log.Printf("snapshot actuals query error: %v", err)
 	}
-	snapshot["actual_income_received"] = actualIncome.Float64
-
-	// Monthly expenses (sum of expense transactions in last 30 days)
-	var monthlyExpenses sql.NullFloat64
-	err = conn.QueryRow(`
-		SELECT COALESCE(SUM(amount), 0)
-		FROM transactions
-		WHERE user_id = $1 AND type = 'expense'
-		  AND date >= NOW() - INTERVAL '30 days'
-	`, userID).Scan(&monthlyExpenses)
-	if err != nil {
-		log.Printf("snapshot expenses query error: %v", err)
-	}
-	snapshot["monthly_expenses"] = monthlyExpenses.Float64
-	snapshot["expected_cash_flow"] = budgetedIncome.Float64 - monthlyExpenses.Float64
+	snapshot["income_received_this_month"] = actualIncome.Float64
+	snapshot["expenses_this_month"] = actualExpenses.Float64
+	snapshot["cash_flow_this_month"] = actualIncome.Float64 - actualExpenses.Float64
+	snapshot["numbers_note"] = "income_received/expenses/cash_flow are ACTUAL calendar-month transactions (internal transfers excluded). budgeted_monthly_income is the PLAN — never compare it against actual expenses as if it were money received."
 
 	// Total debt (column is "balance" not "current_balance")
 	var totalDebt sql.NullFloat64

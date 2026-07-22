@@ -214,7 +214,7 @@ func GetAttention(w http.ResponseWriter, r *http.Request) {
 		WHERE user_id = $1
 		  AND type IN ('income','expense')
 		  AND category_id IS NULL
-		  AND source IN ('teller','bank','flinks')
+		  AND source IN `+bankSourcesSQL+`
 	`, userID).Scan(&uncategorizedCount)
 	if uncategorizedCount >= 10 {
 		items = append(items, AttentionItem{

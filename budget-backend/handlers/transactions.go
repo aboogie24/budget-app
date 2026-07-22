@@ -184,10 +184,11 @@ func scanTransactions(rows *sql.Rows) ([]models.Transaction, error) {
 
 // GetTransactions lists transactions for a user (household-scoped when the
 // user belongs to one). Optional query params:
-//   - q:           case-insensitive search over note, category name, source, amount
-//   - type:        income | expense | transfer
-//   - category_id: exact category filter
-//   - date:        YYYY-MM-DD calendar-day filter (matches the stored date part)
+//   - q:             case-insensitive search over note, category name, source, amount
+//   - type:          income | expense | transfer
+//   - category_id:   exact category filter
+//   - uncategorized: "1"/"true" — only rows with no category
+//   - date:          YYYY-MM-DD calendar-day filter (matches the stored date part)
 //   - limit/offset: when limit is present the response is a paginated envelope
 //     {transactions, total, limit, offset, has_more}; without it the legacy
 //     bare array is returned so existing consumers keep working.
@@ -246,6 +247,9 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	if catID := params.Get("category_id"); catID != "" {
 		where += " AND t.category_id::text = " + arg(catID)
+	}
+	if u := params.Get("uncategorized"); u == "1" || u == "true" {
+		where += " AND t.category_id IS NULL"
 	}
 	if day := params.Get("date"); day != "" {
 		// Dates are stored at UTC midnight, so the UTC date part IS the
@@ -810,7 +814,7 @@ func RecategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 	rows, err := dbClient.Query(`
 		SELECT id, COALESCE(note, ''), COALESCE(user_verified, false)
 		FROM transactions
-		WHERE user_id = $1 AND source IN ('bank', 'flinks', 'teller')
+		WHERE user_id = $1 AND source IN `+bankSourcesSQL+`
 	`, userID)
 	if err != nil {
 		log.Printf("recategorize: query error: %v", err)
@@ -923,7 +927,8 @@ func VerifyTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := dbClient.Exec(`
-		UPDATE transactions SET user_verified = true, updated_at = NOW() WHERE id = $1
+		UPDATE transactions SET user_verified = true, updated_at = NOW()
+		WHERE id = $1 AND category_id IS NOT NULL
 	`, id)
 	if err != nil {
 		log.Printf("VerifyTransaction error: %v", err)
@@ -931,10 +936,66 @@ func VerifyTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		http.Error(w, "Transaction not found", http.StatusNotFound)
+		// Row exists (ownership already checked) — it must be uncategorized.
+		http.Error(w, "Assign a category before confirming this transaction", http.StatusConflict)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "user_verified": true})
+}
+
+// VerifyTransactionsBatch marks many transactions verified in ONE request —
+// "Confirm all" used to fire a request per transaction and trip the rate
+// limiter on large review queues. Only rows owned by the calling user are
+// touched (ownership enforced in the UPDATE's WHERE, not per-id round trips).
+// PATCH /auth/transactions/verify-batch  {"user_id": "...", "transaction_ids": ["..."]}
+func VerifyTransactionsBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID         string   `json:"user_id"`
+		TransactionIDs []string `json:"transaction_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+	if len(req.TransactionIDs) == 0 {
+		validationError(w, "transaction_ids is required")
+		return
+	}
+	if len(req.TransactionIDs) > 2000 {
+		validationError(w, "too many transaction_ids (max 2000)")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	// Uncategorized rows are skipped: "verified" asserts the categorization is
+	// correct, which is meaningless without one — and blanket-confirming them
+	// permanently hides them from AI categorization.
+	res, err := dbClient.Exec(`
+		UPDATE transactions SET user_verified = true, updated_at = NOW()
+		WHERE user_id = $1 AND id = ANY($2) AND category_id IS NOT NULL
+	`, req.UserID, pq.Array(req.TransactionIDs))
+	if err != nil {
+		log.Printf("VerifyTransactionsBatch error: %v", err)
+		http.Error(w, "Failed to verify transactions", http.StatusInternalServerError)
+		return
+	}
+	verified, _ := res.RowsAffected()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"requested": len(req.TransactionIDs),
+		"verified":  verified,
+	})
 }

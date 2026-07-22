@@ -116,6 +116,11 @@ type SummaryResponse = {
   total_remaining: number;
   total_unverified: number;
   budgets: BudgetSummaryItem[];
+  // Per-category actuals for ALL categories — present even when no budget
+  // exists for the category (budget entries only cover budgeted ones).
+  spent_by_category?: Record<string, number>;
+  earned_by_category?: Record<string, number>;
+  unverified_by_category?: Record<string, number>;
 };
 
 /* ====================================================================
@@ -217,6 +222,13 @@ const STATUS_WORD: Record<BudgetStatus, string> = {
   over: 'Over',
 };
 
+/* Income is the mirror of expense health: hitting or beating the expected
+   amount is GOOD. Income bars fill brand-neutral while tracking and turn
+   green at 100% — never warning yellow or over-budget red. */
+function incomeProgressColor(received: number, expected: number): string {
+  return expected > 0 && received >= expected ? colors.success : colors.primary2;
+}
+
 /* ====================================================================
    PROGRESS BAR
    ==================================================================== */
@@ -288,10 +300,16 @@ const CategoryBudgetRow = ({
   const spent = category.spent || 0;
   const budgeted = category.budget_amount || 0;
   const pct = budgeted > 0 ? Math.round((spent / budgeted) * 100) : 0;
-  const overBudget = spent > budgeted && hasBudget;
+  const isIncome = (category.type || '').toLowerCase() === 'income';
+  // "Over" is an expense concept — beating expected income is a win, not an alarm.
+  const overBudget = spent > budgeted && hasBudget && !isIncome;
+  const incomeAhead = isIncome && hasBudget && spent >= budgeted;
 
   const status = budgetStatus(spent, budgeted);
-  const progressColor = STATUS_COLOR[status];
+  const progressColor = isIncome
+    ? incomeProgressColor(spent, budgeted)
+    : STATUS_COLOR[status];
+  const actualVerb = isIncome ? 'received' : 'spent';
   const iconName = resolveIcon(category.icon);
   const catColor = category.color || colors.primary;
 
@@ -350,10 +368,14 @@ const CategoryBudgetRow = ({
         accessibilityRole="button"
         accessibilityLabel={
           hasBudget
-            ? `${category.name}, ${fmt(spent)} spent of ${fmt(budgeted)}, ${
-                overBudget ? `${fmt(spent - budgeted)} over budget` : `${fmt(budgeted - spent)} left`
+            ? `${category.name}, ${fmt(spent)} ${actualVerb} of ${fmt(budgeted)}, ${
+                overBudget
+                  ? `${fmt(spent - budgeted)} over budget`
+                  : incomeAhead
+                    ? `${fmt(spent - budgeted)} ahead`
+                    : `${fmt(budgeted - spent)} ${isIncome ? 'to go' : 'left'}`
               }. Double tap to view transactions.`
-            : `${category.name}, ${fmt(spent)} spent, no budget set. Double tap to view transactions.`
+            : `${category.name}, ${fmt(spent)} ${actualVerb}, no budget set. Double tap to view transactions.`
         }
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' }}>
@@ -393,21 +415,31 @@ const CategoryBudgetRow = ({
             <ProgressBar percent={pct} color={progressColor} height={3} />
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 3 }}>
               <Text style={[typography.caption, { color: colors.textMuted }]}>
-                {fmt(spent)} spent
+                {fmt(spent)} {actualVerb}
               </Text>
               <Text
                 style={[
                   typography.caption,
-                  { color: overBudget ? colors.error : colors.textMuted },
+                  {
+                    color: overBudget
+                      ? colors.error
+                      : incomeAhead
+                        ? colors.success
+                        : colors.textMuted,
+                  },
                 ]}
               >
-                {overBudget ? `${fmt(spent - budgeted)} over` : `${fmt(budgeted - spent)} left`}
+                {overBudget
+                  ? `${fmt(spent - budgeted)} over`
+                  : incomeAhead
+                    ? `+${fmt(spent - budgeted)} ahead`
+                    : `${fmt(budgeted - spent)} ${isIncome ? 'to go' : 'left'}`}
               </Text>
             </View>
           </View>
         ) : (
           <Text style={[typography.caption, { color: colors.textDark, marginTop: 2 }]}>
-            {spent > 0 ? `${fmt(spent)} spent · No budget set` : 'Tap amount to set budget'}
+            {spent > 0 ? `${fmt(spent)} ${actualVerb} · No budget set` : 'Tap amount to set budget'}
           </Text>
         )}
       </TouchableOpacity>
@@ -502,13 +534,17 @@ const CategoryGroup = ({
   const totalBudgeted =
     (category.subcategories || []).reduce((s, c) => s + (c.budget_amount || 0), 0) +
     (category.budget_amount || 0);
-  const totalSpent =
-    (category.subcategories || []).reduce((s, c) => s + (c.spent || 0), 0) +
-    (category.spent || 0);
+  // Parent spent ALREADY includes subcategory rollup (server-side) — adding
+  // sub rows again double-counted and pushed groups into false "over" red
+  // ($13,462 of salary in a subcategory read as $26,925 vs a $22,000 budget).
+  const totalSpent = category.spent || 0;
   const pct = totalBudgeted > 0 ? Math.round((totalSpent / totalBudgeted) * 100) : 0;
   const iconName = resolveIcon(category.icon);
   const catColor = category.color || colors.primary;
-  const aggColor = STATUS_COLOR[budgetStatus(totalSpent, totalBudgeted)];
+  const isIncomeGroup = (category.type || '').toLowerCase() === 'income';
+  const aggColor = isIncomeGroup
+    ? incomeProgressColor(totalSpent, totalBudgeted)
+    : STATUS_COLOR[budgetStatus(totalSpent, totalBudgeted)];
 
   return (
     <View style={styles.categoryGroupCard}>
@@ -921,13 +957,24 @@ const BudgetHeroSummary = ({
   usedPct: number;
   budgetedCount: number;
 }) => {
+  const isIncome = type === 'income';
   const status = budgetStatus(totalSpent, totalBudgeted);
-  const statusColor = STATUS_COLOR[status];
+  // Income mirrors expense health: beating Expected is success, never "over".
+  const statusColor = isIncome
+    ? incomeProgressColor(totalSpent, totalBudgeted)
+    : STATUS_COLOR[status];
+  const statusIcon = isIncome ? 'checkmark-circle' : STATUS_ICON[status];
+  const statusWord = isIncome
+    ? totalBudgeted > 0 && totalSpent >= totalBudgeted
+      ? 'Ahead'
+      : 'On pace'
+    : STATUS_WORD[status];
   const overAmount = totalSpent - totalBudgeted;
-  const isOver = overAmount > 0 && totalBudgeted > 0;
+  const isOver = overAmount > 0 && totalBudgeted > 0 && !isIncome;
+  const isAhead = isIncome && overAmount >= 0 && totalBudgeted > 0;
 
   // Spent color follows the status model; on-track stays neutral.
-  const spentColor = status === 'ontrack' ? colors.text : statusColor;
+  const spentColor = isIncome || status === 'ontrack' ? colors.text : statusColor;
 
   return (
     <View
@@ -947,9 +994,9 @@ const BudgetHeroSummary = ({
           {type === 'expense' ? 'EXPENSE BUDGET' : 'INCOME BUDGET'}
         </Text>
         <View style={[styles.statusBadge, { backgroundColor: `${statusColor}1f` }]}>
-          <Ionicons name={STATUS_ICON[status]} size={12} color={statusColor} />
+          <Ionicons name={statusIcon} size={12} color={statusColor} />
           <Text style={[styles.statusBadgeText, { color: statusColor }]}>
-            {STATUS_WORD[status]} · {usedPct}% {type === 'expense' ? 'used' : 'received'}
+            {statusWord} · {usedPct}% {type === 'expense' ? 'used' : 'received'}
           </Text>
         </View>
       </View>
@@ -965,14 +1012,28 @@ const BudgetHeroSummary = ({
           <Text style={[styles.statValue, { color: spentColor }]}>{fmtShort(totalSpent)}</Text>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.statLabel}>{isOver ? 'Over by' : 'Remaining'}</Text>
+          <Text style={styles.statLabel}>
+            {isOver ? 'Over by' : isAhead ? 'Ahead by' : isIncome ? 'To go' : 'Remaining'}
+          </Text>
           <Text
             style={[
               styles.statValue,
-              { color: isOver ? colors.error : colors.success },
+              {
+                color: isOver
+                  ? colors.error
+                  : isAhead
+                    ? colors.success
+                    : isIncome
+                      ? colors.textMuted
+                      : colors.success,
+              },
             ]}
           >
-            {isOver ? `-${fmtShort(overAmount)}` : fmtShort(totalRemaining)}
+            {isOver
+              ? `-${fmtShort(overAmount)}`
+              : isAhead
+                ? `+${fmtShort(overAmount)}`
+                : fmtShort(totalRemaining)}
           </Text>
         </View>
       </View>
@@ -991,7 +1052,11 @@ const BudgetHeroSummary = ({
           {budgetedCount} categories budgeted
         </Text>
         <Text style={[typography.caption, { color: colors.textMuted }]}>
-          {isOver ? `${fmt(overAmount)} over` : `${fmt(totalRemaining)} left`}
+          {isOver
+            ? `${fmt(overAmount)} over`
+            : isAhead
+              ? `${fmt(overAmount)} ahead`
+              : `${fmt(totalRemaining)} ${isIncome ? 'to go' : 'left'}`}
         </Text>
       </View>
     </View>
@@ -1045,8 +1110,28 @@ export default function BudgetScreen() {
         string,
         { budget_id: string; budgeted: number; spent: number }
       > = {};
+      // Per-category actuals from the summary — present even when NO budget
+      // exists for the category (previously these were derivable only from
+      // budget entries, so a fresh account showed $0 everywhere). Kept as two
+      // maps and selected by category TYPE: a miscategorized transaction can
+      // put the same category id in both, and merging would let one clobber
+      // the other.
+      const spentMap = summary?.spent_by_category || {};
+      const earnedMap = summary?.earned_by_category || {};
+      const actualFor = (id: string, type?: string): number | undefined =>
+        (type || '').toLowerCase() === 'income' ? earnedMap[id] : spentMap[id];
+
       const spentByCategoryId: Record<string, number> = {};
-      const unverifiedByCategoryId: Record<string, number> = {};
+      const unverifiedByCategoryId: Record<string, number> = {
+        ...(summary?.unverified_by_category || {}),
+      };
+
+      // When the server sends the top-level per-category maps, the per-budget
+      // accumulation below would DOUBLE-COUNT (budget entries derive from the
+      // same aggregates) — it only runs as a fallback for older servers.
+      const hasCategoryActuals = !!(
+        summary?.spent_by_category || summary?.earned_by_category
+      );
 
       if (summary?.budgets) {
         for (const b of summary.budgets) {
@@ -1058,8 +1143,9 @@ export default function BudgetScreen() {
               spent: b.spent,
             };
           }
-          // Also accumulate spending + unverified counts from the categories
-          // array inside each budget.
+          if (hasCategoryActuals) continue;
+          // Fallback: accumulate spending + unverified counts from the
+          // categories array inside each budget.
           for (const cat of b.categories || []) {
             spentByCategoryId[cat.id] = (spentByCategoryId[cat.id] || 0) + cat.spent;
             if (cat.unverified_count) {
@@ -1079,11 +1165,16 @@ export default function BudgetScreen() {
 
       return cats.map((cat) => {
         const budgetInfo = budgetByCategoryId[cat.id];
-        const catSpent = spentByCategoryId[cat.id] || budgetInfo?.spent || 0;
+        const catSpent =
+          actualFor(cat.id, cat.type) ?? spentByCategoryId[cat.id] ?? budgetInfo?.spent ?? 0;
 
         const subcategories: SubcategoryData[] = (cat.subcategories || []).map((sub) => {
           const subBudgetInfo = budgetByCategoryId[sub.id];
-          const subSpent = spentByCategoryId[sub.id] || subBudgetInfo?.spent || 0;
+          const subSpent =
+            actualFor(sub.id, sub.type ?? cat.type) ??
+            spentByCategoryId[sub.id] ??
+            subBudgetInfo?.spent ??
+            0;
           return {
             id: sub.id,
             name: sub.name,
@@ -1231,10 +1322,12 @@ export default function BudgetScreen() {
   }, [filtered]);
 
   const totalSpentAmount = useMemo(() => {
+    // Top-level categories ONLY: the server rolls subcategory spending up
+    // into the parent, so adding subcategory rows again double-counts —
+    // $13,462 of salary in a subcategory rendered as $26,925 received.
     let t = 0;
     for (const c of filtered) {
       t += c.spent || 0;
-      for (const s of c.subcategories || []) t += s.spent || 0;
     }
     return t;
   }, [filtered]);
@@ -1246,10 +1339,10 @@ export default function BudgetScreen() {
       : 0;
 
   const totalUnbudgetedSpent = useMemo(() => {
+    // Parent spent already includes subcategory rollup — see totalSpentAmount.
     let t = 0;
     for (const c of unbudgeted) {
       t += c.spent || 0;
-      for (const s of c.subcategories || []) t += s.spent || 0;
     }
     return t;
   }, [unbudgeted]);

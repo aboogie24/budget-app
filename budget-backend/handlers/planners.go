@@ -46,19 +46,20 @@ func ListSavingsGoals(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	hh := db.ResolveHouseholdID(client.Raw(), userID)
+	const goalCols = `
+			g.id, g.user_id, COALESCE(g.household_id::text, ''), g.name, g.target_amount, g.current_amount, COALESCE(g.target_date, ''), g.priority, g.is_shared,
+			COALESCE(g.linked_balance_id::text, ''), COALESCE(ab.name, '')
+		FROM savings_goals g
+		LEFT JOIN account_balances ab ON g.linked_balance_id = ab.id`
 	var rows *sql.Rows
 	if hh == "" {
-		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id::text, ''), name, target_amount, current_amount, COALESCE(target_date, ''), priority, is_shared
-			FROM savings_goals
-			WHERE household_id IS NULL AND user_id = $1
+		rows, err = client.Query(`SELECT `+goalCols+`
+			WHERE g.household_id IS NULL AND g.user_id = $1
 		`, userID)
 	} else {
-		rows, err = client.Query(`
-			SELECT id, user_id, COALESCE(household_id::text, ''), name, target_amount, current_amount, COALESCE(target_date, ''), priority, is_shared
-			FROM savings_goals
-			WHERE household_id = $1
-			   OR (household_id IS NULL AND user_id = $2)
+		rows, err = client.Query(`SELECT `+goalCols+`
+			WHERE g.household_id = $1
+			   OR (g.household_id IS NULL AND g.user_id = $2)
 		`, hh, userID)
 	}
 	if err != nil {
@@ -73,7 +74,8 @@ func ListSavingsGoals(w http.ResponseWriter, r *http.Request) {
 		var g models.SavingsGoal
 		var hh sql.NullString
 		var targetDate sql.NullString
-		if err := rows.Scan(&g.ID, &g.UserID, &hh, &g.Name, &g.TargetAmount, &g.CurrentAmount, &targetDate, &g.Priority, &g.IsShared); err != nil {
+		var linkedID, linkedName string
+		if err := rows.Scan(&g.ID, &g.UserID, &hh, &g.Name, &g.TargetAmount, &g.CurrentAmount, &targetDate, &g.Priority, &g.IsShared, &linkedID, &linkedName); err != nil {
 			log.Printf("ListSavingsGoals scan error: %v", err)
 			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
@@ -87,6 +89,10 @@ func ListSavingsGoals(w http.ResponseWriter, r *http.Request) {
 			g.TargetDate = targetDate.String
 		} else {
 			g.TargetDate = ""
+		}
+		if linkedID != "" {
+			g.LinkedBalanceID = &linkedID
+			g.LinkedAccountName = linkedName
 		}
 		goals = append(goals, g)
 	}
@@ -147,17 +153,62 @@ func CreateSavingsGoal(w http.ResponseWriter, r *http.Request) {
 		hhVal = g.HouseholdID
 	}
 
+	var linkedVal any
+	if g.LinkedBalanceID != nil && *g.LinkedBalanceID != "" {
+		if !balanceOwnedBy(client.Raw(), *g.LinkedBalanceID, g.UserID) {
+			http.Error(w, "Linked account not found for this user", http.StatusBadRequest)
+			return
+		}
+		linkedVal = *g.LinkedBalanceID
+	}
+
 	_, err = client.Exec(`
-		INSERT INTO savings_goals (id, user_id, household_id, name, target_amount, current_amount, target_date, priority, is_shared)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, g.ID, g.UserID, hhVal, g.Name, g.TargetAmount, g.CurrentAmount, g.TargetDate, g.Priority, g.IsShared)
+		INSERT INTO savings_goals (id, user_id, household_id, name, target_amount, current_amount, target_date, priority, is_shared, linked_balance_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	`, g.ID, g.UserID, hhVal, g.Name, g.TargetAmount, g.CurrentAmount, g.TargetDate, g.Priority, g.IsShared, linkedVal)
 	if err != nil {
+		if strings.Contains(err.Error(), "idx_savings_goals_linked_balance") {
+			http.Error(w, "That account is already linked to another goal", http.StatusConflict)
+			return
+		}
 		http.Error(w, "Insert error", http.StatusInternalServerError)
 		return
 	}
 
+	// A linked goal's progress IS the account balance — snap it immediately.
+	if linkedVal != nil {
+		snapLinkedGoalBalance(client.Raw(), g.ID)
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(g)
+}
+
+// balanceOwnedBy reports whether the account_balances row belongs to the user
+// or their household.
+func balanceOwnedBy(conn *sql.DB, balanceID, userID string) bool {
+	hh := db.ResolveHouseholdID(conn, userID)
+	var ok bool
+	err := conn.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM account_balances
+			WHERE id = $1 AND (user_id = $2 OR ($3 <> '' AND household_id::text = $3))
+		)
+	`, balanceID, userID, hh).Scan(&ok)
+	return err == nil && ok
+}
+
+// snapLinkedGoalBalance mirrors the linked account's balance into one goal's
+// current_amount (used right after linking; syncs keep it fresh afterwards).
+func snapLinkedGoalBalance(conn *sql.DB, goalID string) {
+	if _, err := conn.Exec(`
+		UPDATE savings_goals sg
+		SET current_amount = GREATEST(ab.current_balance, 0)
+		FROM account_balances ab
+		WHERE sg.id = $1 AND sg.linked_balance_id = ab.id
+	`, goalID); err != nil {
+		log.Printf("snapLinkedGoalBalance error: %v", err)
+	}
 }
 
 func UpdateSavingsGoal(w http.ResponseWriter, r *http.Request) {
@@ -180,12 +231,26 @@ func UpdateSavingsGoal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
+	var linkedVal any
+	linking := g.LinkedBalanceID != nil && *g.LinkedBalanceID != ""
+	if linking {
+		if !balanceOwnedBy(client.Raw(), *g.LinkedBalanceID, g.UserID) {
+			http.Error(w, "Linked account not found for this user", http.StatusBadRequest)
+			return
+		}
+		linkedVal = *g.LinkedBalanceID
+	}
+
 	res, err := client.Exec(`
 		UPDATE savings_goals
-		SET name = $1, target_amount = $2, current_amount = $3, target_date = $4, priority = $5, is_shared = $6
-		WHERE id = $7
-	`, g.Name, g.TargetAmount, g.CurrentAmount, g.TargetDate, g.Priority, g.IsShared, goalID)
+		SET name = $1, target_amount = $2, current_amount = $3, target_date = $4, priority = $5, is_shared = $6, linked_balance_id = $7
+		WHERE id = $8
+	`, g.Name, g.TargetAmount, g.CurrentAmount, g.TargetDate, g.Priority, g.IsShared, linkedVal, goalID)
 	if err != nil {
+		if strings.Contains(err.Error(), "idx_savings_goals_linked_balance") {
+			http.Error(w, "That account is already linked to another goal", http.StatusConflict)
+			return
+		}
 		http.Error(w, "Update error", http.StatusInternalServerError)
 		return
 	}
@@ -193,6 +258,12 @@ func UpdateSavingsGoal(w http.ResponseWriter, r *http.Request) {
 	if affected == 0 {
 		http.Error(w, "Goal not found", http.StatusNotFound)
 		return
+	}
+
+	// A linked goal's progress IS the account balance — the client-sent
+	// current_amount is overridden by the real number.
+	if linking {
+		snapLinkedGoalBalance(client.Raw(), goalID)
 	}
 
 	// return merged record (client already has it)
@@ -221,6 +292,15 @@ func UpdateSavingsProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
+
+	// Balance-linked goals mirror a real account — manual progress edits would
+	// be overwritten on the next sync and misrepresent where the money is.
+	var linked sql.NullString
+	_ = client.QueryRow(`SELECT linked_balance_id::text FROM savings_goals WHERE id = $1`, goalID).Scan(&linked)
+	if linked.Valid && linked.String != "" {
+		http.Error(w, "This goal tracks a linked bank account — its progress updates automatically from the account balance", http.StatusConflict)
+		return
+	}
 
 	res, err := client.Exec(`UPDATE savings_goals SET current_amount = $1 WHERE id = $2`, body.CurrentAmount, goalID)
 	if err != nil {

@@ -11,6 +11,13 @@ type SavingsGoal struct {
 	TargetDate    string  `json:"target_date"`
 	Priority      int     `json:"priority"`
 	IsShared      bool    `json:"is_shared"`
+	// LinkedBalanceID designates a real bank account (account_balances row) as
+	// this goal's fund — current_amount then mirrors the account balance on
+	// every sync and manual progress edits are disabled.
+	LinkedBalanceID *string `json:"linked_balance_id,omitempty"`
+	// LinkedAccountName is the display name of the linked account (read-only,
+	// resolved on list).
+	LinkedAccountName string `json:"linked_account_name,omitempty"`
 	// EffectiveMonthly is the $/month allocated to this goal across active plans
 	// (computed on read; not stored). Single source of truth for contributions.
 	EffectiveMonthly float64 `json:"effective_monthly"`

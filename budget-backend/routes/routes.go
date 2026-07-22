@@ -51,6 +51,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.UpdateTransactionSplits).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.DeleteTransactionSplits).Methods("DELETE")
 	authRoutes.HandleFunc("/transactions/{id}/category", handlers.SetTransactionCategory).Methods("PATCH")
+	authRoutes.HandleFunc("/transactions/verify-batch", handlers.VerifyTransactionsBatch).Methods("PATCH")
 	authRoutes.HandleFunc("/transactions/{id}/verify", handlers.VerifyTransaction).Methods("PATCH")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.UpdateTransaction).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
@@ -232,6 +233,9 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/ai/framework-level", handlers.GetFrameworkLevel).Methods("GET")
 
 	// AI Nudges
+	authRoutes.HandleFunc("/ai/actions", handlers.ListAIPendingActions).Methods("GET")
+	authRoutes.HandleFunc("/ai/actions/{id}/approve", handlers.ApproveAIPendingAction).Methods("POST")
+	authRoutes.HandleFunc("/ai/actions/{id}/decline", handlers.DeclineAIPendingAction).Methods("POST")
 	authRoutes.HandleFunc("/ai/nudges", handlers.GetNudges).Methods("GET")
 	authRoutes.HandleFunc("/ai/nudges/generate", handlers.GenerateNudgesNow).Methods("POST")
 	authRoutes.HandleFunc("/ai/nudges/{id}/dismiss", handlers.DismissNudge).Methods("POST")

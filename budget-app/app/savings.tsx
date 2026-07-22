@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import { fetchAccountBalances } from '../utils/api';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { BackButton } from '@/components/BackButton';
@@ -42,6 +43,9 @@ type SavingsGoal = {
   target_date: string;
   priority: number;
   is_shared: boolean;
+  /** When set, this goal's progress mirrors the linked bank account balance. */
+  linked_balance_id?: string | null;
+  linked_account_name?: string;
   /** $/month flowing to this goal from the couple's active plans (source of truth for monthly contribution). */
   effective_monthly?: number;
 };
@@ -130,6 +134,21 @@ export default function SavingsScreen() {
   const [currentAmount, setCurrentAmount] = useState('');
   const [targetDate, setTargetDate] = useState('');
   const [priority, setPriority] = useState('');
+  const [linkedBalanceId, setLinkedBalanceId] = useState<string | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+
+  // Synced accounts for the "fund account" picker — loaded once, lazily.
+  const accountsLoaded = useRef(false);
+  const ensureAccounts = useCallback(async () => {
+    if (accountsLoaded.current) return;
+    accountsLoaded.current = true;
+    try {
+      const accts = await fetchAccountBalances();
+      setBankAccounts(accts);
+    } catch (e) {
+      console.log('Account list load failed (link picker hidden):', e);
+    }
+  }, []);
 
   const loadGoals = useCallback(async () => {
     try {
@@ -161,11 +180,13 @@ export default function SavingsScreen() {
     setCurrentAmount('');
     setTargetDate('');
     setPriority('');
+    setLinkedBalanceId(null);
     setEditing(null);
   };
 
   const openAdd = () => {
     resetForm();
+    ensureAccounts();
     setShowForm(true);
   };
 
@@ -176,6 +197,8 @@ export default function SavingsScreen() {
     setCurrentAmount(String(g.current_amount));
     setTargetDate(g.target_date || '');
     setPriority(g.priority ? String(g.priority) : '');
+    setLinkedBalanceId(g.linked_balance_id || null);
+    ensureAccounts();
     setShowForm(true);
   };
 
@@ -203,6 +226,9 @@ export default function SavingsScreen() {
       target_date: targetDate.trim(),
       priority: parseInt(priority) || 0,
       is_shared: false,
+      // null clears the link; the backend snaps current_amount to the account
+      // balance whenever a link is set.
+      linked_balance_id: linkedBalanceId,
     };
 
     try {
@@ -214,9 +240,13 @@ export default function SavingsScreen() {
       setShowForm(false);
       resetForm();
       loadGoals();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Save savings goal error:', e);
-      Alert.alert('Error', 'Failed to save savings goal.');
+      const msg =
+        e?.status === 409
+          ? 'That account is already linked to another goal.'
+          : 'Failed to save savings goal.';
+      Alert.alert('Error', msg);
     }
   };
 
@@ -465,26 +495,36 @@ export default function SavingsScreen() {
                       )}
                     </View>
 
-                    {/* Row 3 — sub-line + update action */}
+                    {/* Row 3 — sub-line + update action (linked goals track the
+                        account balance automatically, so no manual update) */}
                     <View style={styles.goalBottomRow}>
                       <Text style={styles.goalSub} numberOfLines={1}>
                         of {fmtWhole(g.target_amount)}
                         {g.target_date ? ` · by ${g.target_date}` : ''}
                       </Text>
-                      <TouchableOpacity
-                        style={styles.updateBtn}
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          setProgressId(g.id);
-                          setProgressAmount(String(g.current_amount));
-                        }}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Update ${g.name} progress.`}
-                      >
-                        <Ionicons name="trending-up" size={14} color={colors.success} />
-                        <Text style={styles.updateBtnText}>Update</Text>
-                      </TouchableOpacity>
+                      {g.linked_balance_id ? (
+                        <View style={styles.linkedBadge}>
+                          <Ionicons name="link" size={12} color={colors.primary2} />
+                          <Text style={styles.linkedBadgeText} numberOfLines={1}>
+                            {g.linked_account_name || 'Linked account'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          style={styles.updateBtn}
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            setProgressId(g.id);
+                            setProgressAmount(String(g.current_amount));
+                          }}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Update ${g.name} progress.`}
+                        >
+                          <Ionicons name="trending-up" size={14} color={colors.success} />
+                          <Text style={styles.updateBtnText}>Update</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </TouchableOpacity>
                 );
@@ -537,15 +577,69 @@ export default function SavingsScreen() {
                   onChangeText={setTargetAmount}
                 />
 
-                <Text style={styles.fieldLabel}>Current Amount</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="$0.00"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={currentAmount}
-                  onChangeText={setCurrentAmount}
-                />
+                {linkedBalanceId == null && (
+                  <>
+                    <Text style={styles.fieldLabel}>Current Amount</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="$0.00"
+                      placeholderTextColor={colors.textMuted}
+                      keyboardType="numeric"
+                      value={currentAmount}
+                      onChangeText={setCurrentAmount}
+                    />
+                  </>
+                )}
+
+                {bankAccounts.length > 0 && (
+                  <>
+                    <Text style={styles.fieldLabel}>Fund Account (optional)</Text>
+                    <Text style={styles.fieldHint}>
+                      Link a real account (e.g. your HYSA) and this goal's progress will
+                      mirror its balance automatically — no manual updates.
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.accountOption, linkedBalanceId == null && styles.accountOptionActive]}
+                      onPress={() => setLinkedBalanceId(null)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: linkedBalanceId == null }}
+                    >
+                      <Ionicons
+                        name={linkedBalanceId == null ? 'radio-button-on' : 'radio-button-off'}
+                        size={16}
+                        color={linkedBalanceId == null ? colors.primary2 : colors.textMuted}
+                      />
+                      <Text style={styles.accountOptionText}>Track manually</Text>
+                    </TouchableOpacity>
+                    {bankAccounts.map((a) => {
+                      const selected = linkedBalanceId === a.id;
+                      return (
+                        <TouchableOpacity
+                          key={a.id}
+                          style={[styles.accountOption, selected && styles.accountOptionActive]}
+                          onPress={() => setLinkedBalanceId(a.id)}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected }}
+                        >
+                          <Ionicons
+                            name={selected ? 'radio-button-on' : 'radio-button-off'}
+                            size={16}
+                            color={selected ? colors.primary2 : colors.textMuted}
+                          />
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.accountOptionText} numberOfLines={1}>
+                              {a.name || 'Account'}
+                              {a.institution_name ? ` · ${a.institution_name}` : ''}
+                            </Text>
+                          </View>
+                          <Text style={styles.accountOptionBalance}>
+                            {fmtWhole(a.current_balance || 0)}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </>
+                )}
 
                 <Text style={styles.fieldLabel}>Target Date (optional)</Text>
                 <TextInput
@@ -810,6 +904,49 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '700',
     color: colors.success,
+  },
+  linkedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: 180,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    backgroundColor: `${colors.primary2}1f`,
+  },
+  linkedBadgeText: {
+    ...typography.caption,
+    color: colors.primary2,
+    fontWeight: '600',
+  },
+  fieldHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.sm,
+  },
+  accountOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    marginBottom: spacing.xs,
+  },
+  accountOptionActive: {
+    borderColor: colors.primary2,
+    backgroundColor: `${colors.primary}1a`,
+  },
+  accountOptionText: {
+    ...typography.small,
+    color: colors.text,
+  },
+  accountOptionBalance: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontVariant: ['tabular-nums'],
   },
 
   // Modals / sheets

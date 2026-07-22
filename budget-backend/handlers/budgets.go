@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/recurrence"
 	"github.com/aboogie/budget-backend/models"
 
 	"github.com/gofrs/uuid"
@@ -318,46 +319,27 @@ func GetBudgetByID(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(b)
 }
 
-// occurrencesInMonth returns how many times a budget with the given start date
-// and frequency lands inside [monthStart, monthEnd). Weekly/biweekly cadences
-// count real calendar occurrences (anchored to start_date when set, else the
-// 1st of the month) rather than a flat ×4/×2, so months with 5 paydays don't
-// drift from actuals. Shared by GetBudgetSummary and the dashboard status
-// signals — the two must agree or the dashboard and budget tab show different
-// planned totals.
+// occurrencesInMonth delegates to the shared recurrence implementation used by
+// GetBudgetSummary, the dashboard status signals, and the AI financial
+// snapshot — all three must agree or the same budget reads differently across
+// surfaces.
 func occurrencesInMonth(startDate *time.Time, frequency string, monthStart, monthEnd time.Time) int {
-	if startDate != nil && !startDate.Before(monthEnd) {
-		return 0
+	return recurrence.OccurrencesInMonth(startDate, frequency, monthStart, monthEnd)
+}
+
+// dropEmptyKey strips the ""-keyed bucket (uncategorized transactions) from a
+// per-category aggregate before it goes over the wire.
+func dropEmptyKey(m map[string]float64) map[string]float64 {
+	if _, ok := m[""]; !ok {
+		return m
 	}
-	switch frequency {
-	case "weekly", "biweekly":
-		step := 7
-		if frequency == "biweekly" {
-			step = 14
+	out := make(map[string]float64, len(m))
+	for k, v := range m {
+		if k != "" {
+			out[k] = v
 		}
-		anchor := monthStart
-		if startDate != nil {
-			anchor = *startDate
-		}
-		current := anchor
-		if current.Before(monthStart) {
-			// Advance to the first occurrence at or after monthStart, keeping
-			// the anchor's cadence phase.
-			days := int(monthStart.Sub(current).Hours() / 24)
-			steps := (days + step - 1) / step
-			current = current.AddDate(0, 0, steps*step)
-		}
-		count := 0
-		for current.Before(monthEnd) {
-			count++
-			current = current.AddDate(0, 0, step)
-		}
-		return count
-	case "1st-15th":
-		return 2
-	default:
-		return 1
 	}
+	return out
 }
 
 // GetBudgetSummary returns budget-vs-actual spending per category for a
@@ -1041,6 +1023,20 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		summaries = []budgetSummary{}
 	}
 
+	// Bill payments are excluded from the transaction aggregate (bills track
+	// via bill_payments), so fold each bill's paid amount into its category
+	// for the emitted per-category map — the budget tab's category rows count
+	// bill spending, and dropping it zeroed every bill-backed category.
+	spentWithBills := make(map[string]float64, len(spentByCategory))
+	for k, v := range spentByCategory {
+		spentWithBills[k] = v
+	}
+	for _, be := range billList {
+		if be.CategoryID != nil && *be.CategoryID != "" {
+			spentWithBills[*be.CategoryID] += billPaid[be.ID]
+		}
+	}
+
 	totalRemaining := totalIncome - totalBudgeted
 	if totalRemaining < 0 {
 		totalRemaining = 0
@@ -1056,6 +1052,13 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		"total_remaining":  totalRemaining,
 		"total_unverified": globalTotalUnverified,
 		"budgets":          summaries,
+		// Per-category actuals for ALL categories, independent of budgets.
+		// Without these, categorized spending is invisible on the budget tab
+		// until a budget exists for the category — the client previously
+		// derived per-category spend only from budget entries.
+		"spent_by_category":      dropEmptyKey(spentWithBills),
+		"earned_by_category":     dropEmptyKey(earnedByCategory),
+		"unverified_by_category": unverifiedByCategory,
 	})
 }
 

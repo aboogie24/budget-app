@@ -9,6 +9,7 @@ import {
   fetchAccountBalances,
   fetchProperties,
   fetchAttention,
+  fetchAINudges,
   recordNetWorthSnapshot,
   fetchDashboardStatus,
   type AttentionItem,
@@ -228,7 +229,34 @@ export default function DashboardScreen() {
 
     try {
       const att = await fetchAttention();
-      setAttention(Array.isArray(att?.items) ? att.items : []);
+      const items = Array.isArray(att?.items) ? [...att.items] : [];
+
+      // Merge in the advisor's proactive nudges — same card, tap opens a chat
+      // seeded with the nudge (or navigates when the nudge targets a screen).
+      try {
+        const nudges = await fetchAINudges();
+        for (const n of Array.isArray(nudges) ? nudges : []) {
+          if (n.is_read) continue;
+          const navigates = n.action_type === 'navigate_to' && !!n.action_data;
+          items.push({
+            id: `nudge-${n.id}`,
+            priority: 100 + (n.priority || 0),
+            title: n.title,
+            body: n.body,
+            icon: 'sparkles',
+            color: colors.primary2,
+            cta_label: navigates ? 'Open' : 'Ask AI',
+            action: navigates ? 'navigate' : 'ask_ai',
+            payload: navigates
+              ? { href: n.action_data }
+              : { seed: n.action_data || `${n.title} — ${n.body}. What should we do about this?` },
+          });
+        }
+      } catch (e) {
+        console.log('Nudge fetch error (non-blocking):', e);
+      }
+
+      setAttention(items);
     } catch (e) {
       console.log('Attention fetch error (non-blocking):', e);
     }

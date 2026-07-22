@@ -20,6 +20,12 @@ type candidate struct {
 	date         time.Time
 	merchantNorm string
 	note         string
+	// accountKey identifies which bank account the row came from, when the
+	// provider encodes it (SimpleFIN external_id is "accountID:txID"). A
+	// transfer's two sides live in DIFFERENT accounts — requiring distinct
+	// keys stops a same-account refund from pairing with an unrelated,
+	// coincidentally equal charge.
+	accountKey string
 }
 
 // transferKeywords mark a note as describing an internal transfer/payment.
@@ -49,6 +55,11 @@ func matchable(in, out candidate) bool {
 	if math.Abs(in.date.Sub(out.date).Hours()/24) > 1.0 {
 		return false
 	}
+	// Two sides of a transfer live in different accounts — when both rows
+	// carry an account identity, same-account pairs are refund/charge noise.
+	if in.accountKey != "" && out.accountKey != "" && in.accountKey == out.accountKey {
+		return false
+	}
 	// Strong signal: same normalized merchant.
 	if in.merchantNorm != "" && in.merchantNorm == out.merchantNorm {
 		return true
@@ -69,8 +80,8 @@ func matchable(in, out candidate) bool {
 //     unpaired outflow comes first in date order.
 //
 // Limitations:
-//   - Only bank-synced rows (source IN ('teller','bank','flinks')) — manual
-//     entries are excluded; the user types those themselves.
+//   - Only bank-synced rows (source IN ('teller','bank','flinks','simplefin'))
+//     — manual entries are excluded; the user types those themselves.
 //   - Only sees one side if the other account isn't linked.
 func DetectPairs(conn *sql.DB, userID string) (int, error) {
 	inflows, err := loadCandidates(conn, userID, `type IN ('income','transfer')`)
@@ -150,10 +161,11 @@ func DetectPairs(conn *sql.DB, userID string) (int, error) {
 // ordered by date so the greedy walk produces deterministic pairings.
 func loadCandidates(conn *sql.DB, userID, typePred string) ([]candidate, error) {
 	q := `
-		SELECT id, amount, date, COALESCE(merchant_normalized,''), COALESCE(note,'')
+		SELECT id, amount, date, COALESCE(merchant_normalized,''), COALESCE(note,''),
+		       CASE WHEN source = 'simplefin' THEN split_part(COALESCE(external_id,''), ':', 1) ELSE '' END
 		FROM transactions
 		WHERE user_id = $1
-		  AND source IN ('teller','bank','flinks')
+		  AND source IN ('teller','bank','flinks','simplefin')
 		  AND transfer_pair_id IS NULL
 		  AND ` + typePred + `
 		ORDER BY date
@@ -167,7 +179,7 @@ func loadCandidates(conn *sql.DB, userID, typePred string) ([]candidate, error) 
 	var out []candidate
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.id, &c.amount, &c.date, &c.merchantNorm, &c.note); err != nil {
+		if err := rows.Scan(&c.id, &c.amount, &c.date, &c.merchantNorm, &c.note, &c.accountKey); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

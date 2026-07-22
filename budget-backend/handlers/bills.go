@@ -632,7 +632,7 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 			matchQuery = `
 				SELECT id, amount FROM transactions
 				WHERE user_id = $1
-				  AND source IN ('teller','bank','flinks')
+				  AND source IN `+bankSourcesSQL+`
 			  AND type = 'expense'
 				  AND amount >= $2 AND amount <= $3
 				  AND date >= $4 AND date <= $5
@@ -646,7 +646,7 @@ func AutoDetectBillPayments(w http.ResponseWriter, r *http.Request) {
 			matchQuery = `
 				SELECT id, amount FROM transactions
 				WHERE user_id = $1
-				  AND source IN ('teller','bank','flinks')
+				  AND source IN `+bankSourcesSQL+`
 			  AND type = 'expense'
 				  AND amount >= $2 AND amount <= $3
 				  AND date >= $4 AND date <= $5

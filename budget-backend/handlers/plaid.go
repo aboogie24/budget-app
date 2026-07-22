@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/bankprovider"
 	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gofrs/uuid"
@@ -1047,6 +1048,12 @@ func SyncAccountBalances(client *models.Client) http.HandlerFunc {
 				totalSynced++
 			}
 		}
+
+		// Mirror fresh balances into any account-linked savings goals.
+		bankprovider.SyncLinkedGoalBalances(dbClient.Conn, bankprovider.LinkedAccount{
+			UserID:      userID,
+			HouseholdID: hhID,
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"synced": totalSynced})

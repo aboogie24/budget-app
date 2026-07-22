@@ -26,7 +26,9 @@ export const colors = {
   textDark: '#475569',       // Tertiary text (darker gray)
 
   // Status & Semantic
-  success: '#22c55e',        // Green (income, positive)
+  success: '#22c55e',        // Green (income, positive) — small marks/text only
+  successDeep: '#166534',    // Deep green for LARGE surfaces (swipe bg, banners) —
+                             // full-bleed #22c55e glares on the dark theme
   warning: '#eab308',        // Yellow (warnings)
   error: '#ef4444',          // Red (expenses, negative)
   info: '#3b82f6',           // Blue (info)

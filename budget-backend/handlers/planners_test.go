@@ -85,8 +85,8 @@ func TestListSavingsGoals_WithHousehold(t *testing.T) {
 			WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(hhID))
 
-		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "target_amount", "current_amount", "target_date", "priority", "is_shared"}).
-			AddRow("g1", userID, hhID, "Trip fund", 5000.0, 1200.0, "2025-12-31", 1, true)
+		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "target_amount", "current_amount", "target_date", "priority", "is_shared", "linked_balance_id", "linked_account_name"}).
+			AddRow("g1", userID, hhID, "Trip fund", 5000.0, 1200.0, "2025-12-31", 1, true, "", "")
 		mock.ExpectQuery(`FROM savings_goals`).
 			WithArgs(hhID, userID).
 			WillReturnRows(rows)
@@ -137,9 +137,9 @@ func TestListSavingsGoals_PersonalOnly(t *testing.T) {
 			WillReturnError(sql.ErrNoRows)
 
 		// Personal savings goals query
-		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "target_amount", "current_amount", "target_date", "priority", "is_shared"}).
-			AddRow("g1", userID, "", "Emergency Fund", 10000.0, 2500.0, "2026-06-30", 1, false).
-			AddRow("g2", userID, "", "Vacation", 3000.0, 500.0, "2025-08-15", 2, false)
+		rows := sqlmock.NewRows([]string{"id", "user_id", "household_id", "name", "target_amount", "current_amount", "target_date", "priority", "is_shared", "linked_balance_id", "linked_account_name"}).
+			AddRow("g1", userID, "", "Emergency Fund", 10000.0, 2500.0, "2026-06-30", 1, false, "bal-1", "USAA Savings").
+			AddRow("g2", userID, "", "Vacation", 3000.0, 500.0, "2025-08-15", 2, false, "", "")
 		mock.ExpectQuery(`FROM savings_goals`).
 			WithArgs(userID).
 			WillReturnRows(rows)
