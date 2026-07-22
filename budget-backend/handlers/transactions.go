@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
@@ -120,109 +122,34 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-func GetTransactions(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	fmt.Print("Getting Transactions for User: {userID}")
+// transactionSelectCols is shared by the list query; the scan in
+// scanTransactions must match this column order exactly.
+const transactionSelectCols = `
+	t.id,          -- 1
+	t.user_id,     -- 2
+	t.household_id,
+	t.budget_id,   -- 4
+	t.category_id, -- 5
+	t.type,        -- 6
+	t.amount,      -- 7
+	t.currency,    -- 8
+	t.note,        -- 9
+	t.date,        -- 10
+	t.frequency,   -- 11
+	t.due_day,     -- 12
+	COALESCE(c.name, t.category_name), -- 13
+	c.color,       -- 14
+	t.source,      -- 15
+	t.match_confidence, -- 16
+	t.matched_rule_id,  -- 17
+	COALESCE(t.user_verified, false) -- 18`
 
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
-		return
-	}
-
-	dbClient, err := db.New()
-	if err != nil {
-		http.Error(w, "DB connection error", http.StatusInternalServerError)
-		return
-	}
-	defer dbClient.Close()
-
-	// rows, err := dbClient.Query(`
-	// 	SELECT id, user_id, type, amount, category, note, date, frequency, due_day
-	// 	FROM transactions WHERE user_id = $1
-	// `, userID)
-	log.Printf("User_ID: %v", userID)
-	hh := db.ResolveHouseholdID(dbClient.Conn, userID)
-
-	var rows *sql.Rows
-	if hh == "" {
-		rows, err = dbClient.Query(`
-			SELECT
-				t.id,          -- 1
-				t.user_id,     -- 2
-				t.household_id,
-				t.budget_id,   -- 4
-				t.category_id, -- 5
-				t.type,        -- 6
-				t.amount,      -- 7
-				t.currency,    -- 8
-				t.note,        -- 9
-				t.date,        -- 10
-				t.frequency,   -- 11
-				t.due_day,     -- 12
-				COALESCE(c.name, t.category_name), -- 13
-				c.color,       -- 14
-				t.source,      -- 15
-				t.match_confidence, -- 16
-				t.matched_rule_id,  -- 17
-				COALESCE(t.user_verified, false) -- 18
-			FROM transactions t
-			LEFT JOIN categories c ON t.category_id = c.id
-			WHERE t.household_id IS NULL AND t.user_id = $1
-		`, userID)
-	} else {
-		rows, err = dbClient.Query(`
-			SELECT
-				t.id,          -- 1
-				t.user_id,     -- 2
-				t.household_id,
-				t.budget_id,   -- 4
-				t.category_id, -- 5
-				t.type,        -- 6
-				t.amount,      -- 7
-				t.currency,    -- 8
-				t.note,        -- 9
-				t.date,        -- 10
-				t.frequency,   -- 11
-				t.due_day,     -- 12
-				COALESCE(c.name, t.category_name), -- 13
-				c.color,       -- 14
-				t.source,      -- 15
-				t.match_confidence, -- 16
-				t.matched_rule_id,  -- 17
-				COALESCE(t.user_verified, false) -- 18
-			FROM transactions t
-			LEFT JOIN categories c ON t.category_id = c.id
-			WHERE t.user_id = $2
-			   OR t.household_id::text = $1
-			   OR (t.household_id IS NOT NULL AND t.user_id IN (
-			       SELECT hm.user_id FROM household_members hm
-			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
-			           AND (sp.household_id::text = $1 OR sp.household_id IS NULL)
-			       WHERE hm.household_id::text = $1
-			         AND hm.user_id != $2
-			         AND COALESCE(sp.share_transactions, true) = true
-			   ))
-		`, hh, userID)
-	}
-
-	if err != nil {
-		http.Error(w, "Database query error", http.StatusInternalServerError)
-		log.Print(`Database query error`)
-		return
-	}
-	defer rows.Close()
-
+func scanTransactions(rows *sql.Rows) ([]models.Transaction, error) {
 	var transactions []models.Transaction
-	log.Print("Updating transaction model from database")
-	columns, _ := rows.Columns()
-	log.Printf("Columes returned: %v", columns)
-	rowCount := 0
 	for rows.Next() {
 		var t models.Transaction
 		var hh, freq, note sql.NullString
-		rowCount++
-		log.Print("Scanning")
-		err := rows.Scan(
+		if err := rows.Scan(
 			&t.ID,              // 1
 			&t.UserID,          // 2
 			&hh,                // 3 household_id
@@ -241,25 +168,174 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 			&t.MatchConfidence, // 16
 			&t.MatchedRuleID,   // 17
 			&t.UserVerified,    // 18
-		)
+		); err != nil {
+			return nil, err
+		}
 		if hh.Valid {
 			val := hh.String
 			t.HouseholdID = &val
 		}
 		t.Frequency = freq.String
 		t.Note = note.String
-
-		if err != nil {
-			http.Error(w, "Failed to scan row", http.StatusInternalServerError)
-			log.Printf("Failed to scan: %v", err)
-			return
-		}
-		log.Print("Scan worked")
 		transactions = append(transactions, t)
 	}
-	log.Printf("Total rows processed: %d", rowCount)
+	return transactions, rows.Err()
+}
 
-	json.NewEncoder(w).Encode(transactions)
+// GetTransactions lists transactions for a user (household-scoped when the
+// user belongs to one). Optional query params:
+//   - q:           case-insensitive search over note, category name, source, amount
+//   - type:        income | expense | transfer
+//   - category_id: exact category filter
+//   - date:        YYYY-MM-DD calendar-day filter (matches the stored date part)
+//   - limit/offset: when limit is present the response is a paginated envelope
+//     {transactions, total, limit, offset, has_more}; without it the legacy
+//     bare array is returned so existing consumers keep working.
+func GetTransactions(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+	userID := params.Get("user_id")
+	if userID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	hh := db.ResolveHouseholdID(dbClient.Conn, userID)
+
+	// Build WHERE incrementally; arg() registers a value and returns its
+	// placeholder so filter order can change without renumbering.
+	args := []interface{}{}
+	arg := func(v interface{}) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	var where string
+	if hh == "" {
+		where = fmt.Sprintf("t.household_id IS NULL AND t.user_id = %s", arg(userID))
+	} else {
+		hhP := arg(hh)
+		userP := arg(userID)
+		where = fmt.Sprintf(`(t.user_id = %s
+			OR t.household_id::text = %s
+			OR (t.household_id IS NOT NULL AND t.user_id IN (
+			    SELECT hm.user_id FROM household_members hm
+			    LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			        AND (sp.household_id::text = %s OR sp.household_id IS NULL)
+			    WHERE hm.household_id::text = %s
+			      AND hm.user_id != %s
+			      AND COALESCE(sp.share_transactions, true) = true
+			)))`, userP, hhP, hhP, hhP, userP)
+	}
+
+	if q := strings.TrimSpace(params.Get("q")); q != "" {
+		p := arg("%" + q + "%")
+		where += fmt.Sprintf(` AND (t.note ILIKE %s
+			OR COALESCE(c.name, t.category_name) ILIKE %s
+			OR t.source ILIKE %s
+			OR t.amount::text LIKE %s)`, p, p, p, p)
+	}
+	if txType := params.Get("type"); txType == "income" || txType == "expense" || txType == "transfer" {
+		where += " AND t.type = " + arg(txType)
+	}
+	if catID := params.Get("category_id"); catID != "" {
+		where += " AND t.category_id::text = " + arg(catID)
+	}
+	if day := params.Get("date"); day != "" {
+		// Dates are stored at UTC midnight, so the UTC date part IS the
+		// calendar day the transaction belongs to.
+		where += " AND (t.date AT TIME ZONE 'UTC')::date = " + arg(day) + "::date"
+	}
+
+	fromWhere := `
+		FROM transactions t
+		LEFT JOIN categories c ON t.category_id = c.id
+		WHERE ` + where
+
+	// Stable ordering — required for pagination, harmless for the legacy path.
+	listQuery := "SELECT " + transactionSelectCols + fromWhere + " ORDER BY t.date DESC, t.id DESC"
+
+	limitStr := params.Get("limit")
+	if limitStr == "" {
+		// Legacy path: full array, no envelope.
+		rows, err := dbClient.Query(listQuery, args...)
+		if err != nil {
+			log.Printf("GetTransactions query error: %v", err)
+			http.Error(w, "Database query error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		transactions, err := scanTransactions(rows)
+		if err != nil {
+			log.Printf("GetTransactions scan error: %v", err)
+			http.Error(w, "Failed to scan row", http.StatusInternalServerError)
+			return
+		}
+		if transactions == nil {
+			transactions = []models.Transaction{}
+		}
+		json.NewEncoder(w).Encode(transactions)
+		return
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset, _ := strconv.Atoi(params.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Count + income/expense sums over the FULL filtered set — the client only
+	// holds the loaded pages, so it can't derive these itself.
+	var total int
+	var sumIncome, sumExpense float64
+	if err := dbClient.QueryRow(`SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount END), 0),
+		COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount END), 0)`+fromWhere, args...).
+		Scan(&total, &sumIncome, &sumExpense); err != nil {
+		log.Printf("GetTransactions count error: %v", err)
+		http.Error(w, "Database query error", http.StatusInternalServerError)
+		return
+	}
+
+	rows, err := dbClient.Query(fmt.Sprintf("%s LIMIT %d OFFSET %d", listQuery, limit, offset), args...)
+	if err != nil {
+		log.Printf("GetTransactions query error: %v", err)
+		http.Error(w, "Database query error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	transactions, err := scanTransactions(rows)
+	if err != nil {
+		log.Printf("GetTransactions scan error: %v", err)
+		http.Error(w, "Failed to scan row", http.StatusInternalServerError)
+		return
+	}
+	if transactions == nil {
+		transactions = []models.Transaction{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"transactions":  transactions,
+		"total":         total,
+		"total_income":  sumIncome,
+		"total_expense": sumExpense,
+		"limit":         limit,
+		"offset":        offset,
+		"has_more":      offset+len(transactions) < total,
+	})
 }
 
 func UpdateTransaction(w http.ResponseWriter, r *http.Request) {

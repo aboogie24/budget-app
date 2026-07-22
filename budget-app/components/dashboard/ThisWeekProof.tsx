@@ -146,7 +146,13 @@ export function ThisWeekProof({
                         <View style={[styles.bar, { height: 5, backgroundColor: colors.primary2 }]} />
                       ) : null}
                     </View>
-                    <Text style={[styles.dayLabel, isToday && { color: colors.primary2, fontWeight: '700' }]}>
+                    <Text
+                      style={[
+                        styles.dayLabel,
+                        isToday && { color: colors.primary2, fontWeight: '700' },
+                        i > todayIndex && { opacity: 0.45 },
+                      ]}
+                    >
                       {dayLabels[i]}
                     </Text>
                   </View>

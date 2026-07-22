@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Alert,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,6 +48,8 @@ function getSourceBadge(source?: string): { label: string; color: string } {
   switch (source) {
     case 'teller':
       return { label: 'Teller', color: colors.warning };
+    case 'simplefin':
+      return { label: 'SimpleFIN', color: colors.primary2 };
     case 'plaid':
       return { label: 'Plaid', color: colors.info };
     case 'flinks':
@@ -68,24 +71,48 @@ const money = (v: number) =>
 // Signed money for the hero net: negative shows a leading "-".
 const signedMoney = (v: number) => (v < 0 ? '-' : v > 0 ? '+' : '') + money(v);
 
-// Clock time (grouped view — the day is redundant); fall back to short date.
-const clockTime = (d: string) => {
+// True when the stored value is a bare date or a UTC-midnight timestamp — i.e.
+// a pure calendar date with no real time-of-day (Teller/manual rows).
+const isDateOnly = (d: string) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(d) || /T00:00(:00)?(\.0+)?(Z|\+00:00)?$/.test(d);
+
+// The calendar day a transaction belongs to. Two semantics coexist in the DB:
+// • date-only rows ("…T00:00:00Z") — the date PART is the day; rendering the
+//   instant locally would shift it back a day (Jul 7 → "Monday, Jul 6").
+// • real instants (bill payments record the payment moment) — the LOCAL day is
+//   the day; taking the UTC date part would push an 11 PM Friday payment onto
+//   Saturday.
+const txDay = (d: string): Date => {
+  if (isDateOnly(d)) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d)!;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
   const dt = new Date(d);
-  if (isNaN(dt.getTime())) return d;
-  const hasTime = dt.getHours() !== 0 || dt.getMinutes() !== 0;
-  return hasTime
-    ? dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-    : dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return isNaN(dt.getTime()) ? new Date(NaN) : new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
 };
 
-// Group-header label from a local calendar day key.
-const dayKey = (d: string) => {
+// Clock time (grouped view — the day is redundant); fall back to short date.
+// A UTC-midnight date must NOT be shown as a local clock time — that fabricates
+// "8:00 PM" out of a dateless transaction.
+const clockTime = (d: string) => {
+  if (isDateOnly(d)) {
+    const dt = txDay(d);
+    return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
   const dt = new Date(d);
-  return `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
+  if (isNaN(dt.getTime())) return d;
+  return dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+};
+
+// Group-header key from the transaction's calendar day (same semantics as txDay).
+const dayKey = (d: string) => {
+  const dt = txDay(d);
+  if (isNaN(dt.getTime())) return String(d).slice(0, 10);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 };
 
 const dayLabel = (d: string) => {
-  const dt = new Date(d);
+  const dt = txDay(d);
   const today = new Date();
   const y = new Date();
   y.setDate(today.getDate() - 1);
@@ -126,15 +153,29 @@ export default function TransactionList() {
     date?: string; // YYYY-MM-DD — single-day filter (used by dashboard weekly bars)
   }>();
   const [transactions, setTransactions] = useState<Tx[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [serverTotals, setServerTotals] = useState({ income: 0, expense: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState('');
   const [pickerVisible, setPickerVisible] = useState(false);
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense' | 'transfer'>('all');
+
+  // Server search fires on the debounced value so we don't hit the API per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query.trim()), 350);
+    return () => clearTimeout(t);
+  }, [query]);
 
   const hasFilter = !!(params.category_id || params.date);
+  const searching = debouncedQuery.length > 0 || typeFilter !== 'all';
 
   const headerTitle = params.category_name
     ? params.category_name
@@ -146,45 +187,23 @@ export default function TransactionList() {
         })
       : 'All Transactions';
 
-  const visible = useMemo(
-    () =>
-      transactions
-        .filter((t) => {
-          if (params.category_id && t.category_id !== params.category_id) return false;
-          if (params.date) {
-            // Compare local date components — transactions store timestamps but
-            // we want a calendar-day match.
-            const txDate = new Date(t.date);
-            const [y, m, d] = params.date.split('-').map(Number);
-            if (
-              txDate.getFullYear() !== y ||
-              txDate.getMonth() !== m - 1 ||
-              txDate.getDate() !== d
-            ) {
-              return false;
-            }
-          }
-          return true;
-        })
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-    [transactions, params.category_id, params.date]
-  );
+  // Filtering, search, and sort all happen server-side now; the loaded pages
+  // arrive in final order.
+  const visible = transactions;
 
-  // ─── Headline summary (derive income / expense separately, net last). ───
+  // ─── Headline summary — from the server's full-filtered-set aggregates, so
+  // the numbers cover ALL matches, not just the pages loaded so far. ───
   const summary = useMemo(() => {
-    let income = 0;
-    let expense = 0;
-    for (const t of visible) {
-      if (t.type === 'income') income += t.amount;
-      else if (t.type === 'expense') expense += t.amount; // transfers excluded from net
-    }
+    const income = serverTotals.income;
+    const expense = serverTotals.expense;
     const net = income - expense;
     const allExpense = income === 0 && expense > 0;
     let label = 'NET THIS LIST';
-    if (params.category_id) label = allExpense ? 'SPENT IN THIS CATEGORY' : 'IN THIS CATEGORY';
+    if (searching) label = 'MATCHING RESULTS';
+    else if (params.category_id) label = allExpense ? 'SPENT IN THIS CATEGORY' : 'IN THIS CATEGORY';
     else if (params.date) label = 'ON THIS DAY';
-    return { income, expense, net, allExpense, count: visible.length, label };
-  }, [visible, params.category_id, params.date]);
+    return { income, expense, net, allExpense, count: total, label };
+  }, [serverTotals, total, params.category_id, params.date, searching]);
 
   // Hero number + color. For an all-expense category filter show -total (error).
   const heroValue = summary.allExpense ? -summary.expense : summary.net;
@@ -193,7 +212,7 @@ export default function TransactionList() {
 
   // ─── Day-grouped sections. Suppressed group headers when a single-day filter. ───
   const sections = useMemo(() => {
-    const buckets: { key: string; title: string; data: Tx[] }[] = [];
+    const buckets: { key: string; title: string; data: Tx[]; net: number }[] = [];
     const index = new Map<string, number>();
     for (const t of visible) {
       const k = dayKey(t.date);
@@ -201,49 +220,92 @@ export default function TransactionList() {
       if (i === undefined) {
         i = buckets.length;
         index.set(k, i);
-        buckets.push({ key: k, title: dayLabel(t.date), data: [] });
+        buckets.push({ key: k, title: dayLabel(t.date), data: [], net: 0 });
       }
       buckets[i].data.push(t);
+      if (t.type === 'income') buckets[i].net += t.amount || 0;
+      else if (t.type === 'expense') buckets[i].net -= t.amount || 0;
     }
     return buckets;
   }, [visible]);
 
   const suppressGroupHeaders = !!params.date;
 
-  const load = useCallback(async () => {
-    const user = await getCurrentUser();
-    if (!user?.id) return;
-    setUserId(user.id);
-    setLoading(true);
-    try {
-      const data = await api.get(`/auth/transactions`, { user_id: user.id });
-      const normalized = Array.isArray(data)
-        ? data.map((t: any) => ({
-            ...t,
-            category_name: t.category_name ?? t.category ?? t.categoryName,
-          }))
-        : [];
-      setTransactions(normalized);
-      setError(null);
-    } catch (e) {
-      console.error('Failed to load transactions:', e);
-      setError('Failed to load transactions');
-    } finally {
-      setLoading(false);
-      setLoadedOnce(true);
-    }
-  }, []);
+  const PAGE_SIZE = 50;
+  const inFlight = useRef(false);
+
+  type PagedResponse = {
+    transactions: any[];
+    total: number;
+    total_income: number;
+    total_expense: number;
+    has_more: boolean;
+  };
+
+  const load = useCallback(
+    async (mode: 'reset' | 'more') => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      const user = await getCurrentUser();
+      if (!user?.id) {
+        inFlight.current = false;
+        return;
+      }
+      setUserId(user.id);
+      if (mode === 'reset') setLoading(true);
+      else setLoadingMore(true);
+      try {
+        const req: Record<string, string> = {
+          user_id: user.id,
+          limit: String(PAGE_SIZE),
+          offset: mode === 'more' ? String(transactions.length) : '0',
+        };
+        if (debouncedQuery) req.q = debouncedQuery;
+        if (typeFilter !== 'all') req.type = typeFilter;
+        if (params.category_id) req.category_id = params.category_id;
+        if (params.date) req.date = params.date;
+
+        const data = (await api.get(`/auth/transactions`, req)) as PagedResponse;
+        const normalized = (data.transactions || []).map((t: any) => ({
+          ...t,
+          category_name: t.category_name ?? t.category ?? t.categoryName,
+        }));
+        setTransactions((prev) => (mode === 'more' ? [...prev, ...normalized] : normalized));
+        setTotal(data.total ?? normalized.length);
+        setHasMore(!!data.has_more);
+        setServerTotals({ income: data.total_income ?? 0, expense: data.total_expense ?? 0 });
+        setError(null);
+      } catch (e) {
+        console.error('Failed to load transactions:', e);
+        // Loading more shouldn't blank a list the user already has.
+        if (mode === 'reset') setError('Failed to load transactions');
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+        setLoadedOnce(true);
+        inFlight.current = false;
+      }
+    },
+    [transactions.length, debouncedQuery, typeFilter, params.category_id, params.date]
+  );
+
+  // Keep a stable ref so focus/filter effects don't need `load` (whose identity
+  // changes with transactions.length) in their deps — that would re-fire on
+  // every appended page.
+  const loadRef = useRef(load);
+  loadRef.current = load;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await load();
+    await loadRef.current('reset');
     setRefreshing(false);
-  }, [load]);
+  }, []);
 
+  // Reset-load on focus and whenever a server-side filter changes.
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load])
+      loadRef.current('reset');
+    }, [debouncedQuery, typeFilter, params.category_id, params.date])
   );
 
   /* Open the category picker for a transaction. */
@@ -315,7 +377,7 @@ export default function TransactionList() {
               message={error}
               onRetry={() => {
                 setError(null);
-                load();
+                loadRef.current('reset');
               }}
             />
           </View>
@@ -324,10 +386,61 @@ export default function TransactionList() {
     );
   }
 
+  const TYPE_CHIPS: { key: typeof typeFilter; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'income', label: 'Income' },
+    { key: 'expense', label: 'Expenses' },
+    { key: 'transfer', label: 'Transfers' },
+  ];
+
   return (
     <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
         {Header}
+
+        {/* ── Search + type filter ── */}
+        <View style={styles.searchWrap}>
+          <View style={styles.searchRow}>
+            <Ionicons name="search" size={16} color={colors.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search note, category, amount…"
+              placeholderTextColor={colors.textDark}
+              autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+              accessibilityLabel="Search transactions"
+            />
+            {query.length > 0 && (
+              <TouchableOpacity
+                onPress={() => setQuery('')}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+              >
+                <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.chipRow}>
+            {TYPE_CHIPS.map((c) => (
+              <TouchableOpacity
+                key={c.key}
+                style={[styles.chip, typeFilter === c.key && styles.chipActive]}
+                onPress={() => setTypeFilter(c.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: typeFilter === c.key }}
+                accessibilityLabel={`Show ${c.label.toLowerCase()}`}
+              >
+                <Text style={[styles.chipText, typeFilter === c.key && styles.chipTextActive]}>
+                  {c.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
 
         {showSkeleton ? (
           <TransactionListSkeleton />
@@ -359,7 +472,12 @@ export default function TransactionList() {
             }
             renderSectionHeader={({ section }) =>
               suppressGroupHeaders ? null : (
-                <Text style={styles.groupLabel}>{section.title}</Text>
+                <View style={styles.groupRow}>
+                  <Text style={styles.groupLabel}>{section.title}</Text>
+                  {section.net !== 0 && (
+                    <Text style={styles.groupNet}>{signedMoney(section.net)}</Text>
+                  )}
+                </View>
               )
             }
             renderItem={({ item }) => (
@@ -392,27 +510,59 @@ export default function TransactionList() {
                 colors={[colors.primary2]}
               />
             }
+            initialNumToRender={20}
+            windowSize={10}
+            onEndReached={() => {
+              if (hasMore && !loadingMore && !loading) loadRef.current('more');
+            }}
+            onEndReachedThreshold={0.4}
+            ListFooterComponent={
+              loadingMore ? (
+                <View style={styles.footerLoading}>
+                  <ActivityIndicator size="small" color={colors.primary2} />
+                </View>
+              ) : hasMore ? (
+                <Text style={styles.footerCount}>
+                  {visible.length} of {total}
+                </Text>
+              ) : visible.length > 0 ? (
+                <Text style={styles.footerCount}>All {total} loaded</Text>
+              ) : null
+            }
             ListEmptyComponent={
               <View style={styles.bodyPad}>
-                <EmptyState
-                  icon="receipt-outline"
-                  title={
-                    params.category_id
-                      ? 'No transactions in this category'
-                      : params.date
-                        ? 'No transactions on this day'
-                        : 'No transactions yet'
-                  }
-                  description={
-                    params.category_id
-                      ? 'Transactions assigned to this category will appear here'
-                      : params.date
-                        ? 'Transactions on this day will appear here'
-                        : 'Your transactions will appear here once you add them'
-                  }
-                  actionLabel="Add Transaction"
-                  onAction={() => router.push('/transaction/add')}
-                />
+                {searching ? (
+                  <EmptyState
+                    icon="search-outline"
+                    title="No matching transactions"
+                    description="Try a different search term or filter"
+                    actionLabel="Clear search"
+                    onAction={() => {
+                      setQuery('');
+                      setTypeFilter('all');
+                    }}
+                  />
+                ) : (
+                  <EmptyState
+                    icon="receipt-outline"
+                    title={
+                      params.category_id
+                        ? 'No transactions in this category'
+                        : params.date
+                          ? 'No transactions on this day'
+                          : 'No transactions yet'
+                    }
+                    description={
+                      params.category_id
+                        ? 'Transactions assigned to this category will appear here'
+                        : params.date
+                          ? 'Transactions on this day will appear here'
+                          : 'Your transactions will appear here once you add them'
+                    }
+                    actionLabel="Add Transaction"
+                    onAction={() => router.push('/transaction/add')}
+                  />
+                )}
               </View>
             }
           />
@@ -727,14 +877,78 @@ const styles = StyleSheet.create({
   },
 
   // Group label
+  groupRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
   groupLabel: {
     ...typography.caption,
     color: colors.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     fontWeight: '700',
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
+  },
+  groupNet: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontVariant: ['tabular-nums'],
+  },
+
+  // Search + type filter
+  searchWrap: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  searchRow: {
+    ...glassEffects.glass,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    minHeight: 40,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 14,
+    paddingVertical: spacing.sm,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  chip: {
+    ...glassEffects.glass,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 1,
+  },
+  chipActive: {
+    backgroundColor: `${colors.primary}33`,
+    borderColor: colors.primary2,
+  },
+  chipText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  chipTextActive: {
+    color: colors.text,
+  },
+  footerLoading: {
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+  },
+  footerCount: {
+    ...typography.caption,
+    color: colors.textDark,
+    textAlign: 'center',
+    paddingVertical: spacing.lg,
   },
 
   // Row

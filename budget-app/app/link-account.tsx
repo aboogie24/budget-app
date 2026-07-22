@@ -8,6 +8,10 @@ import {
   Alert,
   Modal,
   ScrollView,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -49,7 +53,7 @@ type ProviderInfo = {
   description?: string;
 };
 
-type ProviderKey = 'plaid' | 'flinks' | 'teller';
+type ProviderKey = 'plaid' | 'flinks' | 'teller' | 'simplefin';
 type SelectedProvider = ProviderKey | null;
 
 /* ── Provider presentation map (colors from design-system, never hardcoded) ── */
@@ -83,6 +87,13 @@ const PROVIDER_META: Record<
     color: colors.warning,
     description: 'US banks & credit unions',
     features: ['Fast US coverage', 'Read-only access'],
+  },
+  simplefin: {
+    label: 'SimpleFIN',
+    icon: 'key-outline',
+    color: colors.primary2,
+    description: 'Bring your own SimpleFIN Bridge token',
+    features: ['You control the connection', 'No connection limits'],
   },
 };
 
@@ -378,6 +389,8 @@ export default function LinkAccountScreen() {
   /* ── Teller state ────────────────────────────────────────────── */
   const [tellerWebViewVisible, setTellerWebViewVisible] = useState(false);
   const [tellerConnectUrl, setTellerConnectUrl] = useState<string | null>(null);
+  const [simplefinModalVisible, setSimplefinModalVisible] = useState(false);
+  const [simplefinToken, setSimplefinToken] = useState('');
   const [tellerLoading, setTellerLoading] = useState(false);
 
   /* ── Check native SDK availability ────────────────────────── */
@@ -673,6 +686,33 @@ export default function LinkAccountScreen() {
     }
   };
 
+  /* ── SimpleFIN flow: user pastes a setup token from their bridge ── */
+  const handleSimplefinSubmit = async () => {
+    const token = simplefinToken.trim();
+    if (!token) return;
+    setLinking(true);
+    try {
+      const res: any = await api.post('/auth/simplefin/connect', { setup_token: token });
+      setSimplefinModalVisible(false);
+      setSimplefinToken('');
+      Alert.alert(
+        'Linked!',
+        `Connected via SimpleFIN${res?.institution ? ` (${res.institution})` : ''}. Data will sync shortly.`,
+      );
+      loadAccounts();
+    } catch (e: any) {
+      console.error('SimpleFIN connect error:', e);
+      // Setup tokens are one-time-use, so a failure needs a fresh token.
+      Alert.alert(
+        'Connection failed',
+        (e.message || String(e)) +
+          '\n\nSetup tokens are single-use — generate a new one at your SimpleFIN bridge and try again.',
+      );
+    } finally {
+      setLinking(false);
+    }
+  };
+
   /* ── Handle Connect button press ───────────────────────────── */
   const handleConnectPress = () => {
     if (selectedProvider === 'plaid') {
@@ -681,6 +721,8 @@ export default function LinkAccountScreen() {
       openFlinksConnect();
     } else if (selectedProvider === 'teller') {
       openTellerConnect();
+    } else if (selectedProvider === 'simplefin') {
+      setSimplefinModalVisible(true);
     }
   };
 
@@ -774,12 +816,14 @@ export default function LinkAccountScreen() {
   const reauthAccounts = accounts.filter((a) => a.item_status === 'login_required');
   const isFlinksAvailable = providers.some((p) => p.name === 'flinks');
   const isTellerAvailable = providers.some((p) => p.name === 'teller');
+  const isSimplefinAvailable = providers.some((p) => p.name === 'simplefin');
   const busy = linking || flinksLoading || tellerLoading;
 
   const availableProviderKeys: ProviderKey[] = [
     'plaid',
     ...(isFlinksAvailable ? (['flinks'] as ProviderKey[]) : []),
     ...(isTellerAvailable ? (['teller'] as ProviderKey[]) : []),
+    ...(isSimplefinAvailable ? (['simplefin'] as ProviderKey[]) : []),
   ];
 
   /* ══════════════════════════════════════════════════════════════
@@ -1036,6 +1080,69 @@ export default function LinkAccountScreen() {
     },
   });
 
+  /* ── SimpleFIN setup-token modal (no WebView — just paste a token) ── */
+  const simplefinModal = (
+    <Modal
+      visible={simplefinModalVisible}
+      animationType="slide"
+      transparent
+      onRequestClose={() => setSimplefinModalVisible(false)}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.sfinOverlay}
+      >
+        <View style={styles.sfinSheet}>
+          <View style={styles.sfinHeader}>
+            <Ionicons name="key-outline" size={20} color={colors.primary2} />
+            <Text style={styles.sfinTitle}>Connect with SimpleFIN</Text>
+            <TouchableOpacity
+              onPress={() => setSimplefinModalVisible(false)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={22} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.sfinStep}>
+            1. Sign up at <Text style={styles.sfinBold}>bridge.simplefin.org</Text> and connect
+            your bank there.{'\n'}
+            2. Create a new app connection to get a <Text style={styles.sfinBold}>setup token</Text>.{'\n'}
+            3. Paste the token below — it's single-use and becomes this app's read-only access.
+          </Text>
+
+          <TextInput
+            style={styles.sfinInput}
+            value={simplefinToken}
+            onChangeText={setSimplefinToken}
+            placeholder="Paste your SimpleFIN setup token…"
+            placeholderTextColor={colors.textDark}
+            multiline
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel="SimpleFIN setup token"
+          />
+
+          <TouchableOpacity
+            style={[styles.sfinSubmit, (!simplefinToken.trim() || linking) && styles.dimmed]}
+            onPress={handleSimplefinSubmit}
+            disabled={!simplefinToken.trim() || linking}
+            accessibilityRole="button"
+            accessibilityLabel="Connect SimpleFIN"
+          >
+            {linking ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <Text style={styles.sfinSubmitText}>Connect</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+
   /* ══════════════════════════════════════════════════════════════
      Render: loading state (header + intro static, skeleton body)
      ══════════════════════════════════════════════════════════════ */
@@ -1144,6 +1251,7 @@ export default function LinkAccountScreen() {
 
       {flinksModal}
       {tellerModal}
+      {simplefinModal}
     </GradientBackground>
   );
 }
@@ -1440,6 +1548,60 @@ const styles = StyleSheet.create({
 
   /* Dim states */
   dimmed: { opacity: 0.5 },
+
+  // SimpleFIN setup-token sheet
+  sfinOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  sfinSheet: {
+    backgroundColor: colors.surface2,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.md,
+  },
+  sfinHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  sfinTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    flex: 1,
+  },
+  sfinStep: {
+    ...typography.small,
+    color: colors.textMuted,
+    lineHeight: 20,
+  },
+  sfinBold: {
+    color: colors.text,
+    fontWeight: '600',
+  },
+  sfinInput: {
+    ...glassEffects.glass,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    minHeight: 88,
+    color: colors.text,
+    fontSize: 13,
+    textAlignVertical: 'top',
+  } as TextStyle,
+  sfinSubmit: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sfinSubmitText: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
   dimmedGroup: { opacity: 0.5 },
 
   /* Reconnect AttentionCard banner */

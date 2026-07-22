@@ -91,6 +91,14 @@ db-reset: db-wait
 		-c "CREATE DATABASE $(PG_DB);"
 	$(MAKE) migrate-up
 
+## Wipe ONE user's financial data (keeps login, household, categories, settings).
+## Usage: make reset-user USER_EMAIL=you@example.com
+reset-user:
+	@test -n "$(USER_EMAIL)" || (echo "usage: make reset-user USER_EMAIL=you@example.com" && exit 1)
+	@echo "WARNING: wiping financial data for $(USER_EMAIL) in $(PG_DB)..."
+	PGPASSWORD=$(PG_PASS) psql -h $(PG_HOST) -p $(PG_PORT) -U $(PG_USER) -d $(PG_DB) \
+		-v target_email='$(USER_EMAIL)' -f $(BACKEND_DIR)/scripts/reset_user_data.sql
+
 # ─── Migrations ──────────────────────────────────────────────
 
 .PHONY: migrate-up migrate-down migrate-status

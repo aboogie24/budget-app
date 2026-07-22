@@ -242,6 +242,8 @@ const ProgressBar = ({
       style={{
         height: '100%',
         width: `${Math.min(Math.max(percent, 0), 100)}%`,
+        // Tiny nonzero spend still shows a visible sliver instead of nothing.
+        minWidth: percent > 0 ? 3 : 0,
         backgroundColor: color,
         borderRadius: radius.full,
       }}
@@ -933,9 +935,11 @@ const BudgetHeroSummary = ({
       accessible
       accessibilityLabel={`${type === 'expense' ? 'Expense' : 'Income'} budget, ${
         STATUS_WORD[status]
-      }, ${usedPct} percent ${type === 'expense' ? 'used' : 'earned'}. Budgeted ${fmt(
-        totalBudgeted,
-      )}, spent ${fmt(totalSpent)}, remaining ${fmt(totalRemaining)}.`}
+      }, ${usedPct} percent ${type === 'expense' ? 'used' : 'received'}. ${
+        type === 'expense' ? 'Budgeted' : 'Expected'
+      } ${fmt(totalBudgeted)}, ${type === 'expense' ? 'spent' : 'received'} ${fmt(
+        totalSpent,
+      )}, remaining ${fmt(totalRemaining)}.`}
     >
       {/* Label + status badge */}
       <View style={styles.heroTopRow}>
@@ -945,7 +949,7 @@ const BudgetHeroSummary = ({
         <View style={[styles.statusBadge, { backgroundColor: `${statusColor}1f` }]}>
           <Ionicons name={STATUS_ICON[status]} size={12} color={statusColor} />
           <Text style={[styles.statusBadgeText, { color: statusColor }]}>
-            {STATUS_WORD[status]} · {usedPct}% {type === 'expense' ? 'used' : 'earned'}
+            {STATUS_WORD[status]} · {usedPct}% {type === 'expense' ? 'used' : 'received'}
           </Text>
         </View>
       </View>
@@ -953,11 +957,11 @@ const BudgetHeroSummary = ({
       {/* Stats row */}
       <View style={styles.heroStatsRow}>
         <View>
-          <Text style={styles.statLabel}>Budgeted</Text>
+          <Text style={styles.statLabel}>{type === 'expense' ? 'Budgeted' : 'Expected'}</Text>
           <Text style={styles.statValue}>{fmtShort(totalBudgeted)}</Text>
         </View>
         <View style={{ alignItems: 'center' }}>
-          <Text style={styles.statLabel}>{type === 'expense' ? 'Spent' : 'Earned'}</Text>
+          <Text style={styles.statLabel}>{type === 'expense' ? 'Spent' : 'Received'}</Text>
           <Text style={[styles.statValue, { color: spentColor }]}>{fmtShort(totalSpent)}</Text>
         </View>
         <View style={{ alignItems: 'flex-end' }}>

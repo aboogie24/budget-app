@@ -44,18 +44,30 @@ type LoadState = 'loading' | 'ready' | 'not-found' | 'error';
 const TINT = '1f';
 
 // ── Helpers ──
+// A bare date or UTC-midnight timestamp is a pure calendar date — rendering it
+// as a local instant shifts the day back and fabricates a time of day.
+function isDateOnlyValue(raw: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) || /T00:00(:00)?(\.0+)?(Z|\+00:00)?$/.test(raw);
+}
+
 function parseDate(raw?: string | null): Date | null {
   if (!raw) return null;
+  if (isDateOnlyValue(raw)) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
   const d = new Date(raw);
   return isNaN(d.getTime()) ? null : d;
 }
 
-// Shared formatter: "Tue, Jun 17 2026 · 2:14 PM" (not toLocaleString()).
-function formatDate(d: Date): string {
+// Shared formatter: "Tue, Jun 17 2026 · 2:14 PM"; date-only values render
+// without the (nonexistent) clock time.
+function formatDate(d: Date, withTime: boolean): string {
   const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
   const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
   const day = d.getDate();
   const year = d.getFullYear();
+  if (!withTime) return `${weekday}, ${month} ${day} ${year}`;
   let h = d.getHours();
   const m = d.getMinutes().toString().padStart(2, '0');
   const ampm = h >= 12 ? 'PM' : 'AM';
@@ -184,6 +196,7 @@ export default function TransactionDetail() {
   const displayCategory = hasCategory ? categoryName : 'Uncategorized';
   const catColor = tx?.color;
   const parsedDate = parseDate(tx?.date);
+  const dateHasTime = !!tx?.date && !isDateOnlyValue(String(tx.date));
 
   // Recurring row (only if a real recurring frequency).
   const frequency = (tx?.frequency || '').toLowerCase();
@@ -414,10 +427,10 @@ export default function TransactionDetail() {
             <DetailRow
               icon="time-outline"
               label="Date"
-              a11y={parsedDate ? `Date, ${formatDate(parsedDate)}` : 'Date unavailable'}
+              a11y={parsedDate ? `Date, ${formatDate(parsedDate, dateHasTime)}` : 'Date unavailable'}
             >
               {parsedDate ? (
-                <Text style={styles.rowValue}>{formatDate(parsedDate)}</Text>
+                <Text style={styles.rowValue}>{formatDate(parsedDate, dateHasTime)}</Text>
               ) : (
                 <Text style={[styles.rowValue, { color: colors.textMuted }]}>Date unavailable</Text>
               )}

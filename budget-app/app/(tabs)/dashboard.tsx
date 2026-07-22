@@ -67,6 +67,15 @@ type FrameworkLevel = {
 type Member = { user_id: string; full_name: string; role: string };
 
 // severity ordering for worst-signal-wins
+// Parse a 'YYYY-MM-DD…' string as a LOCAL calendar date. new Date('YYYY-MM-DD')
+// parses UTC midnight, which lands on the previous local day in negative-offset
+// timezones — every date comparison on this screen is calendar-local.
+const parseLocalDate = (value?: string): Date | null => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+};
+
 const SEVERITY: Record<Exclude<HeadlineStatus, 'setup'>, number> = { good: 0, watch: 1, alert: 2 };
 const severityMin = (...s: Exclude<HeadlineStatus, 'setup'>[]) =>
   s.reduce((worst, cur) => (SEVERITY[cur] > SEVERITY[worst] ? cur : worst), 'good' as Exclude<HeadlineStatus, 'setup'>);
@@ -307,8 +316,8 @@ export default function DashboardScreen() {
     let inflow = 0;
     let outflow = 0;
     for (const t of scopedTx) {
-      const d = new Date(t.date);
-      if (d < monthStart || d > monthEnd) continue;
+      const d = parseLocalDate(t.date);
+      if (!d || d < monthStart || d > monthEnd) continue;
       if (t.type === 'income') inflow += t.amount || 0;
       else if (t.type === 'expense') outflow += t.amount || 0;
     }
@@ -316,15 +325,21 @@ export default function DashboardScreen() {
   }, [scopedTx, monthStart, monthEnd]);
 
   // ── Budget totals (personal budgets; household uses summary savings/debt) ──
+  // Mirrors the backend's occurrencesInMonth (handlers/budgets.go): step whole
+  // cadence intervals from the start_date anchor so biweekly keeps its 14-day
+  // phase instead of snapping to the first matching weekday of the month.
   const countOccurrencesInMonth = useCallback((startDate?: string, frequency?: string) => {
     const freq = (frequency || '').toLowerCase();
-    const start = startDate ? new Date(startDate) : monthStart;
+    const start = (startDate ? parseLocalDate(startDate) : null) ?? monthStart;
     if (start > monthEnd) return 0;
     if (freq === 'weekly' || freq === 'biweekly') {
       const step = freq === 'weekly' ? 7 : 14;
+      const current = new Date(start);
+      if (current < monthStart) {
+        const days = Math.floor((monthStart.getTime() - current.getTime()) / 86400000);
+        current.setDate(current.getDate() + Math.ceil(days / step) * step);
+      }
       let count = 0;
-      const current = new Date(Math.max(start.getTime(), monthStart.getTime()));
-      current.setDate(current.getDate() + ((7 + start.getDay() - current.getDay()) % 7));
       while (current <= monthEnd) { count++; current.setDate(current.getDate() + step); }
       return count;
     }
@@ -352,7 +367,12 @@ export default function DashboardScreen() {
   const displayDebtTotal = useHousehold ? householdSummary!.total_debt : debtSummary.total;
   const savingsPercent = savingsTarget > 0 ? Math.round((savingsCurrent / savingsTarget) * 100) : 0;
 
-  const netWorth = cashTotal + investmentTotal + propertyTotal - displayDebtTotal;
+  // Net worth stays PERSONAL-scope in the trajectory strip: the snapshot series
+  // (and therefore the sparkline + delta %) is recorded from personal figures,
+  // and assets here are personal too. Swapping in household debt made the hero
+  // number disagree with its own trend line. Household combined finances live
+  // on the partner dashboard.
+  const netWorth = cashTotal + investmentTotal + propertyTotal - debtSummary.total;
 
   // ── Bills (scoped: Me filters to this user's bills via user_id when present) ──
   const scopedBills = useMemo(() => {
@@ -378,11 +398,10 @@ export default function DashboardScreen() {
     let week = 0;
     scopedTx.forEach((t) => {
       if (t.type !== 'expense') return;
-      const dateStr = typeof t.date === 'string' ? t.date.slice(0, 10) : '';
-      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-      if (!m) return;
-      const txDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-      const diff = Math.floor((txDate.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24));
+      const txDate = parseLocalDate(typeof t.date === 'string' ? t.date : '');
+      if (!txDate) return;
+      // Round, not floor: DST makes one day 23h/25h and floor would shift the bucket.
+      const diff = Math.round((txDate.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24));
       if (diff >= 0 && diff <= dow) {
         totals[diff] += t.amount || 0;
         week += t.amount || 0;
@@ -391,9 +410,15 @@ export default function DashboardScreen() {
     return { dailyTotals: totals, thisWeekTotal: week };
   }, [scopedTx]);
 
-  const weeklyBudget = budgetIncomeTotal > 0
-    ? Math.round(budgetIncomeTotal / 4)
-    : budgetExpenseTotal > 0 ? Math.round(budgetExpenseTotal / 4) : 0;
+  // Weekly spending target from the monthly EXPENSE budget — income is not a
+  // spending cap. Scale by real days in the month, not a flat ÷4 (a month
+  // averages ~4.33 weeks, so ÷4 overstated the weekly budget ~8%).
+  const weeklyBudget = useMemo(() => {
+    if (budgetExpenseTotal <= 0) return 0;
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return Math.round((budgetExpenseTotal * 7) / daysInMonth);
+  }, [budgetExpenseTotal]);
 
   // ── Client-side status fallback (worst-signal-wins) ──
   const clientStatus = useMemo<{ status: Exclude<HeadlineStatus, 'setup'>; headline: string }>(() => {
@@ -447,7 +472,7 @@ export default function DashboardScreen() {
   // ── Recent transactions (last 3, actual) ──
   const recentTx: RecentTx[] = useMemo(() =>
     [...scopedTx]
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .sort((a, b) => (parseLocalDate(b.date)?.getTime() ?? 0) - (parseLocalDate(a.date)?.getTime() ?? 0))
       .slice(0, 3),
     [scopedTx]);
 

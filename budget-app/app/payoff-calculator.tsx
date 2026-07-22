@@ -75,13 +75,18 @@ function computePayoff(debts: Debt[], extraPayment: number, strategy: Strategy):
 
   let months = 0;
   let totalInterest = 0;
+  // Minimums freed by cleared debts roll forward PERMANENTLY — that
+  // acceleration is the entire point of snowball/avalanche. Resetting the
+  // pool each month silently dropped the freed minimums after the clearing
+  // month, overstating payoff time and interest for multi-debt plans.
+  let rolledMinimums = 0;
 
   while (months < MAX_MONTHS) {
     const allPaid = sorted.every((d) => d.balance <= 0);
     if (allPaid) break;
 
     months++;
-    let extraPool = extraPayment;
+    let extraPool = extraPayment + rolledMinimums;
 
     // 1. Apply monthly interest
     for (const d of sorted) {
@@ -102,8 +107,10 @@ function computePayoff(debts: Debt[], extraPayment: number, strategy: Strategy):
         if (!d.paidOff) {
           d.paidOff = true;
           d.paidOffMonth = months;
-          // Freed min payment rolls into extra pool
-          extraPool += d.minPayment;
+          // The full minimum frees up starting NEXT month; this month only
+          // the unused slice of it is still available to spend.
+          rolledMinimums += d.minPayment;
+          extraPool += d.minPayment - payment;
         }
       }
     }
@@ -119,7 +126,8 @@ function computePayoff(debts: Debt[], extraPayment: number, strategy: Strategy):
         if (!d.paidOff) {
           d.paidOff = true;
           d.paidOffMonth = months;
-          extraPool += d.minPayment;
+          // Its minimum was already spent this month — it frees from next month.
+          rolledMinimums += d.minPayment;
         }
       }
     }
@@ -282,7 +290,11 @@ export default function PayoffCalculatorScreen() {
   );
 
   const monthsSaved = baseResult.totalMonths - result.totalMonths;
-  const interestSaved = baseResult.totalInterest - result.totalInterest;
+  // When the $0-extra baseline never amortizes it hits the 600-month cap, so
+  // its interest total is truncated — a diff against it would understate the
+  // real savings. Show months saved but not a misleading interest figure.
+  const baselineCapped = baseResult.totalMonths >= MAX_MONTHS;
+  const interestSaved = baselineCapped ? 0 : baseResult.totalInterest - result.totalInterest;
   const showSavings = extraPayment > 0 && monthsSaved > 0;
 
   // Cross-fade the hero date when the payoff answer changes.
@@ -362,7 +374,9 @@ export default function PayoffCalculatorScreen() {
       `Time to pay ${result.totalMonths} months. Interest ${fmt(result.totalInterest)}. ` +
       `Total cost ${fmt(totalCost)}.` +
       (showSavings
-        ? ` Adding ${fmt(extraPayment)} a month saves ${monthsSaved} months and ${fmt(interestSaved)} in interest.`
+        ? ` Adding ${fmt(extraPayment)} a month saves ${monthsSaved} months${
+            interestSaved > 0 ? ` and ${fmt(interestSaved)} in interest` : ''
+          }.`
         : '');
 
     return (
@@ -423,7 +437,8 @@ export default function PayoffCalculatorScreen() {
           <View style={[styles.calloutBase, styles.savingsCallout]}>
             <Ionicons name="play" size={12} color={colors.success} />
             <Text style={styles.savingsText}>
-              +{fmt(extraPayment)}/mo saves you {monthsSaved} mo · {fmt(interestSaved)} interest
+              +{fmt(extraPayment)}/mo saves you {monthsSaved} mo
+              {interestSaved > 0 ? ` · ${fmt(interestSaved)} interest` : ''}
             </Text>
           </View>
         ) : null}

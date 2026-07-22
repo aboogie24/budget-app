@@ -39,6 +39,7 @@ type Debt = {
   household_id?: string;
   name: string;
   balance: number;
+  original_balance?: number;
   apr: number;
   min_payment: number;
   due_day?: number | null;
@@ -105,10 +106,14 @@ const getTypeLabel = (liabilityType: string): string => {
   return LIABILITY_TYPES.find(t => t.value === liabilityType)?.label || liabilityType;
 };
 
-const getPaidPercent = (balance: number): number => {
-  // Heuristic estimate — without an original balance this always lands ~23%.
-  // Labeled "est." in the UI to avoid implying precision.
-  return Math.max(0, Math.round((1 - balance / (balance * 1.3)) * 100));
+// Real payoff progress against the recorded opening balance. A debt with no
+// history yet (original == balance) honestly reads 0% instead of the old
+// fabricated ~23% heuristic.
+const getPaidPercent = (balance: number, originalBalance?: number): number => {
+  if (balance <= 0) return 100;
+  const original = originalBalance && originalBalance > 0 ? originalBalance : 0;
+  if (original <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((1 - balance / original) * 100)));
 };
 
 const getEstMonths = (balance: number, minPayment: number): number => {
@@ -131,7 +136,8 @@ const MiniRing = ({ percent, size = 42, strokeWidth = 3, color }: {
 }) => {
   const r = (size - strokeWidth) / 2;
   const circ = 2 * Math.PI * r;
-  const offset = circ - (percent / 100) * circ;
+  const clamped = Math.min(100, Math.max(0, percent));
+  const offset = circ - (clamped / 100) * circ;
   return (
     <Svg width={size} height={size}>
       <Circle
@@ -204,7 +210,7 @@ const DebtCard = ({
   const cat = debt.debt_category || 'attack';
   const catColor = bucketColor(cat);
   const icon = getDebtIcon(debt.liability_type);
-  const paidPercent = getPaidPercent(debt.balance);
+  const paidPercent = getPaidPercent(debt.balance, debt.original_balance);
   const estMonths = getEstMonths(debt.balance, debt.min_payment);
   const estDate = getEstDate(estMonths);
 
@@ -258,7 +264,7 @@ const DebtCard = ({
         {/* Balance + chevron */}
         <View style={{ alignItems: 'flex-end', marginRight: spacing.xs, flexShrink: 0 }}>
           <Text style={{ ...typography.bodyBold, color: colors.text }}>{fmt(debt.balance)}</Text>
-          <Text style={{ ...typography.caption, color: colors.textMuted, marginTop: 1 }}>{paidPercent}% paid (est.)</Text>
+          <Text style={{ ...typography.caption, color: colors.textMuted, marginTop: 1 }}>{paidPercent}% paid</Text>
         </View>
         <Ionicons
           name={expanded ? 'chevron-up' : 'chevron-down'}

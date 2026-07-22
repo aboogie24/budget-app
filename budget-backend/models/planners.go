@@ -23,6 +23,7 @@ type DebtAccount struct {
 	HouseholdID      string  `json:"household_id,omitempty"`
 	Name             string  `json:"name"`
 	Balance          float64 `json:"balance"`
+	OriginalBalance  float64 `json:"original_balance"` // opening balance; drives real "% paid"
 	APR              float64 `json:"apr"`
 	MinPayment       float64 `json:"min_payment"`
 	DueDay           *int    `json:"due_day,omitempty"`

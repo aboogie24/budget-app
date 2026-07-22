@@ -43,6 +43,8 @@ func GetProvider(name string) Provider {
 		return NewFlinksProvider()
 	case "teller":
 		return NewTellerProvider()
+	case "simplefin":
+		return NewSimpleFINProvider()
 	default:
 		return NewPlaidProvider()
 	}

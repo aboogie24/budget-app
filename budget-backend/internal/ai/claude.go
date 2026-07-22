@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aboogie/budget-backend/models"
 )
@@ -52,6 +53,18 @@ func (c *Client) IsAvailable() bool {
 }
 
 // SendMessage sends a non-streaming request to Claude and returns the full response.
+// retryableStatus reports whether an API status is transient — rate limits and
+// overload errors clear on their own, so batch jobs (categorization, nudge
+// authoring, post-sync auto-categorize) should retry instead of failing.
+func retryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusInternalServerError,
+		http.StatusBadGateway, http.StatusServiceUnavailable, 529:
+		return true
+	}
+	return false
+}
+
 func (c *Client) SendMessage(req models.ClaudeRequest) (*models.ClaudeResponse, error) {
 	req.Stream = false
 	if req.Model == "" {
@@ -66,31 +79,46 @@ func (c *Client) SendMessage(req models.ClaudeRequest) (*models.ClaudeResponse, 
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", claudeAPIURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
+	const maxAttempts = 3
+	backoff := time.Second
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		httpReq, err := http.NewRequest("POST", claudeAPIURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("x-api-key", c.apiKey)
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", c.apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("send request: %w", err)
+		} else {
+			if resp.StatusCode == http.StatusOK {
+				var claudeResp models.ClaudeResponse
+				decErr := json.NewDecoder(resp.Body).Decode(&claudeResp)
+				resp.Body.Close()
+				if decErr != nil {
+					return nil, fmt.Errorf("decode response: %w", decErr)
+				}
+				return &claudeResp, nil
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("claude API error %d: %s", resp.StatusCode, string(respBody))
+			if !retryableStatus(resp.StatusCode) {
+				return nil, lastErr
+			}
+		}
 
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		if attempt < maxAttempts {
+			log.Printf("claude: transient error (attempt %d/%d), retrying in %s: %v", attempt, maxAttempts, backoff, lastErr)
+			time.Sleep(backoff)
+			backoff *= 3
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("claude API error %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var claudeResp models.ClaudeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&claudeResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return &claudeResp, nil
+	return nil, lastErr
 }
 
 // StreamResult holds the outcome of a single streaming call to Claude.

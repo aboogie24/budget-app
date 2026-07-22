@@ -371,7 +371,10 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 		&ctxData.BudgetCount,
 	)
 
-	systemPrompt := ai.SystemPrompt
+	// Static blocks first (persona, then the app manual) so the prompt prefix
+	// stays byte-identical across requests and prompt caching keeps working;
+	// dynamic context and memories append after.
+	systemPrompt := ai.SystemPrompt + "\n\n" + ai.AppGuide
 	contextBlock := ai.BuildContextBlock(ctxData)
 	if contextBlock != "" {
 		systemPrompt += "\n\n" + contextBlock

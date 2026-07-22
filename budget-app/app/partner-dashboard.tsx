@@ -423,7 +423,7 @@ export default function PartnerDashboardScreen() {
             <View style={styles.statRow}>
               <View style={styles.statCol}>
                 <View style={[styles.iconChip, { backgroundColor: `${colors.success}1a` }]}>
-                  <Ionicons name="arrow-down-circle-outline" size={24} color={colors.success} />
+                  <Ionicons name="arrow-up-circle-outline" size={24} color={colors.success} />
                 </View>
                 <Text style={styles.statLabel}>Total Income</Text>
                 <Text style={[styles.statValue, { color: colors.success }]}>
@@ -432,7 +432,7 @@ export default function PartnerDashboardScreen() {
               </View>
               <View style={styles.statCol}>
                 <View style={[styles.iconChip, { backgroundColor: `${colors.error}1a` }]}>
-                  <Ionicons name="arrow-up-circle-outline" size={24} color={colors.error} />
+                  <Ionicons name="arrow-down-circle-outline" size={24} color={colors.error} />
                 </View>
                 <Text style={styles.statLabel}>Total Expenses</Text>
                 <Text style={[styles.statValue, { color: colors.error }]}>

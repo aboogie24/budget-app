@@ -130,7 +130,8 @@ function ProgressRing({
 }) {
   const r = (size - strokeWidth) / 2;
   const circ = 2 * Math.PI * r;
-  const offset = circ - (percent / 100) * circ;
+  const clamped = Math.min(100, Math.max(0, percent));
+  const offset = circ - (clamped / 100) * circ;
   return (
     <Svg width={size} height={size}>
       <Circle
@@ -882,7 +883,12 @@ export default function BillsScreen() {
               <View style={styles.heroCard}>
                 <View style={styles.heroContent}>
                   <View style={styles.ringContainer}>
-                    <ProgressRing percent={paidPct} size={64} strokeWidth={5} color={colors.success} />
+                    <ProgressRing
+                      percent={paidPct}
+                      size={64}
+                      strokeWidth={5}
+                      color={overdueCount > 0 ? colors.warning : colors.success}
+                    />
                     <View style={styles.ringCenter}>
                       <Text style={styles.ringCount}>{paidCount}</Text>
                       <Text style={styles.ringLabel}>of {bills.length}</Text>

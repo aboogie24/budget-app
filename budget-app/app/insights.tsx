@@ -25,6 +25,7 @@ import {
   gradients,
   commonStyles,
   getValueColor,
+  chartCategorical,
 } from '@/utils/design-system';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -34,16 +35,11 @@ const MONTHS_LONG = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-// §7.1 Palette-derived category fallback colors (token-only, never off-palette).
-const CATEGORY_FALLBACK_COLORS = [
-  colors.primary2,
-  colors.info,
-  colors.success,
-  colors.warning,
-  colors.accent,
-  colors.error,
-  colors.primary,
-];
+// Fixed-order categorical hues for category rows. The previous fallback list
+// included success/warning/error, which painted arbitrary categories in status
+// colors (e.g. "Groceries" in over-budget red). chartCategorical excludes the
+// semantic tokens by design.
+const CATEGORY_FALLBACK_COLORS = chartCategorical;
 
 // Cap the visible category list (progressive-disclosure "+N more" not built in v1).
 const MAX_CATEGORY_ROWS = 8;
@@ -364,7 +360,7 @@ export default function InsightsScreen() {
                       style={styles.chartContainer}
                       accessibilityLabel={
                         highestDay
-                          ? `Daily spending, average ${fmt(avgPerDay)} per day, highest on ${formatDayLabel(
+                          ? `Daily spending, average ${fmt(avgPerDay)} per active day, highest on ${formatDayLabel(
                               highestDay.date,
                             )} at ${fmt(highestDay.amount)}.`
                           : 'Daily spending'
@@ -417,7 +413,7 @@ export default function InsightsScreen() {
                     <View style={styles.chartFooter}>
                       <Text style={styles.footerText}>
                         <Text style={styles.footerValue}>Avg {fmt(avgPerDay)}</Text>
-                        <Text style={styles.footerMuted}>/day</Text>
+                        <Text style={styles.footerMuted}>/active day</Text>
                       </Text>
                       {highestDay && (
                         <Text style={styles.footerText}>

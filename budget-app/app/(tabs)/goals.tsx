@@ -136,7 +136,7 @@ function GoalsAllocationDonut({
               stroke={seg.color}
               strokeWidth={strokeWidth}
               strokeDasharray={`${dash} ${gap}`}
-              strokeLinecap="round"
+              strokeLinecap="butt"
               transform={`rotate(${rot}, ${size / 2}, ${size / 2})`}
             />
           );
@@ -494,11 +494,18 @@ export default function FinancesScreen() {
   // Real net-worth trend values for the sparkline (real snapshots only).
   const netWorthValues = useMemo(() => netWorthHistory.map((p) => p.total), [netWorthHistory]);
 
-  // Monthly delta % from real first-vs-last snapshot (like dashboard's netWorthDeltaPercent).
+  // Delta over the trailing 30 days — the history window is 180 days, and a
+  // first-vs-last diff across all of it misrepresented a "this month" label.
   const netWorthDelta = useMemo(() => {
     if (netWorthHistory.length < 2) return null;
-    const first = netWorthHistory[0].total;
-    const last = netWorthHistory[netWorthHistory.length - 1].total;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const recent = netWorthHistory.filter(
+      (p) => new Date(`${String(p.date).slice(0, 10)}T12:00:00`) >= cutoff,
+    );
+    const series = recent.length >= 2 ? recent : netWorthHistory;
+    const first = series[0].total;
+    const last = series[series.length - 1].total;
     if (!first) return null;
     return {
       pct: Math.round(((last - first) / Math.abs(first)) * 1000) / 10,
@@ -513,13 +520,15 @@ export default function FinancesScreen() {
     if (propertyTotal > 0) segments.push({ label: 'Property', pct: Math.round((propertyTotal / totalAssets) * 100), color: CATEGORY_COLORS.property, amount: formatCompact(propertyTotal) });
     if (investmentTotal > 0) segments.push({ label: 'Investments', pct: Math.round((investmentTotal / totalAssets) * 100), color: CATEGORY_COLORS.investments, amount: formatCompact(investmentTotal) });
     if (cashTotal > 0) segments.push({ label: 'Cash', pct: Math.round((cashTotal / totalAssets) * 100), color: CATEGORY_COLORS.cash, amount: formatCompact(cashTotal) });
-    // Adjust last segment so total = 100
-    if (segments.length > 0) {
-      const assigned = segments.reduce((s, seg) => s + seg.pct, 0);
+    // Drop slices that round to 0% — they draw a stray cap dot and a "0%"
+    // legend row. Then reconcile the last slice so the visible set sums to 100.
+    const visible = segments.filter((seg) => seg.pct > 0);
+    if (visible.length > 0) {
+      const assigned = visible.reduce((s, seg) => s + seg.pct, 0);
       const diff = 100 - assigned;
-      if (diff !== 0) segments[segments.length - 1].pct += diff;
+      if (diff !== 0) visible[visible.length - 1].pct += diff;
     }
-    return segments;
+    return visible;
   }, [totalAssets, propertyTotal, investmentTotal, cashTotal]);
 
   // ── Cash flow (this-month real; prior months only when real history exists) ──
@@ -812,7 +821,7 @@ export default function FinancesScreen() {
                           </Text>
                         </View>
                         <Text style={styles.deltaSubtext}>
-                          · {netWorthDelta.amount >= 0 ? '+' : ''}{formatCompact(netWorthDelta.amount)} this month
+                          · {netWorthDelta.amount >= 0 ? '+' : ''}{formatCompact(netWorthDelta.amount)} past 30 days
                         </Text>
                       </View>
                     )}

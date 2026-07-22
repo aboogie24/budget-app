@@ -318,6 +318,48 @@ func GetBudgetByID(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(b)
 }
 
+// occurrencesInMonth returns how many times a budget with the given start date
+// and frequency lands inside [monthStart, monthEnd). Weekly/biweekly cadences
+// count real calendar occurrences (anchored to start_date when set, else the
+// 1st of the month) rather than a flat ×4/×2, so months with 5 paydays don't
+// drift from actuals. Shared by GetBudgetSummary and the dashboard status
+// signals — the two must agree or the dashboard and budget tab show different
+// planned totals.
+func occurrencesInMonth(startDate *time.Time, frequency string, monthStart, monthEnd time.Time) int {
+	if startDate != nil && !startDate.Before(monthEnd) {
+		return 0
+	}
+	switch frequency {
+	case "weekly", "biweekly":
+		step := 7
+		if frequency == "biweekly" {
+			step = 14
+		}
+		anchor := monthStart
+		if startDate != nil {
+			anchor = *startDate
+		}
+		current := anchor
+		if current.Before(monthStart) {
+			// Advance to the first occurrence at or after monthStart, keeping
+			// the anchor's cadence phase.
+			days := int(monthStart.Sub(current).Hours() / 24)
+			steps := (days + step - 1) / step
+			current = current.AddDate(0, 0, steps*step)
+		}
+		count := 0
+		for current.Before(monthEnd) {
+			count++
+			current = current.AddDate(0, 0, step)
+		}
+		return count
+	case "1st-15th":
+		return 2
+	default:
+		return 1
+	}
+}
+
 // GetBudgetSummary returns budget-vs-actual spending per category for a
 // given month/year. One endpoint replaces three separate frontend calls.
 func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
@@ -836,19 +878,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	countOccurrences := func(startDate *time.Time, freq string) int {
-		if startDate != nil && startDate.After(monthEnd) {
-			return 0
-		}
-		switch freq {
-		case "weekly":
-			return 4
-		case "biweekly":
-			return 2
-		case "1st-15th":
-			return 2
-		default:
-			return 1
-		}
+		return occurrencesInMonth(startDate, freq, monthStart, monthEnd)
 	}
 
 	var summaries []budgetSummary

@@ -45,23 +45,26 @@ export function Sparkline({
 
   const min = Math.min(...values);
   const max = Math.max(...values);
+  const flat = max === min;
   const range = max - min || 1;
 
   const padding = 2;
-  const usableW = width;
+  const usableW = width - padding * 2;
   const usableH = height - padding * 2;
 
   const points = values
     .map((v, i) => {
-      const x = (i / (values.length - 1)) * usableW;
-      const y = padding + (1 - (v - min) / range) * usableH;
+      const x = padding + (i / (values.length - 1)) * usableW;
+      // A flat series sits at vertical center — normalizing it to the floor
+      // reads as "bottomed out" instead of "no change".
+      const y = flat ? height / 2 : padding + (1 - (v - min) / range) * usableH;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(' ');
 
   return (
     <Svg width={width} height={height}>
-      <Polygon points={`0,${height} ${points} ${usableW},${height}`} fill={stroke} fillOpacity={0.15} />
+      <Polygon points={`${padding},${height} ${points} ${padding + usableW},${height}`} fill={stroke} fillOpacity={0.15} />
       <Polyline
         points={points}
         fill="none"

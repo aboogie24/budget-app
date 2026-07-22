@@ -130,16 +130,31 @@ func computeSignals(conn *sql.DB, ids []string) dashboardSignals {
 		  AND id NOT IN (SELECT transaction_id FROM bill_payments WHERE transaction_id IS NOT NULL)
 	`, pq.Array(ids)).Scan(&s.SpentMonth)
 
-	_ = conn.QueryRow(`
-		SELECT COALESCE(SUM(
-			CASE frequency
-				WHEN 'weekly'   THEN amount * 4
-				WHEN 'biweekly' THEN amount * 2
-				WHEN '1st-15th' THEN amount * 2
-				ELSE amount
-			END), 0)
+	// Budgeted this month — counts real calendar occurrences per cadence via
+	// occurrencesInMonth so this figure matches GetBudgetSummary exactly.
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	if budgetRows, err := conn.Query(`
+		SELECT amount, COALESCE(frequency, ''), start_date
 		FROM budgets WHERE user_id = ANY($1) AND type = 'expense'
-	`, pq.Array(ids)).Scan(&s.BudgetedMonth)
+	`, pq.Array(ids)); err == nil {
+		for budgetRows.Next() {
+			var (
+				amount float64
+				freq   string
+				start  sql.NullTime
+			)
+			if budgetRows.Scan(&amount, &freq, &start) == nil {
+				var startPtr *time.Time
+				if start.Valid {
+					startPtr = &start.Time
+				}
+				s.BudgetedMonth += amount * float64(occurrencesInMonth(startPtr, freq, monthStart, monthEnd))
+			}
+		}
+		budgetRows.Close()
+	}
 	// No budget set → we can't say they're "over" nothing; treat as within.
 	s.WithinBudget = s.BudgetedMonth <= 0 || s.SpentMonth <= s.BudgetedMonth
 

@@ -42,6 +42,24 @@ export const colors = {
   glassStrong: 'rgba(255,255,255,0.12)',
 };
 
+// ─── CHART CATEGORICAL PALETTE ───
+// Fixed-order series hues for charts. Deliberately EXCLUDES the status tokens
+// (success/warning/error) so a category never accidentally reads as
+// "over budget" or "income". Validated against the dark surface (#0f172a):
+// lightness band, chroma floor, adjacent-pair CVD separation (worst ΔE 13.4),
+// ≥3:1 contrast. Assign by index in fixed order — never cycle; overflow folds
+// into "Other".
+export const chartCategorical = [
+  '#a855f7', // purple (brand)
+  '#0d9488', // teal
+  '#d55181', // magenta
+  '#3987e5', // blue
+  '#d95926', // orange
+  '#9085e9', // violet
+  '#0891b2', // cyan
+  '#c98500', // gold
+] as const;
+
 // ─── GRADIENT DEFINITIONS ───
 export const gradients = {
   // Background gradients

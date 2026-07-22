@@ -245,8 +245,11 @@ export default function CalendarScreen() {
         while (cur < monthStart) cur.setDate(cur.getDate() + step);
         while (cur <= monthEnd) { addEntry(new Date(cur), item); cur.setDate(cur.getDate() + step); }
       } else if (f === 'monthly') {
+        // Clamp day 29-31 to the displayed month's length — setDate(31) in a
+        // 30-day month rolls into the next month and the entry silently drops.
+        const daysInMonth = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
         const d = new Date(monthStart);
-        d.setDate(startDate.getDate());
+        d.setDate(Math.min(startDate.getDate(), daysInMonth));
         if (d <= monthEnd) addEntry(d, item);
       } else if (f === '1st-15th') {
         const d1 = new Date(monthStart); d1.setDate(1); addEntry(d1, item);
@@ -303,7 +306,10 @@ export default function CalendarScreen() {
         // suppress the scheduled bill so it isn't double-counted. paidBillIds is
         // month-accurate; paid_this_period is a current-period fallback.
         if (paidBillIds.has(String(bill.id)) || bill.paid_this_period) return;
-        const billDate = new Date(monthStart.getFullYear(), monthStart.getMonth(), bill.due_day);
+        // Clamp due_day 29-31 to the month's last day — otherwise the Date
+        // rolls into next month and the bill vanishes from short months.
+        const dim = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+        const billDate = new Date(monthStart.getFullYear(), monthStart.getMonth(), Math.min(bill.due_day, dim));
         if (billDate > monthEnd) return;
         expandFrequency(billDate, bill.frequency || 'monthly', {
           id: bill.id || bill.name, name: bill.name || 'Bill', amount: bill.amount_due || 0,

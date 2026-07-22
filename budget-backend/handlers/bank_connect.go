@@ -301,6 +301,14 @@ func GetBankProviders(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// SimpleFIN needs no app-level config — the user supplies a setup token
+	// from their own SimpleFIN Bridge account.
+	providers = append(providers, map[string]interface{}{
+		"name":        "simplefin",
+		"label":       "SimpleFIN",
+		"description": "Bring your own SimpleFIN Bridge token",
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(providers)
 }

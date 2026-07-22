@@ -85,6 +85,9 @@ func SetupRoutes(r *mux.Router) {
 
 	// Teller (bank connection)
 	authRoutes.HandleFunc("/teller/connect", handlers.TellerConnect).Methods("POST")
+
+	// SimpleFIN (bank connection via user-supplied setup token)
+	authRoutes.HandleFunc("/simplefin/connect", handlers.SimpleFINConnect).Methods("POST")
 	authRoutes.HandleFunc("/plaid/sync", handlers.SyncTransactions(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.SyncInvestments(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.GetInvestmentHoldings).Methods("GET")

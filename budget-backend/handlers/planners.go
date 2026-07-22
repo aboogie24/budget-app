@@ -254,7 +254,8 @@ func ListDebts(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	rows, err := client.Query(`
-		SELECT id, user_id, COALESCE(household_id::text, ''), name, balance, apr, min_payment, due_day,
+		SELECT id, user_id, COALESCE(household_id::text, ''), name, balance,
+		       COALESCE(original_balance, balance), apr, min_payment, due_day,
 		       COALESCE(strategy, ''), is_shared, COALESCE(source, 'manual'),
 		       COALESCE(debt_category, 'attack'), COALESCE(liability_type, 'other'), asset_depreciates
 		FROM debt_accounts
@@ -275,7 +276,7 @@ func ListDebts(w http.ResponseWriter, r *http.Request) {
 			dueDay sql.NullInt32
 			hhID   string
 		)
-		if err := rows.Scan(&d.ID, &d.UserID, &hhID, &d.Name, &d.Balance, &d.APR, &d.MinPayment, &dueDay, &d.Strategy, &d.IsShared, &d.Source, &d.DebtCategory, &d.LiabilityType, &d.AssetDepreciates); err != nil {
+		if err := rows.Scan(&d.ID, &d.UserID, &hhID, &d.Name, &d.Balance, &d.OriginalBalance, &d.APR, &d.MinPayment, &dueDay, &d.Strategy, &d.IsShared, &d.Source, &d.DebtCategory, &d.LiabilityType, &d.AssetDepreciates); err != nil {
 			log.Printf("ListDebts scan error: %v", err)
 			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
@@ -354,9 +355,9 @@ func CreateDebt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = client.Exec(`
-		INSERT INTO debt_accounts (id, user_id, household_id, name, balance, apr, min_payment, due_day, strategy, is_shared, debt_category, liability_type, asset_depreciates)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-	`, d.ID, d.UserID, hhVal, d.Name, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, d.DebtCategory, d.LiabilityType, d.AssetDepreciates)
+		INSERT INTO debt_accounts (id, user_id, household_id, name, balance, original_balance, apr, min_payment, due_day, strategy, is_shared, debt_category, liability_type, asset_depreciates)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+	`, d.ID, d.UserID, hhVal, d.Name, d.Balance, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, d.DebtCategory, d.LiabilityType, d.AssetDepreciates)
 	if err != nil {
 		log.Printf("CreateDebt insert error: %v", err)
 		http.Error(w, "Insert error: "+err.Error(), http.StatusInternalServerError)
@@ -387,9 +388,13 @@ func UpdateDebt(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
+	// A manual balance edit above the recorded opening balance means the debt
+	// grew (new charges, corrected entry) — raise the baseline so "% paid"
+	// never reads negative.
 	res, err := client.Exec(`
 		UPDATE debt_accounts
-		SET name=$1, balance=$2, apr=$3, min_payment=$4, due_day=$5, strategy=$6, is_shared=$7
+		SET name=$1, balance=$2, apr=$3, min_payment=$4, due_day=$5, strategy=$6, is_shared=$7,
+		    original_balance = GREATEST(COALESCE(original_balance, $2), $2)
 		WHERE id=$8
 	`, d.Name, d.Balance, d.APR, d.MinPayment, d.DueDay, d.Strategy, d.IsShared, debtID)
 	if err != nil {

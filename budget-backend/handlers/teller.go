@@ -214,6 +214,17 @@ func TellerConnect(w http.ResponseWriter, r *http.Request) {
 			log.Printf("teller: initial transaction sync failed for %s: %v", linkedID, serr)
 		} else {
 			log.Printf("teller: initial sync completed, %d transactions for %s", synced, linkedID)
+			// Auto-run the LLM categorization fallback over whatever the
+			// deterministic rules couldn't place — a freshly linked account
+			// arrives categorized without the user pressing anything. Skipped
+			// silently when no API key is configured.
+			if synced > 0 {
+				if m, c, a, aerr := RunAICategorization(bg, userID); aerr != nil {
+					log.Printf("teller: post-sync AI categorization failed for %s: %v", linkedID, aerr)
+				} else if m > 0 {
+					log.Printf("teller: post-sync AI categorization for %s: merchants=%d classified=%d applied=%d", linkedID, m, c, a)
+				}
+			}
 		}
 		if updated, berr := provider.SyncBalances(bg.Conn, acct); berr != nil {
 			log.Printf("teller: initial balance sync failed for %s: %v", linkedID, berr)

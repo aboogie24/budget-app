@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -46,6 +47,34 @@ func AICategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dbClient.Close()
 
+	merchants, classified, applied, err := RunAICategorization(dbClient, userID)
+	if err != nil {
+		log.Printf("ai-categorize: %v", err)
+		http.Error(w, "AI classification failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	log.Printf("ai-categorize: user=%s merchants=%d classified=%d applied=%d", userID, merchants, classified, applied)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{
+		"merchants":  merchants,
+		"classified": classified,
+		"applied":    applied,
+	})
+}
+
+// RunAICategorization is the reusable core of the LLM categorization fallback.
+// It is called by the HTTP handler above and automatically after a bank sync
+// (see handlers/teller.go) so freshly linked accounts categorize without the
+// user having to press anything. Returns (merchants considered, classified,
+// transactions updated). A missing API key returns (0,0,0,nil) — silently
+// skipping is correct for the background path.
+func RunAICategorization(dbClient *db.DB, userID string) (int, int, int, error) {
+	client := ai.NewClient()
+	if !client.IsAvailable() {
+		return 0, 0, 0, nil
+	}
+
 	var householdID *string
 	if hh := db.ResolveHouseholdID(dbClient.Conn, userID); hh != "" {
 		householdID = &hh
@@ -65,9 +94,7 @@ func AICategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 		LIMIT $2
 	`, userID, aiCategorizeMaxMerchants)
 	if err != nil {
-		log.Printf("ai-categorize: query merchants: %v", err)
-		http.Error(w, "Failed to load transactions", http.StatusInternalServerError)
-		return
+		return 0, 0, 0, fmt.Errorf("query merchants: %w", err)
 	}
 	var merchants []categories.MerchantInput
 	for rows.Next() {
@@ -80,9 +107,7 @@ func AICategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 
 	if len(merchants) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{"merchants": 0, "classified": 0, "applied": 0})
-		return
+		return 0, 0, 0, nil
 	}
 
 	// 2. Categories Claude may choose from — system defaults + the user's own.
@@ -93,9 +118,7 @@ func AICategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 		WHERE c.user_id IS NULL OR c.user_id = $1
 	`, userID)
 	if err != nil {
-		log.Printf("ai-categorize: query categories: %v", err)
-		http.Error(w, "Failed to load categories", http.StatusInternalServerError)
-		return
+		return 0, 0, 0, fmt.Errorf("query categories: %w", err)
 	}
 	var cats []categories.CategoryOption
 	validCat := map[string]bool{}
@@ -108,8 +131,7 @@ func AICategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	catRows.Close()
 	if len(cats) == 0 {
-		http.Error(w, "No categories available", http.StatusInternalServerError)
-		return
+		return 0, 0, 0, fmt.Errorf("no categories available")
 	}
 
 	// 3. Classify in batches; cache each answer as a rule and apply it.
@@ -122,9 +144,7 @@ func AICategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 
 		results, cerr := categories.ClassifyMerchants(client, merchants[start:end], cats)
 		if cerr != nil {
-			log.Printf("ai-categorize: classify batch: %v", cerr)
-			http.Error(w, "AI classification failed: "+cerr.Error(), http.StatusBadGateway)
-			return
+			return len(merchants), classified, applied, fmt.Errorf("classify batch: %w", cerr)
 		}
 
 		for _, res := range results {
@@ -156,11 +176,5 @@ func AICategorizeTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("ai-categorize: user=%s merchants=%d classified=%d applied=%d", userID, len(merchants), classified, applied)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{
-		"merchants":  len(merchants),
-		"classified": classified,
-		"applied":    applied,
-	})
+	return len(merchants), classified, applied, nil
 }
