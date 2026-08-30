@@ -17,4 +17,3 @@ UPDATE debt_accounts SET liability_type = 'student', debt_category = 'attack'
 -- Index for category queries
 CREATE INDEX IF NOT EXISTS idx_debt_accounts_category ON debt_accounts(user_id, debt_category);
 
-GRANT ALL ON debt_accounts TO youruser;

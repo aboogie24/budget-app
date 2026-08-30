@@ -15,4 +15,3 @@ UPDATE liabilities SET asset_depreciates = false WHERE liability_type = 'mortgag
 CREATE INDEX IF NOT EXISTS idx_liabilities_user_category ON liabilities(user_id, debt_category);
 CREATE INDEX IF NOT EXISTS idx_liabilities_type ON liabilities(liability_type);
 
-GRANT ALL ON liabilities TO youruser;
