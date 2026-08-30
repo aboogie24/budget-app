@@ -1,20 +1,24 @@
 package handlers
 
 import (
+	"crypto/rsa"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aboogie/budget-backend/auth"
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/middleware"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
@@ -84,24 +88,24 @@ func AppleOAuth(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IdentityToken string `json:"identity_token"`
 		FullName      string `json:"full_name"`
-		Email         string `json:"email"` // Apple sends email only on first sign-in
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IdentityToken == "" {
 		http.Error(w, "identity_token is required", http.StatusBadRequest)
 		return
 	}
 
-	claims, err := decodeAppleToken(req.IdentityToken)
+	claims, err := verifyAppleToken(req.IdentityToken)
 	if err != nil {
 		log.Printf("Apple token verification failed: %v", err)
 		http.Error(w, "Invalid Apple token", http.StatusUnauthorized)
 		return
 	}
 
+	// Only the email from the verified token is trusted: users are matched
+	// by email, so a caller-supplied fallback would let any valid token log
+	// into an arbitrary account. Apple always includes the email claim when
+	// the app requests the email scope.
 	email := claims.Email
-	if email == "" {
-		email = req.Email // fallback to request body (first sign-in only)
-	}
 	if email == "" {
 		http.Error(w, "Could not determine email from Apple token", http.StatusBadRequest)
 		return
@@ -225,9 +229,10 @@ func verifyGoogleToken(idToken string) (*googleTokenInfo, error) {
 		return nil, fmt.Errorf("invalid issuer: %s", info.Iss)
 	}
 
-	// Validate audience matches our Google client ID (if configured)
-	expectedClientID := os.Getenv("GOOGLE_CLIENT_ID")
-	if expectedClientID != "" && info.Aud != expectedClientID {
+	// Validate audience matches one of our Google client IDs (if configured).
+	// GOOGLE_CLIENT_ID is comma-separated: with Expo, the token's aud is the
+	// client ID of the requesting platform (iOS / Android / web).
+	if !audAllowed(info.Aud, os.Getenv("GOOGLE_CLIENT_ID")) {
 		return nil, fmt.Errorf("token audience mismatch")
 	}
 
@@ -239,6 +244,93 @@ func verifyGoogleToken(idToken string) (*googleTokenInfo, error) {
 	return &info, nil
 }
 
+// audAllowed reports whether aud matches any of the comma-separated client
+// IDs in configured. An empty configuration disables the check.
+func audAllowed(aud, configured string) bool {
+	if strings.TrimSpace(configured) == "" {
+		return true
+	}
+	for _, id := range strings.Split(configured, ",") {
+		if id = strings.TrimSpace(id); id != "" && id == aud {
+			return true
+		}
+	}
+	return false
+}
+
+// appleJWKSURL is a var so tests can point it at a fake JWKS server.
+var appleJWKSURL = "https://appleid.apple.com/auth/keys"
+
+// appleKeyCache caches Apple's signing keys by kid, refetching the JWKS
+// when an unknown kid shows up (key rotation) at most once per minute.
+type appleKeyCache struct {
+	mu        sync.Mutex
+	keys      map[string]*rsa.PublicKey
+	fetchedAt time.Time
+}
+
+var appleKeys appleKeyCache
+
+func (c *appleKeyCache) key(kid string) (*rsa.PublicKey, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if k, ok := c.keys[kid]; ok {
+		return k, nil
+	}
+	if c.keys != nil && time.Since(c.fetchedAt) < time.Minute {
+		return nil, fmt.Errorf("unknown Apple key id %q", kid)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(appleJWKSURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch Apple JWKS: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Apple JWKS returned status %d", resp.StatusCode)
+	}
+
+	var jwks struct {
+		Keys []struct {
+			Kty string `json:"kty"`
+			Kid string `json:"kid"`
+			N   string `json:"n"`
+			E   string `json:"e"`
+		} `json:"keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return nil, fmt.Errorf("failed to parse Apple JWKS: %w", err)
+	}
+
+	keys := make(map[string]*rsa.PublicKey, len(jwks.Keys))
+	for _, k := range jwks.Keys {
+		if k.Kty != "RSA" {
+			continue
+		}
+		nBytes, err := base64.RawURLEncoding.DecodeString(k.N)
+		if err != nil {
+			continue
+		}
+		eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
+		if err != nil {
+			continue
+		}
+		keys[k.Kid] = &rsa.PublicKey{
+			N: new(big.Int).SetBytes(nBytes),
+			E: int(new(big.Int).SetBytes(eBytes).Int64()),
+		}
+	}
+	c.keys = keys
+	c.fetchedAt = time.Now()
+
+	if k, ok := c.keys[kid]; ok {
+		return k, nil
+	}
+	return nil, fmt.Errorf("unknown Apple key id %q", kid)
+}
+
 // appleTokenClaims holds the fields we extract from an Apple identity token.
 type appleTokenClaims struct {
 	Iss   string `json:"iss"`
@@ -247,44 +339,52 @@ type appleTokenClaims struct {
 	Email string `json:"email"`
 }
 
-// decodeAppleToken decodes the payload of an Apple identity JWT.
-// For production hardening, verify the signature against Apple's JWKS.
-func decodeAppleToken(tokenStr string) (*appleTokenClaims, error) {
-	parts := strings.Split(tokenStr, ".")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("invalid JWT format")
-	}
-
-	// Decode the payload (second segment, base64url-encoded)
-	payload := parts[1]
-	// Add padding if needed
-	switch len(payload) % 4 {
-	case 2:
-		payload += "=="
-	case 3:
-		payload += "="
-	}
-
-	decoded, err := base64.URLEncoding.DecodeString(payload)
+// verifyAppleToken verifies an Apple identity JWT: RS256 signature against
+// Apple's published JWKS, issuer, expiry, and (if APPLE_BUNDLE_ID is set)
+// audience.
+func verifyAppleToken(tokenStr string) (*appleTokenClaims, error) {
+	token, err := jwt.Parse(tokenStr,
+		func(t *jwt.Token) (any, error) {
+			kid, _ := t.Header["kid"].(string)
+			if kid == "" {
+				return nil, fmt.Errorf("token has no kid header")
+			}
+			return appleKeys.key(kid)
+		},
+		jwt.WithValidMethods([]string{"RS256"}),
+		jwt.WithIssuer("https://appleid.apple.com"),
+		jwt.WithExpirationRequired(),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode token payload: %w", err)
+		return nil, err
 	}
 
-	var claims appleTokenClaims
-	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return nil, fmt.Errorf("failed to parse token claims: %w", err)
-	}
-
-	// Validate issuer
-	if claims.Iss != "https://appleid.apple.com" {
-		return nil, fmt.Errorf("invalid Apple issuer: %s", claims.Iss)
+	mc, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("unexpected claims type")
 	}
 
 	// Validate audience if configured
-	expectedBundleID := os.Getenv("APPLE_BUNDLE_ID")
-	if expectedBundleID != "" && claims.Aud != expectedBundleID {
-		return nil, fmt.Errorf("token audience mismatch")
+	if expected := os.Getenv("APPLE_BUNDLE_ID"); expected != "" {
+		auds, _ := mc.GetAudience()
+		found := false
+		for _, aud := range auds {
+			if aud == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("token audience mismatch")
+		}
 	}
 
-	return &claims, nil
+	sub, _ := mc.GetSubject()
+	email, _ := mc["email"].(string)
+	aud, _ := mc.GetAudience()
+	claims := &appleTokenClaims{Sub: sub, Email: email, Iss: "https://appleid.apple.com"}
+	if len(aud) > 0 {
+		claims.Aud = aud[0]
+	}
+	return claims, nil
 }
