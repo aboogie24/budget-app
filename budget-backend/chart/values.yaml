@@ -15,6 +15,9 @@ imagePullSecrets: []
 service:
   type: ClusterIP
   port: 8080
+  # For homelab access from other devices: set type=NodePort and pin the
+  # port (30000-32767) so the URL stays stable across upgrades.
+  nodePort: ""
 
 ingress:
   enabled: false
