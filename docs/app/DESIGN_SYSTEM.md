@@ -1,6 +1,6 @@
 # CoupleFlow Design System
 
-A centralized, glassmorphic design system for the CoupleFlow budget app, aligned with the coupleflow-prototype.jsx vision.
+A centralized, glassmorphic design system for the CoupleFlow budget app, aligned with the coupleflow-prototype.jsx vision (budget-app/docs/design/mockups/).
 
 ## Overview
 
@@ -226,7 +226,7 @@ getSemanticColor('info')     // colors.info
 3. **Use GradientBackground for screens** — Provides consistent background
 4. **Use spacing utilities** — For consistent padding/margins
 5. **Use typography styles** — For consistent text sizing
-6. **Reference the prototype** — Check coupleflow-prototype.jsx for visual guidance
+6. **Reference the prototype** — Check docs/design/mockups/coupleflow-prototype.jsx for visual guidance
 
 ## Migration Guide
 

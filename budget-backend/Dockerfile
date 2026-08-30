@@ -1,5 +1,5 @@
 # Use Go base image
-FROM golang:1.23-alpine as builder
+FROM golang:1.23-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -21,13 +21,20 @@ RUN go build -o budget-app-backend main.go
 # Use minimal runtime image
 FROM alpine:latest
 
+# TLS trust store (Plaid/Teller/Anthropic calls) + timezone data
+RUN apk add --no-cache ca-certificates tzdata
+
 WORKDIR /root/
 
 # Copy compiled binary from builder
 COPY --from=builder /app/budget-app-backend .
 
-# Copy .env if needed (optional)
-COPY .env .
+# Ship migrations so a deploy can run them (e.g. migrate/migrate pointed
+# at this path, or a bind from the image)
+COPY --from=builder /app/migrations ./migrations
+
+# Configuration comes from runtime environment variables (docker compose
+# env_file / -e) — never bake a .env into the image.
 
 # Set environment variable to configure port (optional)
 ENV PORT=8080

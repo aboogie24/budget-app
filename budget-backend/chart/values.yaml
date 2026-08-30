@@ -1,27 +1,101 @@
 replicaCount: 1
 
 image:
-  repository: your-registry/budget-app-backend
-  tag: latest
+  repository: ghcr.io/aboogie24/budget-app/api
+  # Defaults to the chart's appVersion (the API release tag)
+  tag: ""
   pullPolicy: IfNotPresent
+
+# GHCR is private by default — create a pull secret and list it here:
+#   kubectl create secret docker-registry ghcr-pull \
+#     --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>
+imagePullSecrets: []
+#  - name: ghcr-pull
 
 service:
   type: ClusterIP
   port: 8080
 
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: api.example.com
+  tls: []
+  #  - secretName: budget-api-tls
+  #    hosts: [api.example.com]
+
+# Gateway API alternative to Ingress (needs the HTTPRoute CRDs and a
+# Gateway in the cluster, e.g. cilium/envoy-gateway/traefik).
+httpRoute:
+  enabled: false
+  annotations: {}
+  # Which Gateway(s) to attach to:
+  parentRefs:
+    - name: my-gateway
+      namespace: ""    # omit → same namespace as the release
+      sectionName: ""  # omit → all listeners
+  hostnames:
+    - api.example.com
+
+# Plain (non-secret) environment for the API container.
 env:
   PORT: "8080"
-  DB_HOST: budget-app-backend-postgresql
-  DB_PORT: "5432"
-  DB_NAME: budget
-  DB_USER: budget_user
-  DB_PASSWORD: budget_pass
+  PLAID_ENV: sandbox
+
+# Secret environment, rendered into a Secret and injected via envFrom.
+# Set real values per-install (-f secrets.values.yaml or --set), or leave
+# empty and use existingSecret instead.
+secretEnv: {}
+#  JWT_SECRET: ""
+#  SESSION_SECRET: ""
+#  PLAID_CLIENT_ID: ""
+#  PLAID_SECRET: ""
+#  ANTHROPIC_API_KEY: ""
+#  TAVILY_API_KEY: ""
+#  GOOGLE_CLIENT_ID: ""
+#  APPLE_BUNDLE_ID: ""
+
+# Name of a pre-created Secret with the variables above (used via envFrom
+# in addition to secretEnv; prefer this so secrets stay out of values files).
+existingSecret: ""
+
+# Database migrations run as init containers before the API starts:
+# the migrations dir is copied out of the API image and applied with
+# golang-migrate once Postgres is reachable.
+migrations:
+  enabled: true
+  image: migrate/migrate:v4.18.3
+  waitImage: busybox:1.36
 
 resources: {}
+#  requests: { cpu: 100m, memory: 128Mi }
+#  limits: { memory: 512Mi }
 
+# ─── Database ────────────────────────────────────────────────
+# Bundled PostgreSQL (Bitnami subchart). PG_* env for the API and the
+# migration job are derived automatically from these values.
 postgresql:
   enabled: true
   auth:
     username: budget_user
+    # CHANGE THIS per install (--set postgresql.auth.password=... or a
+    # values override); it lands in the <release>-postgresql Secret.
     password: budget_pass
-    database: budget
+    database: budget_db
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+  # charts.bitnami.com images were migrated off docker.io/bitnami in
+  # Aug 2025. If the default tag fails to pull, uncomment:
+  # image:
+  #   repository: bitnamilegacy/postgresql
+
+# Used when postgresql.enabled=false (bring your own database).
+# The password must then be provided as PG_PASS via secretEnv/existingSecret.
+externalDatabase:
+  host: ""
+  port: 5432
+  user: budget_user
+  database: budget_db

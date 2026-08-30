@@ -4,7 +4,7 @@ import { StyleSheet, ViewStyle, TextStyle, Dimensions } from 'react-native';
  * CoupleFlow Design System
  *
  * Centralized theme, colors, and glassmorphic styling utilities
- * aligned with coupleflow-prototype.jsx design vision
+ * aligned with docs/design/mockups/coupleflow-prototype.jsx design vision
  */
 
 // ─── COLOR PALETTE ───

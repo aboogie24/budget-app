@@ -1,0 +1,20 @@
+CoupleFlow API {{ .Chart.AppVersion }} deployed.
+
+Service: {{ include "budget-api.fullname" . }}:{{ .Values.service.port }} ({{ .Values.service.type }})
+{{- if .Values.postgresql.enabled }}
+Database: bundled PostgreSQL ({{ .Release.Name }}-postgresql), credentials in
+Secret "{{ .Release.Name }}-postgresql".
+{{- else }}
+Database: external at {{ .Values.externalDatabase.host }}:{{ .Values.externalDatabase.port }}
+(remember to provide PG_PASS via secretEnv/existingSecret).
+{{- end }}
+
+Quick check:
+  kubectl port-forward svc/{{ include "budget-api.fullname" . }} 8080:{{ .Values.service.port }}
+  curl -i http://localhost:8080/
+
+{{- if not (or .Values.secretEnv .Values.existingSecret) }}
+
+WARNING: no app secrets configured (JWT_SECRET etc.). Set secretEnv or
+existingSecret before real use.
+{{- end }}

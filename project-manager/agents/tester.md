@@ -81,7 +81,7 @@ Since we can't take screenshots in this environment, describe what the screen sh
 - Layout structure (header, body, cards, lists)
 - Color scheme adherence (dark bg, purple accents)
 - Interactive elements (buttons, inputs, toggles)
-- Compare against `coupleflow-prototype.jsx` if relevant
+- Compare against `budget-app/docs/design/mockups/coupleflow-prototype.jsx` if relevant
 
 ## Output Format
 

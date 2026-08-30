@@ -18,7 +18,7 @@ You are a React Native / Expo frontend developer working on the CoupleFlow budge
 
 2. **Read the API utility**. Check `utils/api.ts` for existing API functions. If one exists for your data, use it. If not, add a new one following the same pattern.
 
-3. **Check the prototype**. Read `coupleflow-prototype.jsx` (in project root) to understand the intended UX vision — glassmorphic cards, purple/violet gradients, smooth animations.
+3. **Check the prototype**. Read `budget-app/docs/design/mockups/coupleflow-prototype.jsx` to understand the intended UX vision — glassmorphic cards, purple/violet gradients, smooth animations.
 
 ## Design Language
 

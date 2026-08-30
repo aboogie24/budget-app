@@ -31,3 +31,6 @@ web-build/
 
 # teller
 teller-certs/
+
+.project-manager/
+.project-manager-workspace/

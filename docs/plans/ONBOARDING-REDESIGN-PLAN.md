@@ -4,7 +4,7 @@
 
 Redesign the onboarding flow from the current 6-screen scattered approach into a streamlined, consolidated experience. The new flow removes unnecessary screens (theme-select, partner-mode as standalone pages) and adds the CoupleFlow Method introduction as the final onboarding step.
 
-**Reference mockup:** `onboarding-screen-redesign.jsx` (React web mockup — must be translated to React Native)
+**Reference mockup:** `budget-app/docs/design/mockups/onboarding-screen-redesign.jsx` (React web mockup — must be translated to React Native)
 
 ---
 

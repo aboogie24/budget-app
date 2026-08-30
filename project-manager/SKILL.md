@@ -27,7 +27,7 @@ Before your first task, orient yourself. Read these files to understand the curr
 - **Tracker**: `tracker.html` in the project root — contains all tasks, phases, statuses, and priorities as a JavaScript data structure. Parse the `tasks` array to get current state.
 - **Frontend**: `budget-app/` — React Native/Expo app with file-based routing (`app/` directory)
 - **Backend**: `budget-backend/` — Go API with `handlers/`, `models/`, `routes/`, `migrations/`
-- **Prototypes**: `coupleflow-prototype.jsx` and `budgeting-app-ux.jsx` — the UX vision to align with
+- **Prototypes**: `budget-app/docs/design/mockups/coupleflow-prototype.jsx` and `budget-app/docs/design/mockups/budgeting-app-ux.jsx` — the UX vision to align with
 
 Key architecture details:
 - Frontend uses Expo Router (file-based routing under `app/`)
@@ -127,7 +127,7 @@ For each completed task, write a brief test to confirm the feature actually work
 - **Database changes**: Verify migration files are syntactically valid SQL
 
 ### Visual Review
-For frontend tasks, describe what the screen should look like based on the code. If the prototype files (`coupleflow-prototype.jsx`) define a visual for this feature, compare against it and note any gaps.
+For frontend tasks, describe what the screen should look like based on the code. If the prototype files (`budget-app/docs/design/mockups/coupleflow-prototype.jsx`) define a visual for this feature, compare against it and note any gaps.
 
 ## Step 4: Update the Tracker
 

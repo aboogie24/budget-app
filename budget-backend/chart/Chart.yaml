@@ -1,11 +1,15 @@
 apiVersion: v2
-name: budget-app-backend
-description: A Helm chart for the budget API backend
+name: budget-api
+description: CoupleFlow budget API + PostgreSQL
 type: application
-version: 0.1.0
-appVersion: "1.0.0"
+version: 0.2.0
+# Tracks the API release tag (see .github/workflows/release-api.yml);
+# image.tag defaults to this. Overwritten by the release workflow via
+# `helm package --app-version`.
+appVersion: "v0.0.1"
 
 dependencies:
   - name: postgresql
     version: 16.6.6
     repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled

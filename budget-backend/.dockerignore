@@ -1,0 +1,10 @@
+# Never send secrets or local state into the build context
+.env
+.env.*
+!.env.example
+
+# Not needed in the image
+e2e/
+scripts/
+*.md
+.git
