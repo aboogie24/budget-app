@@ -15,8 +15,11 @@ RUN go mod download
 # Copy the rest of the application
 COPY . .
 
+# Release version, stamped into the /health response
+ARG VERSION=dev
+
 # Build the Go app
-RUN go build -o budget-app-backend main.go
+RUN go build -ldflags "-X github.com/aboogie/budget-backend/handlers.Version=${VERSION}" -o budget-app-backend main.go
 
 # Use minimal runtime image
 FROM alpine:latest

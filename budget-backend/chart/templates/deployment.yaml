@@ -82,8 +82,12 @@ spec:
           ports:
             - name: http
               containerPort: {{ int .Values.env.PORT | default 8080 }}
+          # Readiness checks /health (includes a DB ping) so traffic stops
+          # when Postgres is unreachable; liveness stays TCP-only because
+          # restarting the API cannot fix a down database.
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10

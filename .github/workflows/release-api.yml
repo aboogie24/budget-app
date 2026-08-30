@@ -90,6 +90,8 @@ jobs:
           context: budget-backend
           platforms: linux/amd64,linux/arm64
           push: ${{ !inputs.dry_run }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.next }}
           tags: |
             ${{ env.IMAGE }}:${{ steps.version.outputs.next }}
             ${{ env.IMAGE }}:latest

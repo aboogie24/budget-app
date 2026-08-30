@@ -33,6 +33,9 @@ func SetupRoutes(r *mux.Router) {
 	r.Use(middleware.RecoveryMiddleware)
 	r.Use(middleware.Logging)
 
+	// Public health check (readiness probes, deploy verification)
+	r.HandleFunc("/health", handlers.HealthCheck).Methods("GET")
+
 	authRoutes := r.PathPrefix("/auth").Subrouter()
 	authRoutes.Use(middleware.RequireAuth)
 
