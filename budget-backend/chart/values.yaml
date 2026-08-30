@@ -42,6 +42,9 @@ httpRoute:
 env:
   PORT: "8080"
   PLAID_ENV: sandbox
+  # Verbose request logging (client IP, query, UA, sizes) while the deploy
+  # is being shaken out — set to "0" once things are stable.
+  LOG_VERBOSE: "1"
 
 # Secret environment, rendered into a Secret and injected via envFrom.
 # Set real values per-install (-f secrets.values.yaml or --set), or leave
