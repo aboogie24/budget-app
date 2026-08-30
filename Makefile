@@ -144,6 +144,39 @@ test:
 	@echo ""
 	@echo "✅  All tests passed."
 
+# ─── End-to-end tests ────────────────────────────────────────
+
+.PHONY: test-e2e-backend test-e2e-app
+
+E2E_DB := budget_db_e2e
+
+## Backend E2E: fresh database + all migrations + real HTTP flows.
+## Covers register/login, bill auto-detect (incl. overpayments + debt-balance
+## guard), and debt/goal ↔ account balance linking.
+test-e2e-backend:
+	@pg_isready -h $(PG_HOST) -p $(PG_PORT) -U $(PG_USER) -q || \
+		(echo "Postgres not reachable on $(PG_HOST):$(PG_PORT) — start it first (make db)" && exit 1)
+	@echo "🧪  Recreating $(E2E_DB) and applying migrations..."
+	@PGPASSWORD=$(PG_PASS) psql -h $(PG_HOST) -p $(PG_PORT) -U $(PG_USER) -d postgres -q \
+		-c "DROP DATABASE IF EXISTS $(E2E_DB);" \
+		-c "CREATE DATABASE $(E2E_DB);"
+	@migrate -path $(BACKEND_DIR)/migrations \
+		-database "postgres://$(PG_USER):$(PG_PASS)@$(PG_HOST):$(PG_PORT)/$(E2E_DB)?sslmode=disable" up
+	cd $(BACKEND_DIR) && \
+		PG_HOST=$(PG_HOST) PG_PORT=$(PG_PORT) PG_USER=$(PG_USER) PG_PASS=$(PG_PASS) \
+		PG_DB=$(E2E_DB) JWT_SECRET=e2e-test-secret \
+		go test -tags e2e -count=1 -v ./e2e/...
+	@echo ""
+	@echo "✅  Backend E2E suite passed."
+
+## Mobile E2E: Maestro flows against the app in a simulator.
+## Prereqs: `brew install maestro`, a running simulator with the app installed,
+## and the backend up (`make backend`). See budget-app/.maestro/README.md.
+test-e2e-app:
+	@command -v maestro >/dev/null 2>&1 || \
+		(echo "maestro not installed — run: brew install maestro" && exit 1)
+	cd $(FRONTEND_DIR) && maestro test .maestro/
+
 # ─── Frontend ────────────────────────────────────────────────
 
 .PHONY: frontend frontend-install frontend-web

@@ -24,6 +24,16 @@ func NewSimpleFINProvider() *SimpleFINProvider { return &SimpleFINProvider{} }
 
 func (s *SimpleFINProvider) Name() string { return "simplefin" }
 
+// The bridge recommends transaction requests stay within 45 days ("in the
+// future, this may be capped"), so routine syncs use one day inside that.
+// Upserts dedupe on external id, so the rolling window is itself the overlap
+// that catches late-posting transactions.
+const simplefinRoutineLookbackDays = 44
+
+// simplefinGapOverlapDays extends a gap-recovery window a few days past the
+// newest stored transaction, per SimpleFIN's own guidance to overlap ranges.
+const simplefinGapOverlapDays = 5
+
 // SyncTransactions pulls transactions for every account behind the SimpleFIN
 // connection and upserts them, running the deterministic categorizer inline —
 // same shape as the Teller provider.
@@ -32,10 +42,22 @@ func (s *SimpleFINProvider) SyncTransactions(conn *sql.DB, account LinkedAccount
 		return 0, fmt.Errorf("simplefin: linked account has no access url")
 	}
 
-	// One day inside the bridge's 90-day range limit: asking for exactly 90
-	// days (plus time-of-day) trips its "range exceeds limit and was capped"
-	// warning on every sync.
-	start := time.Now().AddDate(0, 0, -(transactionLookbackDays - 1))
+	// Routine syncs stay inside the bridge's recommended 45-day range. The
+	// FIRST sync (no rows yet) pulls the full history — one day inside the
+	// bridge's hard 90-day cap. If the account sat dormant longer than the
+	// routine window, extend back to just before the newest stored row so no
+	// gap opens between syncs.
+	lookback := simplefinRoutineLookbackDays
+	var newest sql.NullTime
+	_ = conn.QueryRow(`
+		SELECT MAX(date) FROM transactions WHERE user_id = $1 AND source = 'simplefin'
+	`, account.UserID).Scan(&newest)
+	if !newest.Valid {
+		lookback = transactionLookbackDays - 1
+	} else if stale := int(time.Since(newest.Time).Hours()/24) + simplefinGapOverlapDays; stale > lookback {
+		lookback = min(stale, transactionLookbackDays-1)
+	}
+	start := time.Now().AddDate(0, 0, -lookback)
 	set, err := simplefin.FetchAccounts(account.AccessToken, start, false)
 	if err != nil {
 		return 0, fmt.Errorf("simplefin fetch accounts: %w", err)
@@ -100,7 +122,10 @@ func (s *SimpleFINProvider) SyncTransactions(conn *sql.DB, account LinkedAccount
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'simplefin', $9, $10, $11, $12, $13, NOW())
 				ON CONFLICT (user_id, source, external_id) WHERE external_id IS NOT NULL
 				DO UPDATE SET
-					type = EXCLUDED.type,
+					type = CASE
+						WHEN transactions.transfer_pair_id IS NOT NULL THEN transactions.type
+						ELSE EXCLUDED.type
+					END,
 					amount = EXCLUDED.amount,
 					note = EXCLUDED.note,
 					date = EXCLUDED.date,

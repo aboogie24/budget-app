@@ -132,7 +132,10 @@ func (t *TellerProvider) SyncTransactions(conn *sql.DB, account LinkedAccount) (
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'teller', $9, $10, $11, $12, $13, NOW())
 				ON CONFLICT (user_id, source, external_id) WHERE external_id IS NOT NULL
 				DO UPDATE SET
-					type = EXCLUDED.type,
+					type = CASE
+						WHEN transactions.transfer_pair_id IS NOT NULL THEN transactions.type
+						ELSE EXCLUDED.type
+					END,
 					amount = EXCLUDED.amount,
 					note = EXCLUDED.note,
 					date = EXCLUDED.date,

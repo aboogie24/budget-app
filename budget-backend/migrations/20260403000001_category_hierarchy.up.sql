@@ -6,11 +6,13 @@ ALTER TABLE categories
 
 CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);
 
--- Seed system default category tree (user_id IS NULL = system categories)
--- Only insert if no system categories exist yet
+-- Seed system default category tree (user_id IS NULL = system categories).
+-- Guard on the sentinel root id, NOT on "any system category": init_schema
+-- already seeds 5 generic system categories, so the broader check skipped
+-- this seed on fresh databases and broke the mapping-rules migration's FKs.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM categories WHERE user_id IS NULL AND parent_id IS NULL LIMIT 1) THEN
+  IF NOT EXISTS (SELECT 1 FROM categories WHERE id = 'c0000000-0000-0000-0000-000000000001') THEN
     -- Parent categories (expense)
     INSERT INTO categories (id, name, type, color, icon, sort_order) VALUES
       ('c0000000-0000-0000-0000-000000000001', 'Housing', 'expense', '#7c3aed', 'home', 1),
