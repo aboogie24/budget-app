@@ -189,7 +189,7 @@ const tasks = [
   {id:67, title:"Plaid sandbox → development environment", phase:"Testing & Quality", status:"done", priority:"high", area:"backend", notes:"Verify Plaid integration works outside sandbox mode | Updated: Created Plaid config.go with env validation (sandbox/development/production), webhook URL support, environments.md documentation. Updated .env.example."},
 
   // ─── PHASE 7: Launch Prep (NOT STARTED) ───
-  {id:68, title:"EAS build configuration (iOS + Android)", phase:"Launch Prep", status:"in-progress", priority:"critical", area:"devops", notes:"eas.json exists with basic config; needs production profile tuning"},
+  {id:68, title:"EAS build configuration (iOS + Android)", phase:"Launch Prep", status:"done", priority:"critical", area:"devops", notes:"DONE 2026-08-29. Tuned eas.json: per-profile EAS environments (development/preview/production) so builds load server-side env vars — local .env is never uploaded, so without this a store build would bake in localhost as the API URL; expo-updates channels (preview/production) wired to the configured updates.url; development-simulator profile (extends development, ios.simulator); preview builds APK for direct install, production builds app-bundle with autoIncrement (remote version source). Removed stale hardcoded API_URL from app.json extra (app.config.ts owns extra). Validated both profiles via `eas config --non-interactive`. BUILDS.md documents profiles, `eas env:create` commands per environment, build/submit/update commands. REMAINING (other cards): create EAS env vars once prod API URL exists (#71 — must be HTTPS for iOS ATS), store credentials via `eas submit` (#69/#75)."},
   {id:69, title:"App Store assets (screenshots, description)", phase:"Launch Prep", status:"todo", priority:"high", area:"design", notes:"Need App Store and Play Store listing materials"},
   {id:70, title:"Privacy policy & terms of service", phase:"Launch Prep", status:"todo", priority:"critical", area:"legal", notes:"Required for both stores; finance app has extra requirements"},
   {id:71, title:"Production deployment (backend + DB)", phase:"Launch Prep", status:"todo", priority:"critical", area:"devops", notes:"Need cloud hosting — Railway, Fly.io, or AWS. Currently local Docker only"},
@@ -315,7 +315,7 @@ function render(){
         <div class="header-sub">React Native + Go • ${s.total} tasks across ${phases.length} phases</div>
       </div>
       <div class="header-right">
-        <span class="last-updated">Updated: July 11, 2026</span>
+        <span class="last-updated">Updated: August 29, 2026</span>
       </div>
     </div>
 
