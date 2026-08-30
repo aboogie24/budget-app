@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -239,6 +240,10 @@ func TestLogoutUser_ClearsSession(t *testing.T) {
 // Helper function with login DB factory mock
 func withLoginMockDB(t *testing.T, setup func(sqlmock.Sqlmock)) {
 	t.Helper()
+	// GenerateToken panics without JWT_SECRET; CI has no .env
+	if os.Getenv("JWT_SECRET") == "" {
+		t.Setenv("JWT_SECRET", "test-secret-key-for-testing-only")
+	}
 	mockSQL, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
