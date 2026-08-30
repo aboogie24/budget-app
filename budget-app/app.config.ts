@@ -60,7 +60,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     url: 'https://u.expo.dev/15c3004a-989d-45ed-ae17-903dae308ca9',
   },
   extra: {
-    API_URL: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080',
+    API_URL: process.env.EXPO_PUBLIC_API_URL, // unset → apiClient derives from Metro host in dev
     GOOGLE_IOS_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
     GOOGLE_ANDROID_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
     GOOGLE_WEB_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',

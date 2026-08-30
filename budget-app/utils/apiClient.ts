@@ -2,16 +2,25 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
- * Resolve the backend base URL.
+ * Resolve the backend base URL, in priority order:
  *
- * In development the backend runs on the same machine as the Metro bundler, so
- * the host is derived from Metro's `hostUri` — the dev machine's LAN IP that
- * the device is already connected to. This follows network/DHCP changes with
- * no manual reconfiguration. `hostUri` is only set while connected to Metro,
- * so production/standalone builds fall through to the configured `API_URL`.
+ * 1. An explicitly configured API_URL (EXPO_PUBLIC_API_URL via
+ *    app.config.ts). Set it to point the app at a remote backend
+ *    (homelab/cluster/production); restart Metro after changing it.
+ * 2. In development with no explicit URL, the host is derived from Metro's
+ *    `hostUri` — the dev machine's LAN IP — assuming the backend runs next
+ *    to the bundler (`make dev`). Follows network/DHCP changes on its own.
+ * 3. localhost, as a last resort.
  */
 function resolveApiUrl(): string {
   const BACKEND_PORT = 8080;
+
+  const explicit =
+    Constants.expoConfig?.extra?.API_URL ??
+    (Constants as any).manifest?.extra?.API_URL;
+  if (explicit) {
+    return explicit;
+  }
 
   const hostUri =
     Constants.expoConfig?.hostUri ??
@@ -23,11 +32,7 @@ function resolveApiUrl(): string {
     return `http://${metroHost}:${BACKEND_PORT}`;
   }
 
-  return (
-    Constants.expoConfig?.extra?.API_URL ??
-    (Constants as any).manifest?.extra?.API_URL ??
-    `http://localhost:${BACKEND_PORT}`
-  );
+  return `http://localhost:${BACKEND_PORT}`;
 }
 
 const API_URL = resolveApiUrl();
