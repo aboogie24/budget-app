@@ -1,0 +1,29 @@
+{
+  "componentName": "DebtPayoffTimeline",
+  "description": "Demoted context card showing a horizontal payoff bar per debt (sorted soonest-first), colored by bucket, with a Calculator link. Mortgages excluded.",
+  "platform": "react-native",
+  "surface": "glassEffects.glass",
+  "props": {
+    "debts": { "type": "{ name: string, estMonths: number, estDate: string, category: 'attack' | 'structured' }[]", "required": true, "description": "Non-mortgage debts, sorted by estMonths ascending" },
+    "onOpenCalculator": { "type": "function", "required": true }
+  },
+  "tokens": {
+    "card": "glassEffects.glass / radius.lg",
+    "headerIcon": "time-outline / colors.primary2",
+    "headerTitle": "typography.smallBold / colors.text",
+    "calculatorButton": "colors.primary2 on primary@10% / radius.md",
+    "rowLabel": "typography.caption / colors.textMuted",
+    "barTrack": "colors.glassMedium",
+    "attackBarFill": "colors.error to error@88",
+    "structuredBarFill": "colors.info to info@88",
+    "estDate": "typography.caption / colors.textMuted",
+    "footer": "typography.caption / colors.textDark",
+    "barHeight": 8
+  },
+  "states": ["default", "hidden"],
+  "hiddenWhen": "debts.length === 0 (all-mortgage or no data)",
+  "accessibility": {
+    "rowLabel": "{name}, estimated payoff {estDate}",
+    "colorIndependence": "bar color reinforced by row order and estDate text; bucket not sole signal"
+  }
+}

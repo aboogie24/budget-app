@@ -1,0 +1,36 @@
+{
+  "componentName": "MemoryGroupHeader",
+  "description": "The header for a scope group (Shared / Private to you) in the Advisor Memory list: a color-independent scope chip (icon + word + color) with a subtitle and a count badge. Replaces the local groupHeader in app/settings/advisor-memory.tsx.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-advisor-memory-redesign.md",
+  "props": {
+    "scope": { "type": "'shared' | 'private'", "required": true, "description": "Drives icon + color. Always paired with the title word so scope is never color-only." },
+    "title": { "type": "string", "required": true, "description": "'Shared' or 'Private to you' — the word rendered inside the scope chip." },
+    "subtitle": { "type": "string", "required": true, "description": "e.g. 'Both partners can see these' / 'Only you — never shown to your partner'. typography.caption, colors.textMuted, numberOfLines 1." },
+    "count": { "type": "number", "required": true, "description": "Number of facts in this scope; shown in the count badge." }
+  },
+  "variants": ["shared", "private"],
+  "states": ["default"],
+  "scopeVisual": {
+    "shared": { "icon": "people-outline", "chipFill": "`${colors.primary2}1f`", "color": "colors.primary2" },
+    "private": { "icon": "lock-closed-outline", "chipFill": "`${colors.info}1f`", "color": "colors.info" }
+  },
+  "layout": {
+    "row": { "direction": "row", "alignItems": "center", "gap": "spacing.sm", "marginTop": "spacing.xl", "marginBottom": "spacing.md" },
+    "scopeChip": { "borderRadius": "radius.full", "paddingHorizontal": "spacing.sm", "paddingVertical": "spacing.xs", "direction": "row", "gap": "spacing.xs", "iconSize": 14, "wordTypography": "typography.smallBold" },
+    "subtitle": { "flex": 1, "typography": "typography.caption", "color": "colors.textMuted", "numberOfLines": 1 },
+    "countBadge": { "backgroundColor": "colors.glassMedium", "borderRadius": "radius.sm", "paddingHorizontal": "spacing.sm", "paddingVertical": 2, "typography": "typography.caption", "fontWeight": "bold", "color": "colors.textMuted", "flexShrink": 0 }
+  },
+  "tokens": {
+    "colors": ["colors.primary2", "colors.info", "colors.textMuted", "colors.glassMedium"],
+    "radius": ["radius.full", "radius.sm"],
+    "spacing": ["spacing.xl", "spacing.md", "spacing.sm", "spacing.xs"],
+    "typography": ["typography.smallBold", "typography.caption"]
+  },
+  "accessibility": {
+    "role": "header",
+    "label": "{title}, {subtitle}, {count} {count === 1 ? 'memory' : 'memories'}",
+    "colorIndependence": "Scope chip always shows an icon (people/lock) + the literal word + color, so Shared vs Private never relies on hue alone."
+  },
+  "notes": "Only render a group when it has ≥1 item (existing behavior). Shared uses colors.primary2, Private uses colors.info to keep the two hues distinct while both stay on-palette."
+}

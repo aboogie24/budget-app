@@ -1,16 +1,12 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   Alert,
   ScrollView,
-  Modal,
-  ActivityIndicator,
-  Switch,
-  Dimensions,
+  RefreshControl,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,8 +14,31 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
+import { fetchAccountBalances } from '../utils/api';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
+import { Skeleton, SkeletonStack } from '@/components/Skeleton';
+import GradientBackground from '@/components/GradientBackground';
+import { DebtNudgeCard, type DebtNudge } from '@/components/debts-NudgeCard';
+import {
+  colors,
+  gradients,
+  glassEffects,
+  spacing,
+  radius,
+  typography,
+} from '@/utils/design-system';
+import {
+  FormSheet,
+  FormField,
+  FormInput,
+  AmountInput,
+  FormChips,
+  FormSwitchRow,
+  FormButton,
+} from '@/components/form';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 // ── Types ──
 type Debt = {
@@ -28,6 +47,7 @@ type Debt = {
   household_id?: string;
   name: string;
   balance: number;
+  original_balance?: number;
   apr: number;
   min_payment: number;
   due_day?: number | null;
@@ -36,6 +56,9 @@ type Debt = {
   debt_category: 'attack' | 'structured';
   liability_type: string;
   asset_depreciates?: boolean;
+  /** When set, this debt's balance mirrors the linked bank account on every sync. */
+  linked_balance_id?: string | null;
+  linked_account_name?: string;
 };
 
 type Bill = {
@@ -73,21 +96,9 @@ const DEBT_TYPE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   other: 'ellipsis-horizontal',
 };
 
-const C = {
-  bg: '#0f0a1e',
-  surface: 'rgba(255,255,255,0.06)',
-  border: 'rgba(255,255,255,0.08)',
-  accent: '#a855f7',
-  accentDark: '#7c3aed',
-  pink: '#ec4899',
-  income: '#34d399',
-  attack: '#f87171',
-  structured: '#60a5fa',
-  warning: '#fbbf24',
-  textPrimary: '#f8fafc',
-  textMuted: '#94a3b8',
-  textDim: 'rgba(255,255,255,0.3)',
-};
+// Attack maps to error (urgency/heat), Structured to info (steady/managed).
+const bucketColor = (cat: string): string =>
+  (cat || 'attack') === 'attack' ? colors.error : colors.info;
 
 // ── Helpers ──
 const fmt = (v: number) =>
@@ -106,9 +117,14 @@ const getTypeLabel = (liabilityType: string): string => {
   return LIABILITY_TYPES.find(t => t.value === liabilityType)?.label || liabilityType;
 };
 
-const getPaidPercent = (balance: number): number => {
-  // Estimate: without original balance, use a heuristic
-  return Math.max(0, Math.round((1 - balance / (balance * 1.3)) * 100));
+// Real payoff progress against the recorded opening balance. A debt with no
+// history yet (original == balance) honestly reads 0% instead of the old
+// fabricated ~23% heuristic.
+const getPaidPercent = (balance: number, originalBalance?: number): number => {
+  if (balance <= 0) return 100;
+  const original = originalBalance && originalBalance > 0 ? originalBalance : 0;
+  if (original <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((1 - balance / original) * 100)));
 };
 
 const getEstMonths = (balance: number, minPayment: number): number => {
@@ -117,9 +133,10 @@ const getEstMonths = (balance: number, minPayment: number): number => {
 };
 
 const getEstDate = (months: number): string => {
+  if (months >= 999) return '—';
   const d = new Date();
   d.setMonth(d.getMonth() + months);
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const yr = String(d.getFullYear()).slice(2);
   return `${monthNames[d.getMonth()]} '${yr}`;
 };
@@ -130,12 +147,13 @@ const MiniRing = ({ percent, size = 42, strokeWidth = 3, color }: {
 }) => {
   const r = (size - strokeWidth) / 2;
   const circ = 2 * Math.PI * r;
-  const offset = circ - (percent / 100) * circ;
+  const clamped = Math.min(100, Math.max(0, percent));
+  const offset = circ - (clamped / 100) * circ;
   return (
     <Svg width={size} height={size}>
       <Circle
         cx={size / 2} cy={size / 2} r={r}
-        fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeWidth}
+        fill="none" stroke={colors.glassMedium} strokeWidth={strokeWidth}
       />
       <Circle
         cx={size / 2} cy={size / 2} r={r}
@@ -152,27 +170,28 @@ const MiniRing = ({ percent, size = 42, strokeWidth = 3, color }: {
 const PayoffTimeline = ({ debts }: { debts: { name: string; estMonths: number; estDate: string; category: string }[] }) => {
   const maxMonths = Math.max(...debts.map(d => d.estMonths), 1);
   return (
-    <View style={{ gap: 8 }}>
-      {debts.map((d, i) => (
-        <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <Text style={{ fontSize: 10, color: C.textMuted, width: 70, textAlign: 'right' }} numberOfLines={1}>
-            {d.name}
-          </Text>
-          <View style={{ flex: 1, height: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden' }}>
-            <LinearGradient
-              colors={d.category === 'attack'
-                ? [C.attack, C.attack + '88']
-                : [C.structured, C.structured + '88']}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              style={{
-                height: 8, borderRadius: 4,
-                width: `${Math.min((d.estMonths / maxMonths) * 100, 100)}%` as any,
-              }}
-            />
+    <View style={{ gap: spacing.sm }}>
+      {debts.map((d, i) => {
+        const bc = bucketColor(d.category);
+        return (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+            <Text style={{ ...typography.caption, color: colors.textMuted, width: 70, textAlign: 'right' }} numberOfLines={1}>
+              {d.name}
+            </Text>
+            <View style={{ flex: 1, height: 8, backgroundColor: colors.glassMedium, borderRadius: radius.sm, overflow: 'hidden' }}>
+              <LinearGradient
+                colors={[bc, bc + '88']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                style={{
+                  height: 8, borderRadius: radius.sm,
+                  width: `${Math.min((d.estMonths / maxMonths) * 100, 100)}%` as any,
+                }}
+              />
+            </View>
+            <Text style={{ ...typography.caption, color: colors.textMuted, width: 50 }}>{d.estDate}</Text>
           </View>
-          <Text style={{ fontSize: 10, color: C.textMuted, width: 50 }}>{d.estDate}</Text>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 };
@@ -199,19 +218,26 @@ const DebtCard = ({
   onLinkBill: () => void;
   onToggleCategory: () => void;
 }) => {
-  const catColor = (debt.debt_category || 'attack') === 'attack' ? C.attack : C.structured;
+  const cat = debt.debt_category || 'attack';
+  const catColor = bucketColor(cat);
   const icon = getDebtIcon(debt.liability_type);
-  const paidPercent = getPaidPercent(debt.balance);
+  const paidPercent = getPaidPercent(debt.balance, debt.original_balance);
   const estMonths = getEstMonths(debt.balance, debt.min_payment);
   const estDate = getEstDate(estMonths);
-  const typeLabel = getTypeLabel(debt.liability_type);
 
   return (
     <View style={styles.debtCard}>
       {/* Main row - tappable */}
-      <TouchableOpacity onPress={onToggle} style={styles.debtCardRow} activeOpacity={0.7}>
+      <TouchableOpacity
+        onPress={onToggle}
+        style={styles.debtCardRow}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`${debt.name}, ${cat === 'attack' ? 'Attack' : 'Structured'}, balance ${fmt(debt.balance)}, ${paidPercent} percent paid, ${debt.is_shared ? 'Shared' : 'Personal'}`}
+        accessibilityHint="Double tap to expand details"
+      >
         {/* Icon + ring */}
-        <View style={{ position: 'relative', width: 42, height: 42 }}>
+        <View style={{ position: 'relative', width: 42, height: 42 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           <MiniRing percent={paidPercent} size={42} strokeWidth={3} color={catColor} />
           <View style={styles.debtCardIconCenter}>
             <Ionicons name={icon} size={16} color={catColor} />
@@ -219,52 +245,56 @@ const DebtCard = ({
         </View>
 
         {/* Info */}
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={{ fontSize: 14, fontWeight: '700', color: C.textPrimary }}>{debt.name}</Text>
+        <View style={{ flex: 1, marginLeft: spacing.md }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+            <Text style={{ ...typography.smallBold, color: colors.text, flexShrink: 1 }} numberOfLines={1}>{debt.name}</Text>
             <View style={{
-              backgroundColor: catColor + '18',
-              paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+              backgroundColor: catColor + '2e',
+              paddingHorizontal: spacing.xs, paddingVertical: 2, borderRadius: radius.sm,
+              flexShrink: 0,
             }}>
               <Text style={{
-                fontSize: 8, fontWeight: '700', letterSpacing: 0.5,
+                ...typography.caption, fontSize: 10, fontWeight: '700', letterSpacing: 0.5,
                 textTransform: 'uppercase', color: catColor,
               }}>
-                {debt.debt_category || 'attack'}
+                {cat}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 3 }}>
             <View style={{
-              width: 5, height: 5, borderRadius: 3,
-              backgroundColor: debt.is_shared ? C.pink : C.accent,
+              width: 5, height: 5, borderRadius: radius.full,
+              backgroundColor: debt.is_shared ? colors.primary2 : colors.textMuted,
             }} />
-            <Text style={{ fontSize: 10, color: C.textMuted }}>
-              {debt.is_shared ? 'Shared' : 'Personal'} {'\u00B7'} {debt.apr}% APR{debt.due_day ? ` \u00B7 Due ${debt.due_day}th` : ''}
+            <Text style={{ ...typography.caption, color: colors.textMuted }}>
+              {debt.is_shared ? 'Shared' : 'Personal'} {'·'} {debt.apr}% APR{debt.due_day ? ` · Due ${debt.due_day}th` : ''}
             </Text>
           </View>
         </View>
 
         {/* Balance + chevron */}
-        <View style={{ alignItems: 'flex-end', marginRight: 4 }}>
-          <Text style={{ fontSize: 15, fontWeight: '700', color: C.textPrimary }}>{fmt(debt.balance)}</Text>
-          <Text style={{ fontSize: 10, color: C.textMuted, marginTop: 1 }}>{paidPercent}% paid</Text>
+        <View style={{ alignItems: 'flex-end', marginRight: spacing.xs, flexShrink: 0 }}>
+          <Text style={{ ...typography.bodyBold, color: colors.text }}>{fmt(debt.balance)}</Text>
+          <Text style={{ ...typography.caption, color: colors.textMuted, marginTop: 1 }}>{paidPercent}% paid</Text>
         </View>
         <Ionicons
           name={expanded ? 'chevron-up' : 'chevron-down'}
           size={14}
-          color={C.textDim}
+          color={colors.textDark}
         />
       </TouchableOpacity>
 
       {/* Progress bar */}
-      <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-        <View style={{ height: 4, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 2 }}>
+      <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
+        <View
+          style={{ height: 4, backgroundColor: colors.glassMedium, borderRadius: radius.sm }}
+          accessibilityLabel={`${paidPercent} percent paid off`}
+        >
           <LinearGradient
             colors={[catColor, catColor + '88']}
             start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
             style={{
-              height: 4, borderRadius: 2,
+              height: 4, borderRadius: radius.sm,
               width: `${paidPercent}%` as any,
             }}
           />
@@ -275,95 +305,95 @@ const DebtCard = ({
       {expanded && (
         <View style={styles.debtCardExpanded}>
           {/* Stats grid */}
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }}>
             {[
-              { label: 'Min Payment', value: fmt(debt.min_payment), iconName: 'cash-outline' as keyof typeof Ionicons.glyphMap },
+              { label: 'Min Payment', value: debt.min_payment > 0 ? fmt(debt.min_payment) : 'No min. pmt', iconName: 'cash-outline' as keyof typeof Ionicons.glyphMap },
               { label: 'Payoff Date', value: estDate, iconName: 'calendar-outline' as keyof typeof Ionicons.glyphMap },
               { label: 'Strategy', value: debt.strategy === 'avalanche' ? 'Avalanche' : debt.strategy === 'snowball' ? 'Snowball' : 'Standard', iconName: 'flag-outline' as keyof typeof Ionicons.glyphMap },
             ].map((s, i) => (
               <View key={i} style={styles.statBox}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4 }}>
-                  <Ionicons name={s.iconName} size={11} color={C.textDim} />
-                  <Text style={{ fontSize: 9, color: C.textMuted, fontWeight: '500' }}>{s.label}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, marginBottom: spacing.xs }}>
+                  <Ionicons name={s.iconName} size={11} color={colors.textDark} />
+                  <Text style={{ ...typography.caption, color: colors.textMuted }}>{s.label}</Text>
                 </View>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: C.textPrimary, textAlign: 'center' }}>{s.value}</Text>
+                <Text style={{ ...typography.smallBold, color: colors.text, textAlign: 'center' }}>{s.value}</Text>
               </View>
             ))}
           </View>
 
-          {/* Action buttons */}
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity style={{ flex: 1 }} onPress={onMakePayment} activeOpacity={0.8}>
-              <LinearGradient
-                colors={[C.accent, C.accentDark]}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                style={styles.actionBtnPrimary}
-              >
-                <Ionicons name="cash-outline" size={14} color="white" />
-                <Text style={{ fontSize: 12, fontWeight: '700', color: 'white' }}>Make Payment</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+          {/* Action buttons — linked debts mirror their account, so manual
+              payments are replaced by a synced indicator. */}
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            {debt.linked_balance_id ? (
+              <View style={[styles.actionBtnSecondary, { flex: 1, flexDirection: 'row', gap: spacing.xs }]}>
+                <Ionicons name="link" size={14} color={colors.primary2} />
+                <Text
+                  style={{ ...typography.smallBold, fontWeight: '600', color: colors.primary2, fontSize: 13 }}
+                  numberOfLines={1}
+                >
+                  Synced · {debt.linked_account_name || 'linked account'}
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={{ flex: 1 }} onPress={onMakePayment} activeOpacity={0.8}>
+                <LinearGradient
+                  colors={[...gradients.primaryGradient]}
+                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                  style={styles.actionBtnPrimary}
+                >
+                  <Ionicons name="cash-outline" size={14} color="white" />
+                  <Text style={{ ...typography.button, fontSize: 13, color: 'white' }}>Make Payment</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[styles.actionBtnSecondary, { flex: 1 }]}
               onPress={onEditDetails}
               activeOpacity={0.7}
             >
-              <Text style={{ fontSize: 12, fontWeight: '500', color: C.textMuted }}>Edit Details</Text>
+              <Text style={{ ...typography.smallBold, fontWeight: '500', color: colors.textMuted, fontSize: 13 }}>Edit Details</Text>
             </TouchableOpacity>
           </View>
 
           {/* Category toggle + bill actions row */}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm }}>
             <TouchableOpacity
-              style={{
-                flexDirection: 'row', alignItems: 'center', gap: 5,
-                paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10,
-                backgroundColor: (debt.debt_category || 'attack') === 'attack'
-                  ? 'rgba(239,68,68,0.12)' : 'rgba(59,130,246,0.12)',
-              }}
+              style={[styles.chip, { backgroundColor: catColor + '1f' }]}
               onPress={onToggleCategory}
+              activeOpacity={0.7}
             >
               <Ionicons
-                name={(debt.debt_category || 'attack') === 'attack' ? 'flash' : 'shield-checkmark'}
+                name={cat === 'attack' ? 'flame' : 'shield-checkmark'}
                 size={14}
-                color={(debt.debt_category || 'attack') === 'attack' ? C.attack : C.structured}
+                color={catColor}
               />
-              <Text style={{
-                color: (debt.debt_category || 'attack') === 'attack' ? C.attack : C.structured,
-                fontWeight: '700', fontSize: 12,
-              }}>
-                {(debt.debt_category || 'attack') === 'attack' ? 'Attack' : 'Structured'}
+              <Text style={{ ...typography.caption, color: catColor, fontWeight: '700' }}>
+                {cat === 'attack' ? 'Attack' : 'Structured'}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={{
-                flexDirection: 'row', alignItems: 'center', gap: 5,
-                paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10,
-                backgroundColor: 'rgba(96,165,250,0.12)',
-              }}
+              style={[styles.chip, { backgroundColor: colors.info + '1f' }]}
               onPress={onBillAction}
+              activeOpacity={0.7}
             >
               <Ionicons
                 name={billExists ? 'receipt-outline' : 'add-circle-outline'}
-                size={14} color={C.structured}
+                size={14} color={colors.info}
               />
-              <Text style={{ color: C.structured, fontWeight: '700', fontSize: 12 }}>
+              <Text style={{ ...typography.caption, color: colors.info, fontWeight: '700' }}>
                 {billExists ? 'View Bill' : 'Create Bill'}
               </Text>
             </TouchableOpacity>
 
             {!billExists && (
               <TouchableOpacity
-                style={{
-                  flexDirection: 'row', alignItems: 'center', gap: 5,
-                  paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10,
-                  backgroundColor: 'rgba(168,85,247,0.12)',
-                }}
+                style={[styles.chip, { backgroundColor: colors.primary2 + '1f' }]}
                 onPress={onLinkBill}
+                activeOpacity={0.7}
               >
-                <Ionicons name="link" size={14} color={C.accent} />
-                <Text style={{ color: C.accent, fontWeight: '700', fontSize: 12 }}>Link Bill</Text>
+                <Ionicons name="link" size={14} color={colors.primary2} />
+                <Text style={{ ...typography.caption, color: colors.primary2, fontWeight: '700' }}>Link Bill</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -373,12 +403,48 @@ const DebtCard = ({
   );
 };
 
+// ── Loading Skeleton ──
+const DebtsSkeleton = () => (
+  <View style={{ paddingHorizontal: spacing.lg }}>
+    {/* Hero shell */}
+    <View style={[styles.heroCard, { marginHorizontal: 0 }]}>
+      <Skeleton width={120} height={12} />
+      <Skeleton width={180} height={34} style={{ marginTop: spacing.sm }} />
+      <View style={{ flexDirection: 'row', gap: spacing.xl, marginTop: spacing.lg }}>
+        <Skeleton width={56} height={12} />
+        <Skeleton width={56} height={12} />
+        <Skeleton width={56} height={12} />
+      </View>
+      <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+        <Skeleton width={'48%' as any} height={48} borderRadius={radius.md} />
+        <Skeleton width={'48%' as any} height={48} borderRadius={radius.md} />
+      </View>
+    </View>
+
+    {/* Row skeletons */}
+    {[0, 1, 2].map((i) => (
+      <View key={i} style={[styles.debtCard, { padding: spacing.lg, marginBottom: spacing.sm }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+          <Skeleton width={42} height={42} borderRadius={radius.full} />
+          <View style={{ flex: 1 }}>
+            <SkeletonStack count={2} height={12} />
+          </View>
+        </View>
+        <View style={{ marginTop: spacing.md }}>
+          <Skeleton width={'100%' as any} height={4} borderRadius={radius.sm} />
+        </View>
+      </View>
+    ))}
+  </View>
+);
+
 // ── Main Screen ──
 export default function DebtsScreen() {
   const router = useRouter();
   const [debts, setDebts] = useState<Debt[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Debt | null>(null);
   const [paymentId, setPaymentId] = useState<string | null>(null);
@@ -402,6 +468,36 @@ export default function DebtsScreen() {
   const [isShared, setIsShared] = useState(true);
   const [liabilityType, setLiabilityType] = useState('other');
   const [debtCategory, setDebtCategory] = useState<'attack' | 'structured'>('attack');
+  const [linkedBalanceId, setLinkedBalanceId] = useState<string | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+
+  // Synced credit/loan accounts for the "linked account" picker — loaded once, lazily.
+  const accountsLoaded = useRef(false);
+  const ensureAccounts = useCallback(async () => {
+    if (accountsLoaded.current) return;
+    accountsLoaded.current = true;
+    try {
+      const accts = await fetchAccountBalances();
+      setBankAccounts(
+        (Array.isArray(accts) ? accts : []).filter(
+          (a: any) => a.type === 'credit' || a.type === 'loan',
+        ),
+      );
+    } catch (e) {
+      console.log('Account list load failed (link picker hidden):', e);
+    }
+  }, []);
+
+  // Inline validation state (hints on blur, CTA gates on validity)
+  const [nameTouched, setNameTouched] = useState(false);
+  const [balanceTouched, setBalanceTouched] = useState(false);
+  const [dueDayTouched, setDueDayTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [paymentTouched, setPaymentTouched] = useState(false);
+  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [billCreating, setBillCreating] = useState(false);
 
   const loadDebts = useCallback(async () => {
     try {
@@ -416,13 +512,19 @@ export default function DebtsScreen() {
       setError(null);
     } catch (e) {
       console.error('Failed to load debts:', e);
-      setError('Failed to load debts');
+      setError("We couldn't load your debts.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
+    loadDebts();
+  }, [loadDebts]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
     loadDebts();
   }, [loadDebts]);
 
@@ -438,7 +540,12 @@ export default function DebtsScreen() {
     setIsShared(true);
     setLiabilityType('other');
     setDebtCategory('attack');
+    setLinkedBalanceId(null);
     setEditing(null);
+    setNameTouched(false);
+    setBalanceTouched(false);
+    setDueDayTouched(false);
+    setSaveError(null);
   };
 
   const openEdit = (d: Debt) => {
@@ -452,29 +559,43 @@ export default function DebtsScreen() {
     setIsShared(d.is_shared);
     setLiabilityType(d.liability_type || 'other');
     setDebtCategory(d.debt_category || 'attack');
+    setLinkedBalanceId(d.linked_balance_id || null);
+    ensureAccounts();
     setShowForm(true);
   };
 
+  // Derived validity — single source of truth for the save CTA. A linked
+  // debt's balance comes from the account, so the manual field doesn't gate.
+  const parsedBalance = Number(balance);
+  const debtNameValid = name.trim().length > 0;
+  const balanceValid = linkedBalanceId != null || (!!balance && Number.isFinite(parsedBalance));
+  const debtDueDayNum = parseInt(dueDay, 10);
+  const debtDueDayValid =
+    !dueDay || (Number.isInteger(debtDueDayNum) && debtDueDayNum >= 1 && debtDueDayNum <= 31);
+  const isDebtFormValid = debtNameValid && balanceValid && debtDueDayValid;
+
   const handleSave = async () => {
-    if (!name.trim()) {
-      Alert.alert('Validation', 'Name is required.');
-      return;
-    }
-    if (!balance || isNaN(Number(balance))) {
-      Alert.alert('Validation', 'Enter a valid balance.');
+    if (!isDebtFormValid || saving) {
+      setNameTouched(true);
+      setBalanceTouched(true);
+      setDueDayTouched(true);
       return;
     }
 
     const userId = await api.getUserId();
     if (!userId) {
-      Alert.alert('Error', 'No user session found.');
+      setSaveError('No user session found.');
       return;
     }
+
+    setSaving(true);
+    setSaveError(null);
 
     const payload = {
       user_id: userId,
       name: name.trim(),
-      balance: parseFloat(balance),
+      // Linked debts mirror the account; the backend snaps the real number.
+      balance: linkedBalanceId ? 0 : parseFloat(balance),
       apr: parseFloat(apr) || 0,
       min_payment: parseFloat(minPayment) || 0,
       due_day: dueDay ? parseInt(dueDay) : null,
@@ -482,6 +603,7 @@ export default function DebtsScreen() {
       is_shared: isShared,
       liability_type: liabilityType,
       debt_category: debtCategory,
+      linked_balance_id: linkedBalanceId,
     };
 
     try {
@@ -508,40 +630,60 @@ export default function DebtsScreen() {
           }
         }
       }
+      successHaptic();
       setShowForm(false);
       resetForm();
       loadDebts();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Save debt error:', e);
-      Alert.alert('Error', 'Failed to save debt.');
+      errorHaptic();
+      setSaveError(
+        e?.status === 409
+          ? 'That account is already linked to another debt.'
+          : 'Failed to save debt. Check your connection and try again.',
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
+  const parsedPayment = Number(paymentAmount);
+  const paymentValid =
+    !!paymentAmount && Number.isFinite(parsedPayment) && parsedPayment > 0;
+
   const handlePayment = async () => {
-    if (!paymentAmount || isNaN(Number(paymentAmount)) || Number(paymentAmount) <= 0) {
-      Alert.alert('Validation', 'Enter a valid payment amount.');
+    if (!paymentValid || paymentSaving) {
+      setPaymentTouched(true);
       return;
     }
+    setPaymentSaving(true);
+    setPaymentError(null);
     try {
       await api.patch(`/auth/debts/${paymentId}/payment`, {
-        amount: parseFloat(paymentAmount),
+        amount: parsedPayment,
       });
+      successHaptic();
       setPaymentId(null);
       setPaymentAmount('');
+      setPaymentTouched(false);
       loadDebts();
     } catch (e) {
       console.error('Payment error:', e);
-      Alert.alert('Error', 'Failed to apply payment.');
+      errorHaptic();
+      setPaymentError('Failed to apply payment. Try again.');
+    } finally {
+      setPaymentSaving(false);
     }
   };
 
   const handleCreateBillFromDebt = async () => {
-    if (!billDebt) return;
+    if (!billDebt || billCreating) return;
     const userId = await api.getUserId();
     if (!userId) {
       Alert.alert('Error', 'No user session found.');
       return;
     }
+    setBillCreating(true);
     try {
       await api.post('/auth/bills', {
         user_id: userId,
@@ -553,23 +695,29 @@ export default function DebtsScreen() {
         is_autopay: false,
         is_shared: false,
       });
+      successHaptic();
       Alert.alert('Success', `Bill created for "${billDebt.name}".`);
       setBillDebt(null);
       setBillFreq('monthly');
       loadDebts();
     } catch (e) {
       console.error('Create bill error:', e);
+      errorHaptic();
       Alert.alert('Error', 'Failed to create bill.');
+    } finally {
+      setBillCreating(false);
     }
   };
 
   const toggleCategory = async (d: Debt) => {
     const newCat = d.debt_category === 'attack' ? 'structured' : 'attack';
+    // Optimistic re-tint; revert on error.
+    setDebts(prev => prev.map(x => x.id === d.id ? { ...x, debt_category: newCat } : x));
     try {
       await api.put(`/auth/debts/${d.id}/category`, { debt_category: newCat });
-      setDebts(prev => prev.map(x => x.id === d.id ? { ...x, debt_category: newCat } : x));
     } catch (e) {
       console.error('Toggle category error:', e);
+      setDebts(prev => prev.map(x => x.id === d.id ? { ...x, debt_category: d.debt_category } : x));
     }
   };
 
@@ -597,13 +745,12 @@ export default function DebtsScreen() {
   }, [debts, activeFilter]);
 
   // AI nudges for debts
-  const [nudges, setNudges] = useState<any[]>([]);
+  const [nudges, setNudges] = useState<DebtNudge[]>([]);
   useEffect(() => {
     (async () => {
       try {
         const data = await api.get<any[]>('/auth/ai/nudges');
         if (Array.isArray(data)) {
-          // Filter for debt-related nudges
           const debtNudges = data.filter(n =>
             n.nudge_type === 'debt_progress' ||
             n.nudge_type === 'debt_category_suggestion' ||
@@ -615,6 +762,21 @@ export default function DebtsScreen() {
       } catch {}
     })();
   }, [debts]);
+
+  const handleNudgePress = useCallback(async (nudge: DebtNudge) => {
+    try { await api.post(`/auth/ai/nudges/${nudge.id}/dismiss`); } catch {}
+    setNudges(prev => prev.filter(n => n.id !== nudge.id));
+    if (nudge.action_type === 'ask_ai') {
+      router.navigate('/(tabs)/ai-chat' as any);
+    } else if (nudge.action_type === 'navigate_to' && nudge.action_data) {
+      router.push(nudge.action_data as any);
+    }
+  }, [router]);
+
+  const handleNudgeDismiss = useCallback(async (nudge: DebtNudge) => {
+    try { await api.post(`/auth/ai/nudges/${nudge.id}/dismiss`); } catch {}
+    setNudges(prev => prev.filter(n => n.id !== nudge.id));
+  }, []);
 
   // Payoff timeline data (exclude mortgages)
   const timelineDebts = useMemo(() => {
@@ -629,32 +791,37 @@ export default function DebtsScreen() {
       .sort((a, b) => a.estMonths - b.estMonths);
   }, [debts]);
 
-  return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+  const openAddForm = () => { resetForm(); ensureAccounts(); setShowForm(true); };
 
+  return (
+    <GradientBackground variant="bgDarkPurple">
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 120 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary2} />
+          }
+        >
           {/* ── Header ── */}
           <View style={styles.headerRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <TouchableOpacity
-                onPress={() => router.navigate('/(tabs)/goals' as any)}
-                style={styles.iconButton}
-              >
-                <Ionicons name="arrow-back" size={20} color={C.textMuted} />
-              </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+              <BackButton fallback="/(tabs)/goals" color={colors.textMuted} size={20} />
               <Text style={styles.headerTitle}>Debts</Text>
             </View>
             <TouchableOpacity
-              onPress={() => { resetForm(); setShowForm(true); }}
+              onPress={openAddForm}
               style={styles.addButton}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Add debt"
             >
-              <Ionicons name="add" size={18} color={C.accent} />
+              <Ionicons name="add" size={18} color={colors.primary2} />
             </TouchableOpacity>
           </View>
 
-          {error && (
-            <View style={{ paddingHorizontal: 16 }}>
+          {error ? (
+            <View style={{ paddingHorizontal: spacing.lg }}>
               <ErrorState
                 title="Something went wrong"
                 message={error}
@@ -665,124 +832,117 @@ export default function DebtsScreen() {
                 }}
               />
             </View>
-          )}
-
-          {!error && loading ? (
-            <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : !error && debts.length === 0 ? (
-            <View style={{ paddingHorizontal: 16 }}>
+          ) : loading ? (
+            <DebtsSkeleton />
+          ) : debts.length === 0 ? (
+            <View style={{ paddingHorizontal: spacing.lg }}>
               <EmptyState
                 icon="trending-down-outline"
                 title="No debts tracked"
                 description="Add your first debt to start tracking and managing them"
                 actionLabel="Add Debt"
-                onAction={() => { resetForm(); setShowForm(true); }}
+                onAction={openAddForm}
               />
             </View>
-          ) : !error ? (
+          ) : (
             <>
               {/* ── Hero Summary Card ── */}
-              <View style={styles.heroCard}>
+              <View
+                style={styles.heroCard}
+                accessibilityLabel={`Total debt ${fmt(totalBalance)}, minimum payment ${fmt(totalMinPayment)}, average APR ${weightedApr.toFixed(1)} percent, ${debts.length} accounts. Attack ${fmtShort(attackTotal)}, Structured ${fmtShort(structuredTotal)}.`}
+              >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <View>
-                    <Text style={{ fontSize: 12, color: C.textMuted, fontWeight: '500' }}>Total Debt</Text>
-                    <Text style={{ fontSize: 30, fontWeight: '800', color: C.textPrimary, marginTop: 4, letterSpacing: -1 }}>
+                    <Text style={{ ...typography.caption, color: colors.textMuted }}>Total debt</Text>
+                    <Text style={{ ...typography.h1, color: colors.text, marginTop: spacing.xs }}>
                       {fmt(totalBalance)}
                     </Text>
                   </View>
                   <View style={styles.changeBadge}>
-                    <Ionicons name="arrow-down" size={12} color={C.income} />
-                    <Text style={{ fontSize: 11, color: C.income, fontWeight: '600' }}>-{fmtShort(totalMinPayment)}</Text>
+                    <Ionicons name="arrow-down" size={12} color={colors.success} />
+                    <Text style={{ ...typography.caption, color: colors.success, fontWeight: '600' }}>-{fmtShort(totalMinPayment)}/mo</Text>
                   </View>
                 </View>
 
                 {/* Stats row */}
                 <View style={styles.statsRow}>
                   <View style={{ flex: 1, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 9, color: C.textMuted }}>Min. Payment</Text>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: C.textPrimary, marginTop: 2 }}>{fmt(totalMinPayment)}</Text>
+                    <Text style={{ ...typography.caption, color: colors.textMuted }}>Min. payment</Text>
+                    <Text style={{ ...typography.smallBold, color: colors.text, marginTop: 2 }}>{fmt(totalMinPayment)}</Text>
                   </View>
-                  <View style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                  <View style={{ width: 1, backgroundColor: colors.borderLight }} />
                   <View style={{ flex: 1, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 9, color: C.textMuted }}>Avg. APR</Text>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: C.warning, marginTop: 2 }}>{weightedApr.toFixed(1)}%</Text>
+                    <Text style={{ ...typography.caption, color: colors.textMuted }}>Avg. APR</Text>
+                    <Text style={{ ...typography.smallBold, color: colors.warning, marginTop: 2 }}>{weightedApr.toFixed(1)}%</Text>
                   </View>
-                  <View style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                  <View style={{ width: 1, backgroundColor: colors.borderLight }} />
                   <View style={{ flex: 1, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 9, color: C.textMuted }}>Accounts</Text>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: C.textPrimary, marginTop: 2 }}>{debts.length}</Text>
+                    <Text style={{ ...typography.caption, color: colors.textMuted }}>Accounts</Text>
+                    <Text style={{ ...typography.smallBold, color: colors.text, marginTop: 2 }}>{debts.length}</Text>
                   </View>
                 </View>
 
-                {/* Attack vs Structured breakdown */}
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                  <View style={styles.attackMiniCard}>
-                    <Ionicons name="flame" size={14} color={C.attack} />
+                {/* Attack vs Structured split tiles */}
+                <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                  <TouchableOpacity
+                    style={styles.splitTile}
+                    activeOpacity={0.7}
+                    onPress={() => setActiveFilter('attack')}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Attack ${fmtShort(attackTotal)}`}
+                  >
+                    <Ionicons name="flame" size={14} color={colors.error} />
                     <View>
-                      <Text style={{ fontSize: 9, color: C.attack, fontWeight: '600' }}>ATTACK</Text>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: C.textPrimary }}>{fmtShort(attackTotal)}</Text>
+                      <Text style={{ ...typography.caption, fontSize: 10, color: colors.error, fontWeight: '600', letterSpacing: 0.5 }}>ATTACK</Text>
+                      <Text style={{ ...typography.smallBold, color: colors.text }}>{fmtShort(attackTotal)}</Text>
                     </View>
-                  </View>
-                  <View style={styles.structuredMiniCard}>
-                    <Ionicons name="shield-checkmark" size={14} color={C.structured} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.splitTile}
+                    activeOpacity={0.7}
+                    onPress={() => setActiveFilter('structured')}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Structured ${fmtShort(structuredTotal)}`}
+                  >
+                    <Ionicons name="shield-checkmark" size={14} color={colors.info} />
                     <View>
-                      <Text style={{ fontSize: 9, color: C.structured, fontWeight: '600' }}>STRUCTURED</Text>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: C.textPrimary }}>{fmtShort(structuredTotal)}</Text>
+                      <Text style={{ ...typography.caption, fontSize: 10, color: colors.info, fontWeight: '600', letterSpacing: 0.5 }}>STRUCTURED</Text>
+                      <Text style={{ ...typography.smallBold, color: colors.text }}>{fmtShort(structuredTotal)}</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              {/* ── AI Nudges ── */}
-              {nudges.slice(0, 2).map((nudge) => (
-                <TouchableOpacity
-                  key={nudge.id}
-                  style={styles.aiInsightCard}
-                  activeOpacity={0.8}
-                  onPress={async () => {
-                    try { await api.post(`/auth/ai/nudges/${nudge.id}/dismiss`); } catch {}
-                    setNudges(prev => prev.filter(n => n.id !== nudge.id));
-                    if (nudge.action_type === 'ask_ai') {
-                      router.navigate('/(tabs)/ai-chat' as any);
-                    } else if (nudge.action_type === 'navigate_to' && nudge.action_data) {
-                      router.push(nudge.action_data as any);
-                    }
-                  }}
-                >
-                  <LinearGradient
-                    colors={[C.accentDark, C.accent]}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    style={styles.aiInsightIcon}
-                  >
-                    <Ionicons name="sparkles" size={16} color="white" />
-                  </LinearGradient>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#f8fafc', marginBottom: 2 }}>{nudge.title}</Text>
-                    <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', lineHeight: 16 }}>{nudge.body}</Text>
-                  </View>
-                  <Ionicons name="close" size={14} color={C.textDim} />
-                </TouchableOpacity>
-              ))}
+              {/* ── AI Nudges (Attention slot) ── */}
+              <View style={{ paddingHorizontal: spacing.lg }}>
+                <DebtNudgeCard
+                  nudges={nudges.slice(0, 2)}
+                  onPress={handleNudgePress}
+                  onDismiss={handleNudgeDismiss}
+                />
+              </View>
 
               {/* ── Payoff Timeline ── */}
               {timelineDebts.length > 0 && (
                 <View style={styles.timelineCard}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Ionicons name="time-outline" size={14} color={C.accent} />
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: C.textPrimary }}>Payoff Timeline</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                      <Ionicons name="time-outline" size={14} color={colors.primary2} />
+                      <Text style={{ ...typography.smallBold, color: colors.text }}>Payoff Timeline</Text>
                     </View>
                     <TouchableOpacity
                       onPress={() => router.push('/payoff-calculator')}
                       style={styles.calcButton}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open payoff calculator"
                     >
-                      <Ionicons name="calculator-outline" size={11} color={C.accent} />
-                      <Text style={{ fontSize: 10, fontWeight: '600', color: C.accent }}>Calculator</Text>
+                      <Ionicons name="calculator-outline" size={11} color={colors.primary2} />
+                      <Text style={{ ...typography.caption, fontWeight: '600', color: colors.primary2 }}>Calculator</Text>
                     </TouchableOpacity>
                   </View>
                   <PayoffTimeline debts={timelineDebts} />
-                  <Text style={{ marginTop: 10, fontSize: 10, color: C.textDim, textAlign: 'center' }}>
-                    Mortgage excluded {'\u00B7'} Based on minimum payments
+                  <Text style={{ ...typography.caption, marginTop: spacing.sm, color: colors.textDark, textAlign: 'center' }}>
+                    Mortgage excluded {'·'} Based on minimum payments
                   </Text>
                 </View>
               )}
@@ -790,12 +950,11 @@ export default function DebtsScreen() {
               {/* ── Filter Tabs ── */}
               <View style={styles.filterRow}>
                 {([
-                  { id: 'all' as const, label: 'All', count: debts.length, color: undefined },
-                  { id: 'attack' as const, label: 'Attack', count: attackDebts.length, color: C.attack },
-                  { id: 'structured' as const, label: 'Structured', count: structuredDebts.length, color: C.structured },
-                ] as const).map(f => {
+                  { id: 'all' as const, label: 'All', count: debts.length, color: colors.primary2 },
+                  { id: 'attack' as const, label: 'Attack', count: attackDebts.length, color: colors.error },
+                  { id: 'structured' as const, label: 'Structured', count: structuredDebts.length, color: colors.info },
+                ]).map(f => {
                   const isActive = activeFilter === f.id;
-                  const tabColor = f.color || C.accent;
                   return (
                     <TouchableOpacity
                       key={f.id}
@@ -803,28 +962,31 @@ export default function DebtsScreen() {
                       style={[
                         styles.filterTab,
                         {
-                          backgroundColor: isActive ? tabColor + '18' : 'rgba(255,255,255,0.04)',
-                          borderColor: isActive ? tabColor + '30' : C.border,
+                          backgroundColor: isActive ? f.color + '2e' : colors.glassLight,
+                          borderColor: isActive ? f.color + '4d' : colors.borderGlass,
                         },
                       ]}
                       activeOpacity={0.7}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: isActive }}
+                      accessibilityLabel={`${f.label}, ${f.count} debts`}
                     >
                       {f.id === 'attack' && (
-                        <Ionicons name="flame" size={11} color={isActive ? C.attack : C.textMuted} />
+                        <Ionicons name="flame" size={11} color={isActive ? colors.error : colors.textMuted} />
                       )}
                       {f.id === 'structured' && (
-                        <Ionicons name="shield-checkmark" size={11} color={isActive ? C.structured : C.textMuted} />
+                        <Ionicons name="shield-checkmark" size={11} color={isActive ? colors.info : colors.textMuted} />
                       )}
                       <Text style={{
-                        fontSize: 12, fontWeight: '600',
-                        color: isActive ? tabColor : C.textMuted,
+                        ...typography.caption, fontWeight: '600',
+                        color: isActive ? f.color : colors.textMuted,
                       }}>
                         {f.label}
                       </Text>
                       <View style={styles.filterBadge}>
                         <Text style={{
-                          fontSize: 10, fontWeight: '700',
-                          color: isActive ? tabColor : C.textDim,
+                          ...typography.caption, fontSize: 10, fontWeight: '700',
+                          color: isActive ? f.color : colors.textDark,
                         }}>
                           {f.count}
                         </Text>
@@ -835,7 +997,7 @@ export default function DebtsScreen() {
               </View>
 
               {/* ── Debt Cards ── */}
-              <View style={{ paddingHorizontal: 16 }}>
+              <View style={{ paddingHorizontal: spacing.lg }}>
                 {filtered.map(debt => (
                   <DebtCard
                     key={debt.id}
@@ -862,370 +1024,395 @@ export default function DebtsScreen() {
               {/* ── Add Debt CTA ── */}
               <TouchableOpacity
                 style={styles.addDebtCta}
-                onPress={() => { resetForm(); setShowForm(true); }}
+                onPress={openAddForm}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Add new debt"
               >
-                <Ionicons name="add" size={16} color={C.accent} />
-                <Text style={{ fontSize: 13, color: C.accent, fontWeight: '500' }}>Add New Debt</Text>
+                <Ionicons name="add" size={16} color={colors.primary2} />
+                <Text style={{ ...typography.small, color: colors.primary2, fontWeight: '500' }}>Add New Debt</Text>
               </TouchableOpacity>
             </>
-          ) : null}
+          )}
         </ScrollView>
 
-        {/* ── Add/Edit Modal ── */}
-        <Modal visible={showForm} animationType="slide" transparent>
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalContent}>
-              <ScrollView>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    {editing ? 'Edit Debt' : 'Add Debt'}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => { setShowForm(false); resetForm(); }}
-                  >
-                    <Ionicons name="close" size={24} color="#cbd5e1" />
-                  </TouchableOpacity>
+        {/* ── Add/Edit Debt Sheet ── */}
+        <FormSheet
+          visible={showForm}
+          title={editing ? 'Edit Debt' : 'Add Debt'}
+          onClose={() => {
+            setShowForm(false);
+            resetForm();
+          }}
+          footer={
+            <>
+              {saveError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{saveError}</Text>
                 </View>
-
-                <Text style={styles.label}>Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Chase Credit Card"
-                  placeholderTextColor="#94a3b8"
-                  value={name}
-                  onChangeText={setName}
-                />
-
-                <Text style={styles.label}>Balance</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="$0.00"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="numeric"
-                  value={balance}
-                  onChangeText={setBalance}
-                />
-
-                <Text style={styles.label}>APR (%)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="numeric"
-                  value={apr}
-                  onChangeText={setApr}
-                />
-
-                <Text style={styles.label}>Min Payment</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="$0.00"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="numeric"
-                  value={minPayment}
-                  onChangeText={setMinPayment}
-                />
-
-                <Text style={styles.label}>Due Day (1-31)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="15"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="numeric"
-                  value={dueDay}
-                  onChangeText={setDueDay}
-                />
-
-                <Text style={styles.label}>Debt Type</Text>
-                <View style={styles.freqRow}>
-                  {LIABILITY_TYPES.map((t) => (
-                    <TouchableOpacity
-                      key={t.value}
-                      style={[styles.freqBtn, liabilityType === t.value && styles.freqBtnActive]}
-                      onPress={() => {
-                        setLiabilityType(t.value);
-                        setDebtCategory((DEFAULT_CATEGORIES[t.value] || 'attack') as 'attack' | 'structured');
-                      }}
-                    >
-                      <Text style={[styles.freqText, liabilityType === t.value && styles.freqTextActive]}>
-                        {t.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={styles.label}>Category</Text>
-                <View style={styles.strategyRow}>
-                  {(['attack', 'structured'] as const).map((c) => (
-                    <TouchableOpacity
-                      key={c}
-                      style={[
-                        styles.strategyBtn,
-                        debtCategory === c && (c === 'attack'
-                          ? { backgroundColor: 'rgba(239,68,68,0.18)', borderColor: 'rgba(239,68,68,0.7)' }
-                          : { backgroundColor: 'rgba(59,130,246,0.18)', borderColor: 'rgba(59,130,246,0.7)' }
-                        ),
-                      ]}
-                      onPress={() => setDebtCategory(c)}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons
-                          name={c === 'attack' ? 'flash' : 'shield-checkmark'}
-                          size={14}
-                          color={debtCategory === c ? (c === 'attack' ? '#f87171' : '#60a5fa') : '#94a3b8'}
-                        />
-                        <Text style={[
-                          styles.strategyText,
-                          debtCategory === c && { color: '#fff', fontWeight: '700' },
-                        ]}>
-                          {c === 'attack' ? 'Attack' : 'Structured'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4 }}>
-                  {debtCategory === 'attack' ? 'Pay off aggressively with extra payments' : 'Pay minimums on schedule (e.g., mortgage)'}
-                </Text>
-
-                <Text style={styles.label}>Strategy</Text>
-                <View style={styles.strategyRow}>
-                  {['avalanche', 'snowball', ''].map((s) => (
-                    <TouchableOpacity
-                      key={s}
-                      style={[styles.strategyBtn, strategy === s && styles.strategyBtnActive]}
-                      onPress={() => setStrategy(s)}
-                    >
-                      <Text style={[styles.strategyText, strategy === s && styles.strategyTextActive]}>
-                        {s || 'None'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <View style={styles.billToggleRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.billToggleLabel}>Share with partner</Text>
-                    <Text style={styles.billToggleDesc}>Visible to your household partner</Text>
-                  </View>
-                  <Switch
-                    value={isShared}
-                    onValueChange={setIsShared}
-                    trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(168,85,247,0.4)' }}
-                    thumbColor={isShared ? '#c084fc' : '#64748b'}
-                  />
-                </View>
-
-                {/* Create Associated Bill toggle - only for new debts */}
-                {!editing && (
-                  <>
-                    <View style={styles.billToggleRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.billToggleLabel}>Create associated bill</Text>
-                        <Text style={styles.billToggleDesc}>Auto-create a recurring bill linked to this debt</Text>
-                      </View>
-                      <Switch
-                        value={createBill}
-                        onValueChange={setCreateBill}
-                        trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(168,85,247,0.4)' }}
-                        thumbColor={createBill ? '#c084fc' : '#64748b'}
-                      />
-                    </View>
-
-                    {createBill && (
-                      <View style={styles.billOptionsCard}>
-                        <Ionicons name="receipt-outline" size={16} color="#60a5fa" style={{ marginBottom: 8 }} />
-                        <Text style={styles.billOptionsHint}>
-                          Bill: "{name.trim() || '...'} Payment" for {minPayment ? `$${minPayment}` : '$0'} due day {dueDay || '1'}
-                        </Text>
-                        <Text style={[styles.label, { marginTop: 10 }]}>Frequency</Text>
-                        <View style={styles.freqRow}>
-                          {(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map((f) => (
-                            <TouchableOpacity
-                              key={f}
-                              style={[styles.freqBtn, billFrequency === f && styles.freqBtnActive]}
-                              onPress={() => setBillFrequency(f)}
-                            >
-                              <Text style={[styles.freqText, billFrequency === f && styles.freqTextActive]}>
-                                {f.charAt(0).toUpperCase() + f.slice(1)}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                    )}
-                  </>
-                )}
-
-                <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
-                  <LinearGradient
-                    colors={['#a855f7', '#7c3aed']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.saveBtnInner}
-                  >
-                    <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Debt'}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        {/* ── Payment Modal ── */}
-        <Modal visible={paymentId !== null} animationType="fade" transparent>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setPaymentId(null)}
-          >
-            <View style={styles.paymentSheet}>
-              <Text style={styles.modalTitle}>Apply Payment</Text>
-              <TextInput
-                style={[styles.input, { marginTop: 12 }]}
-                placeholder="Payment amount"
-                placeholderTextColor="#94a3b8"
-                keyboardType="numeric"
-                value={paymentAmount}
-                onChangeText={setPaymentAmount}
+              ) : null}
+              <FormButton
+                label={editing ? 'Update Debt' : 'Add Debt'}
+                onPress={handleSave}
+                disabled={!isDebtFormValid}
+                loading={saving}
               />
-              <TouchableOpacity onPress={handlePayment} style={styles.saveBtn}>
-                <LinearGradient
-                  colors={['#34d399', '#059669']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.saveBtnInner}
-                >
-                  <Text style={styles.saveBtnText}>Apply Payment</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
+            </>
+          }
+        >
+          <FormField label="Name" error={nameTouched && !debtNameValid ? 'Name is required' : null}>
+            <FormInput
+              icon="text-outline"
+              placeholder="e.g. Chase Credit Card"
+              value={name}
+              onChangeText={setName}
+              onBlur={() => setNameTouched(true)}
+              error={nameTouched && !debtNameValid}
+            />
+          </FormField>
 
-        {/* ── Create Bill from Debt Modal ── */}
-        <Modal visible={billDebt !== null} animationType="fade" transparent>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setBillDebt(null)}
-          >
-            <View style={styles.paymentSheet}>
-              <Text style={styles.modalTitle}>Create Bill</Text>
-              {billDebt && (
-                <View style={styles.billPreview}>
-                  <Ionicons name="receipt-outline" size={16} color="#60a5fa" style={{ marginBottom: 6 }} />
-                  <Text style={styles.billPreviewText}>
-                    "{billDebt.name} Payment" for {fmt(billDebt.min_payment || 0)} due day {billDebt.due_day ?? 1}
-                  </Text>
-                </View>
-              )}
-              <Text style={[styles.label, { marginTop: 12 }]}>Frequency</Text>
-              <View style={styles.freqRow}>
-                {(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map((f) => (
+          {bankAccounts.length > 0 && (
+            <FormField label="Linked Account" optional>
+              <Text style={styles.linkedHint}>
+                Link a synced credit card or loan account and this debt's balance will mirror it
+                automatically on every sync.
+              </Text>
+              <TouchableOpacity
+                style={[styles.accountOption, linkedBalanceId == null && styles.accountOptionActive]}
+                onPress={() => setLinkedBalanceId(null)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: linkedBalanceId == null }}
+              >
+                <Ionicons
+                  name={linkedBalanceId == null ? 'radio-button-on' : 'radio-button-off'}
+                  size={16}
+                  color={linkedBalanceId == null ? colors.primary2 : colors.textMuted}
+                />
+                <Text style={styles.accountOptionText}>Track manually</Text>
+              </TouchableOpacity>
+              {bankAccounts.map((a) => {
+                const selected = linkedBalanceId === a.id;
+                return (
                   <TouchableOpacity
-                    key={f}
-                    style={[styles.freqBtn, billFreq === f && styles.freqBtnActive]}
-                    onPress={() => setBillFreq(f)}
+                    key={a.id}
+                    style={[styles.accountOption, selected && styles.accountOptionActive]}
+                    onPress={() => setLinkedBalanceId(a.id)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
                   >
-                    <Text style={[styles.freqText, billFreq === f && styles.freqTextActive]}>
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
+                    <Ionicons
+                      name={selected ? 'radio-button-on' : 'radio-button-off'}
+                      size={16}
+                      color={selected ? colors.primary2 : colors.textMuted}
+                    />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.accountOptionText} numberOfLines={1}>
+                        {a.name || 'Account'}
+                        {a.institution_name ? ` · ${a.institution_name}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={styles.accountOptionBalance}>
+                      {fmt(Math.abs(a.current_balance || 0))}
                     </Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-              <TouchableOpacity onPress={handleCreateBillFromDebt} style={styles.saveBtn}>
-                <LinearGradient
-                  colors={['#3b82f6', '#2563eb']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.saveBtnInner}
-                >
-                  <Text style={styles.saveBtnText}>Create Bill</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-
-        {/* ── Link Existing Bill to Debt Modal ── */}
-        <Modal visible={linkBillDebt !== null} animationType="fade" transparent>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setLinkBillDebt(null)}
-          >
-            <View style={styles.paymentSheet}>
-              <Text style={styles.modalTitle}>Link Bill to Debt</Text>
-              <Text style={{ color: '#94a3b8', fontSize: 13, marginBottom: 12 }}>
-                Select a bill to link to "{linkBillDebt?.name}"
-              </Text>
-              {(() => {
-                const unlinkedBills = bills.filter(b => !b.debt_account_id);
-                if (unlinkedBills.length === 0) {
-                  return (
-                    <View style={{ alignItems: 'center', paddingVertical: 20 }}>
-                      <Ionicons name="receipt-outline" size={32} color="rgba(255,255,255,0.2)" />
-                      <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 8 }}>No unlinked bills available</Text>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setLinkBillDebt(null);
-                          if (linkBillDebt) {
-                            setBillDebt(linkBillDebt);
-                            setBillFreq('monthly');
-                          }
-                        }}
-                        style={{ marginTop: 12 }}
-                      >
-                        <Text style={{ color: '#a855f7', fontWeight: '700', fontSize: 13 }}>Create a new bill instead</Text>
-                      </TouchableOpacity>
-                    </View>
-                  );
-                }
-                return (
-                  <ScrollView style={{ maxHeight: 300 }}>
-                    {unlinkedBills.map(bill => (
-                      <TouchableOpacity
-                        key={bill.id}
-                        style={{
-                          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                          padding: 14, borderRadius: 12, marginBottom: 6,
-                          backgroundColor: 'rgba(255,255,255,0.04)',
-                          borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
-                        }}
-                        onPress={async () => {
-                          try {
-                            await api.put(`/auth/bills/${bill.id}`, {
-                              ...bill,
-                              debt_account_id: linkBillDebt?.id,
-                            });
-                            Alert.alert('Success', `"${bill.name}" linked to "${linkBillDebt?.name}".`);
-                            setLinkBillDebt(null);
-                            loadDebts();
-                          } catch (e) {
-                            console.error('Link bill error:', e);
-                            Alert.alert('Error', 'Failed to link bill.');
-                          }
-                        }}
-                      >
-                        <View>
-                          <Text style={{ color: '#f8fafc', fontWeight: '600', fontSize: 14 }}>{bill.name}</Text>
-                          <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
-                            ${bill.amount_due?.toFixed(2)} · Due {bill.due_day}{bill.due_day === 1 ? 'st' : bill.due_day === 2 ? 'nd' : bill.due_day === 3 ? 'rd' : 'th'}
-                          </Text>
-                        </View>
-                        <Ionicons name="link" size={16} color="#a855f7" />
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
                 );
-              })()}
+              })}
+            </FormField>
+          )}
+
+          {linkedBalanceId == null ? (
+            <FormField
+              label="Balance"
+              error={balanceTouched && !balanceValid ? 'Enter a valid balance' : null}
+            >
+              <AmountInput
+                compact
+                value={balance}
+                onChangeText={setBalance}
+                onBlur={() => setBalanceTouched(true)}
+                error={balanceTouched && !balanceValid ? 'Enter a valid balance' : null}
+                accessibilityLabel="Balance"
+              />
+            </FormField>
+          ) : (
+            <FormField label="Balance">
+              <Text style={styles.linkedHint}>
+                Mirrors the linked account — updates automatically on every sync.
+              </Text>
+            </FormField>
+          )}
+
+          <FormField label="APR (%)" optional>
+            <FormInput
+              icon="trending-up-outline"
+              placeholder="0"
+              keyboardType="decimal-pad"
+              value={apr}
+              onChangeText={setApr}
+            />
+          </FormField>
+
+          <FormField label="Min Payment" optional>
+            <AmountInput
+              compact
+              value={minPayment}
+              onChangeText={setMinPayment}
+              accessibilityLabel="Minimum payment"
+            />
+          </FormField>
+
+          <FormField
+            label="Due Day"
+            optional
+            error={dueDayTouched && !debtDueDayValid ? 'Due day must be between 1 and 31' : null}
+          >
+            <FormInput
+              icon="calendar-number-outline"
+              placeholder="15"
+              keyboardType="number-pad"
+              value={dueDay}
+              onChangeText={setDueDay}
+              onBlur={() => setDueDayTouched(true)}
+              error={dueDayTouched && !debtDueDayValid}
+            />
+          </FormField>
+
+          <FormField label="Debt Type">
+            <FormChips
+              options={LIABILITY_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+              value={liabilityType}
+              onChange={(v) => {
+                setLiabilityType(v);
+                setDebtCategory((DEFAULT_CATEGORIES[v] || 'attack') as 'attack' | 'structured');
+              }}
+            />
+          </FormField>
+
+          <FormField label="Category">
+            <FormChips
+              options={[
+                { value: 'attack' as const, label: 'Attack', icon: 'flame' as const },
+                { value: 'structured' as const, label: 'Structured', icon: 'shield-checkmark' as const },
+              ]}
+              value={debtCategory}
+              onChange={setDebtCategory}
+            />
+            <Text style={styles.categoryHint}>
+              {debtCategory === 'attack'
+                ? 'Pay off aggressively with extra payments'
+                : 'Pay minimums on schedule (e.g., mortgage)'}
+            </Text>
+          </FormField>
+
+          <FormField label="Strategy" optional>
+            <FormChips
+              options={[
+                { value: 'avalanche', label: 'Avalanche' },
+                { value: 'snowball', label: 'Snowball' },
+                { value: 'none', label: 'None' },
+              ]}
+              value={strategy || 'none'}
+              onChange={(v) => setStrategy(v === 'none' ? '' : v)}
+            />
+          </FormField>
+
+          <FormSwitchRow
+            label="Share with partner"
+            sublabel="Visible to your household partner"
+            value={isShared}
+            onValueChange={setIsShared}
+          />
+
+          {/* Create Associated Bill toggle - only for new debts */}
+          {!editing && (
+            <>
+              <FormSwitchRow
+                label="Create associated bill"
+                sublabel="Auto-create a recurring bill linked to this debt"
+                value={createBill}
+                onValueChange={setCreateBill}
+              />
+
+              {createBill && (
+                <View style={styles.billOptionsCard}>
+                  <Ionicons
+                    name="receipt-outline"
+                    size={16}
+                    color={colors.info}
+                    style={{ marginBottom: spacing.sm }}
+                  />
+                  <Text style={styles.billOptionsHint}>
+                    Bill: "{name.trim() || '...'} Payment" for {minPayment ? `$${minPayment}` : '$0'}{' '}
+                    due day {dueDay || '1'}
+                  </Text>
+                  <FormField label="Frequency">
+                    <FormChips
+                      options={(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map(
+                        (f) => ({ value: f, label: f.charAt(0).toUpperCase() + f.slice(1) }),
+                      )}
+                      value={billFrequency}
+                      onChange={setBillFrequency}
+                    />
+                  </FormField>
+                </View>
+              )}
+            </>
+          )}
+        </FormSheet>
+
+        {/* ── Payment Sheet ── */}
+        <FormSheet
+          visible={paymentId !== null}
+          title="Apply Payment"
+          onClose={() => {
+            setPaymentId(null);
+            setPaymentAmount('');
+            setPaymentTouched(false);
+            setPaymentError(null);
+          }}
+          maxHeightPct={0.5}
+          footer={
+            <>
+              {paymentError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{paymentError}</Text>
+                </View>
+              ) : null}
+              <FormButton
+                label="Apply Payment"
+                onPress={handlePayment}
+                disabled={!paymentValid}
+                loading={paymentSaving}
+              />
+            </>
+          }
+        >
+          <FormField
+            label="Payment Amount"
+            error={paymentTouched && !paymentValid ? 'Enter a valid payment amount' : null}
+          >
+            <AmountInput
+              compact
+              value={paymentAmount}
+              onChangeText={setPaymentAmount}
+              onBlur={() => setPaymentTouched(true)}
+              error={paymentTouched && !paymentValid ? 'Enter a valid payment amount' : null}
+              accessibilityLabel="Payment amount"
+              autoFocus
+            />
+          </FormField>
+        </FormSheet>
+
+        {/* ── Create Bill from Debt Sheet ── */}
+        <FormSheet
+          visible={billDebt !== null}
+          title="Create Bill"
+          onClose={() => setBillDebt(null)}
+          maxHeightPct={0.6}
+          footer={
+            <FormButton label="Create Bill" onPress={handleCreateBillFromDebt} loading={billCreating} />
+          }
+        >
+          {billDebt && (
+            <View style={styles.billPreview}>
+              <Ionicons
+                name="receipt-outline"
+                size={16}
+                color={colors.info}
+                style={{ marginBottom: spacing.xs }}
+              />
+              <Text style={styles.billPreviewText}>
+                "{billDebt.name} Payment" for {fmt(billDebt.min_payment || 0)} due day{' '}
+                {billDebt.due_day ?? 1}
+              </Text>
             </View>
-          </TouchableOpacity>
-        </Modal>
+          )}
+          <FormField label="Frequency">
+            <FormChips
+              options={(['monthly', 'biweekly', 'weekly', 'quarterly', 'yearly'] as const).map(
+                (f) => ({ value: f, label: f.charAt(0).toUpperCase() + f.slice(1) }),
+              )}
+              value={billFreq}
+              onChange={setBillFreq}
+            />
+          </FormField>
+        </FormSheet>
+
+        {/* ── Link Existing Bill to Debt Sheet ── */}
+        <FormSheet
+          visible={linkBillDebt !== null}
+          title="Link Bill to Debt"
+          onClose={() => setLinkBillDebt(null)}
+          maxHeightPct={0.6}
+        >
+          <Text style={{ color: colors.textMuted, ...typography.small, marginBottom: spacing.md }}>
+            Select a bill to link to "{linkBillDebt?.name}"
+          </Text>
+          {(() => {
+            const unlinkedBills = bills.filter((b) => !b.debt_account_id);
+            if (unlinkedBills.length === 0) {
+              return (
+                <View style={{ alignItems: 'center', paddingVertical: spacing.xl }}>
+                  <Ionicons name="receipt-outline" size={32} color={colors.textDark} />
+                  <Text style={{ color: colors.textMuted, ...typography.small, marginTop: spacing.sm }}>
+                    No unlinked bills available
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLinkBillDebt(null);
+                      if (linkBillDebt) {
+                        setBillDebt(linkBillDebt);
+                        setBillFreq('monthly');
+                      }
+                    }}
+                    style={{ marginTop: spacing.md }}
+                  >
+                    <Text style={{ color: colors.primary2, fontWeight: '700', ...typography.small }}>
+                      Create a new bill instead
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            }
+            return unlinkedBills.map((bill) => (
+              <TouchableOpacity
+                key={bill.id}
+                style={styles.linkBillRow}
+                onPress={async () => {
+                  try {
+                    await api.put(`/auth/bills/${bill.id}`, {
+                      ...bill,
+                      debt_account_id: linkBillDebt?.id,
+                    });
+                    successHaptic();
+                    Alert.alert('Success', `"${bill.name}" linked to "${linkBillDebt?.name}".`);
+                    setLinkBillDebt(null);
+                    loadDebts();
+                  } catch (e) {
+                    console.error('Link bill error:', e);
+                    errorHaptic();
+                    Alert.alert('Error', 'Failed to link bill.');
+                  }
+                }}
+              >
+                <View>
+                  <Text style={{ color: colors.text, fontWeight: '600', ...typography.smallBold }}>
+                    {bill.name}
+                  </Text>
+                  <Text style={{ color: colors.textMuted, ...typography.caption, marginTop: 2 }}>
+                    ${bill.amount_due?.toFixed(2)} · Due {bill.due_day}
+                    {bill.due_day === 1 ? 'st' : bill.due_day === 2 ? 'nd' : bill.due_day === 3 ? 'rd' : 'th'}
+                  </Text>
+                </View>
+                <Ionicons name="link" size={16} color={colors.primary2} />
+              </TouchableOpacity>
+            ));
+          })()}
+        </FormSheet>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
@@ -1236,164 +1423,118 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    marginBottom: 16,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    marginBottom: spacing.lg,
   },
   headerTitle: {
-    color: C.textPrimary,
-    fontSize: 22,
-    fontWeight: '800',
-  },
-  iconButton: {
-    padding: 2,
+    ...typography.h3,
+    color: colors.text,
   },
   addButton: {
     width: 34,
     height: 34,
-    borderRadius: 10,
-    backgroundColor: C.surface,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassLight,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: C.border,
+    borderColor: colors.borderGlass,
   },
 
   // Hero Summary Card
   heroCard: {
-    marginHorizontal: 16,
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 16,
-    backgroundColor: 'rgba(248,113,113,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(248,113,113,0.12)',
+    ...glassEffects.glassFloating,
+    marginHorizontal: spacing.lg,
+    padding: spacing.xl,
+    marginBottom: spacing.xl,
   },
   changeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(52,211,153,0.12)',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    gap: spacing.xs,
+    backgroundColor: colors.success + '1f',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   statsRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 16,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
   },
-  attackMiniCard: {
+  splitTile: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(248,113,113,0.08)',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    gap: spacing.sm,
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(248,113,113,0.1)',
-  },
-  structuredMiniCard: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(96,165,250,0.08)',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.1)',
-  },
-
-  // AI Insight
-  aiInsightCard: {
-    marginHorizontal: 16,
-    marginBottom: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: 'rgba(124,58,237,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.15)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  aiInsightIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: colors.borderGlass,
   },
 
   // Payoff Timeline
   timelineCard: {
-    marginHorizontal: 16,
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginBottom: 16,
+    ...glassEffects.glass,
+    marginHorizontal: spacing.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
   calcButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(168,85,247,0.1)',
-    borderRadius: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
+    gap: spacing.xs,
+    backgroundColor: colors.primary + '1a',
+    borderRadius: radius.md,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
     borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.15)',
+    borderColor: colors.primary + '26',
   },
 
   // Filter Tabs
   filterRow: {
     flexDirection: 'row',
-    gap: 6,
-    marginHorizontal: 16,
-    marginBottom: 12,
+    gap: spacing.xs,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
   },
   filterTab: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
     borderWidth: 1,
+    minHeight: 44,
   },
   filterBadge: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 6,
-    paddingHorizontal: 5,
+    backgroundColor: colors.glassMedium,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.xs,
     paddingVertical: 1,
   },
 
   // Debt Card
   debtCard: {
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: C.border,
-    marginBottom: 8,
+    ...glassEffects.glass,
+    marginBottom: spacing.sm,
   },
   debtCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    minHeight: 44,
   },
   debtCardIconCenter: {
     position: 'absolute',
@@ -1405,217 +1546,147 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   debtCardExpanded: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.lg,
     borderTopWidth: 1,
-    borderTopColor: C.border,
-    paddingTop: 14,
+    borderTopColor: colors.borderLight,
+    paddingTop: spacing.md,
   },
   statBox: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    ...glassEffects.glass,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
   },
   actionBtnPrimary: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 10,
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    minHeight: 44,
   },
   actionBtnSecondary: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 10,
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderColor: colors.borderGlass,
+    backgroundColor: colors.glassLight,
+    minHeight: 44,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    minHeight: 36,
   },
 
   // Add Debt CTA
   addDebtCta: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 20,
-    paddingVertical: 14,
-    borderRadius: 14,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: 'rgba(168,85,247,0.3)',
-    backgroundColor: 'rgba(168,85,247,0.04)',
+    borderColor: colors.primary2 + '4d',
+    backgroundColor: colors.primary2 + '0d',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: spacing.sm,
   },
 
-  // Modal styles
-  modalBackdrop: {
+  // Form sheet extras
+  formErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
+  formErrorText: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
+    ...typography.caption,
+    color: colors.error,
   },
-  modalContent: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: '85%',
+  categoryHint: {
+    color: colors.textMuted,
+    ...typography.caption,
+    marginTop: spacing.xs,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+  linkedHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.sm,
   },
-  modalTitle: {
-    color: C.textPrimary,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  label: {
-    color: '#e5e7eb',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 6,
-    marginTop: 12,
-  },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: C.textPrimary,
-    borderWidth: 1,
-    borderColor: C.border,
-    fontSize: 15,
-  },
-  strategyRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4,
-  },
-  strategyBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  strategyBtnActive: {
-    backgroundColor: 'rgba(168,85,247,0.18)',
-    borderColor: 'rgba(168,85,247,0.7)',
-  },
-  strategyText: {
-    color: '#e5e7eb',
-    textTransform: 'capitalize',
-    fontSize: 13,
-  },
-  strategyTextActive: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  billToggleRow: {
+  accountOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    backgroundColor: 'rgba(96,165,250,0.06)',
-    borderRadius: 14,
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.15)',
+    borderColor: colors.borderLight,
+    marginBottom: spacing.xs,
   },
-  billToggleLabel: {
-    color: C.textPrimary,
-    fontWeight: '700',
-    fontSize: 14,
+  accountOptionActive: {
+    borderColor: colors.primary2,
+    backgroundColor: `${colors.primary}1a`,
   },
-  billToggleDesc: {
-    color: C.textMuted,
-    fontSize: 11,
-    marginTop: 2,
+  accountOptionText: {
+    ...typography.small,
+    color: colors.text,
+  },
+  accountOptionBalance: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontVariant: ['tabular-nums'],
   },
   billOptionsCard: {
-    marginTop: 10,
-    padding: 14,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 14,
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: colors.borderGlass,
   },
   billOptionsHint: {
-    color: C.textMuted,
-    fontSize: 12,
+    ...typography.caption,
+    color: colors.textMuted,
     lineHeight: 18,
-  },
-  freqRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 6,
-  },
-  freqBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  freqBtnActive: {
-    backgroundColor: 'rgba(168,85,247,0.18)',
-    borderColor: 'rgba(168,85,247,0.5)',
-  },
-  freqText: {
-    color: '#e5e7eb',
-    fontSize: 12,
-  },
-  freqTextActive: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  saveBtn: {
-    borderRadius: 14,
-    overflow: 'hidden',
-    marginTop: 20,
-    marginBottom: 20,
-  },
-  saveBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-  },
-  saveBtnText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  paymentSheet: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
   },
   billPreview: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: 'rgba(96,165,250,0.08)',
-    borderRadius: 12,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.info + '14',
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.15)',
+    borderColor: colors.info + '2e',
   },
   billPreviewText: {
-    color: C.textMuted,
-    fontSize: 13,
+    ...typography.small,
+    color: colors.textMuted,
     lineHeight: 18,
+  },
+  linkBillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.xs,
+    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
   },
 });

@@ -16,6 +16,8 @@ if (!isExpoGo) {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
       shouldPlaySound: true,
       shouldSetBadge: false,
     }),
@@ -92,6 +94,34 @@ export async function registerForPushNotifications(): Promise<string | null> {
 }
 
 /**
+ * Routes the app based on a tapped notification's data payload.
+ * - { type: 'nudge', action_type, action_data } → open the seeded advisor chat
+ *   (ask_ai) or navigate to the target screen (navigate_to).
+ * - { screen } → navigate to that screen (legacy).
+ */
+function routeFromNotificationData(router: Router, data?: Record<string, string>) {
+  if (!data) return;
+
+  if (data.type === 'nudge') {
+    if (data.action_type === 'ask_ai') {
+      router.push({
+        pathname: '/(tabs)/ai-chat',
+        params: data.action_data ? { seed: data.action_data } : {},
+      } as any);
+    } else if (data.action_type === 'navigate_to' && data.action_data) {
+      router.push(data.action_data as any);
+    } else {
+      router.push('/(tabs)/dashboard' as any);
+    }
+    return;
+  }
+
+  if (data.screen) {
+    router.push(data.screen as any);
+  }
+}
+
+/**
  * Sets up notification response handlers for tap-to-navigate.
  * Call this once in the root layout.
  */
@@ -100,12 +130,18 @@ export function setupNotificationHandlers(router: Router) {
     return () => {};
   }
 
-  // When user taps a notification
+  // Handle a tap that launched the app from a killed state.
+  Notifications.getLastNotificationResponseAsync().then((response) => {
+    if (response) {
+      const data = response.notification.request.content.data as Record<string, string> | undefined;
+      routeFromNotificationData(router, data);
+    }
+  });
+
+  // When user taps a notification while the app is running/backgrounded.
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
     const data = response.notification.request.content.data as Record<string, string> | undefined;
-    if (data?.screen) {
-      router.push(data.screen as any);
-    }
+    routeFromNotificationData(router, data);
   });
 
   return () => {

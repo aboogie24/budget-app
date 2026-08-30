@@ -1,0 +1,66 @@
+{
+  "componentName": "CalendarSummaryHeader",
+  "description": "Month-level header showing the actual-vs-projected split as three columns: Spent so far, Still due, Income. Plus a dual net line (net so far / projected net). This is the headline of the calendar and the primary expression of the double-count fix.",
+  "platform": "react-native",
+  "designSystem": {
+    "card": "glassEffects.glassFloating",
+    "padding": "spacing.lg",
+    "radius": "radius.xl",
+    "background": "GradientBackground variant bgDarkPurple (screen-level)"
+  },
+  "props": {
+    "monthLabel": { "type": "string", "required": true, "description": "e.g. 'June 2026'" },
+    "spentSoFar": { "type": "number", "required": true, "description": "Sum of actual expenses this month (cents or dollars; real money already gone, incl. paid bills)" },
+    "stillDue": { "type": "number", "required": true, "description": "Sum of UNPAID projected bills remaining this month. MUST stay separate from spentSoFar." },
+    "income": { "type": "number", "required": true, "description": "Sum of income this month" },
+    "transactionCount": { "type": "number", "required": false, "description": "Subcount under 'Spent so far'" },
+    "unpaidBillCount": { "type": "number", "required": false, "description": "Subcount under 'Still due'" },
+    "paycheckCount": { "type": "number", "required": false, "description": "Subcount under 'Income'" },
+    "onPrevMonth": { "type": "function", "required": true },
+    "onNextMonth": { "type": "function", "required": true },
+    "onToday": { "type": "function", "required": false, "description": "Shown only when not viewing current month" },
+    "showToday": { "type": "boolean", "default": false }
+  },
+  "derived": {
+    "netSoFar": "income - spentSoFar",
+    "projectedNet": "income - (spentSoFar + stillDue)"
+  },
+  "columns": [
+    {
+      "key": "spentSoFar",
+      "label": "Spent so far",
+      "marker": "solid bar",
+      "valueColor": "colors.error",
+      "valueWeight": "typography.h3",
+      "treatment": "actual / solid"
+    },
+    {
+      "key": "stillDue",
+      "label": "Still due",
+      "marker": "dashed/outlined bar",
+      "valueColor": "colors.warning",
+      "valueOpacity": 0.85,
+      "underline": "dashed",
+      "treatment": "projected / ghosted"
+    },
+    {
+      "key": "income",
+      "label": "Income",
+      "marker": "solid up-tick",
+      "valueColor": "colors.success",
+      "valueWeight": "typography.h3",
+      "treatment": "actual / solid"
+    }
+  ],
+  "netLine": {
+    "netSoFar": { "color": "colors.success or colors.error by sign", "weight": "typography.bodyBold" },
+    "projectedNet": { "color": "colors.textMuted", "label": "Projected net", "note": "muted to read as a forecast" }
+  },
+  "states": ["default", "loading", "error", "emptyMonth"],
+  "accessibility": {
+    "role": "summary",
+    "label": "{monthLabel}. Spent so far {spentSoFar}. Still due {stillDue} from {unpaidBillCount} unpaid bills. Income {income}.",
+    "note": "Split is conveyed via labels + marker shape, not color alone."
+  },
+  "developerNotes": "spentSoFar and stillDue must be passed as separate props and never summed before display — this is the guard against the double-count regression."
+}

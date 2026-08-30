@@ -1,0 +1,36 @@
+{
+  "componentName": "LinkedStatusBadge",
+  "description": "A pill showing a linked-account connection status as icon + word + color (never color alone). Replaces the old color-only 8px status dot. Small enough to be inlined into LinkedAccountRow if a separate component isn't warranted.",
+  "platform": "react-native",
+  "spec": "budget-app/docs/design/specs/linked-accounts-redesign.md",
+  "props": {
+    "status": { "type": "'good' | 'pending_expiration' | 'error' | 'revoked' | string", "required": true, "description": "item_status from getLinkedAccountStatus" }
+  },
+  "variants": ["good", "pending_expiration", "error", "revoked", "unknown"],
+  "states": ["default"],
+  "layout": {
+    "flexDirection": "row",
+    "alignItems": "center",
+    "gap": "spacing.xs",
+    "paddingHorizontal": "spacing.sm",
+    "paddingVertical": "spacing.xs",
+    "radius": "radius.full",
+    "background": "${statusColor}1f",
+    "flexShrink": 0,
+    "iconSize": 12
+  },
+  "typography": { "label": "typography.caption / weight 600 / color statusColor" },
+  "statusMap": {
+    "good": { "token": "colors.success", "icon": "checkmark-circle", "label": "Connected" },
+    "pending_expiration": { "token": "colors.warning", "icon": "alert-circle-outline", "label": "Needs Attention" },
+    "error": { "token": "colors.error", "icon": "warning-outline", "label": "Error" },
+    "revoked": { "token": "colors.textMuted", "icon": "close-circle-outline", "label": "Revoked" },
+    "_fallback": { "token": "colors.textMuted", "icon": "help-circle-outline", "label": "{raw status}" }
+  },
+  "accessibility": {
+    "label": "the badge word is already the accessible status; no extra label needed beyond the parent row",
+    "colorIndependence": "icon + word + color triad — passes for color-blind users",
+    "contrast": "full-opacity semantic color text on ${statusColor}1f tint clears WCAG AA on dark glass"
+  },
+  "reuses": ["Ionicons"]
+}

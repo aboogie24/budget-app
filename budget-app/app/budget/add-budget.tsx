@@ -1,104 +1,177 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   TextInput,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
-  FlatList,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
-import DropDownPicker from 'react-native-dropdown-picker';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { successHaptic, errorHaptic } from '@/utils/haptics';
 import CategoryPicker from '@/components/CategoryPicker';
-import { LinearGradient } from 'expo-linear-gradient';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import BackButton from '@/components/BackButton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  gradients,
+  glassEffects,
+} from '@/utils/design-system';
+import {
+  BudgetAddFrequencyChips,
+  type BudgetFrequency,
+} from '@/components/budget-add-FrequencyChips';
+import { BudgetAddStartDateField } from '@/components/budget-add-StartDateField';
+
+type BudgetType = 'expense' | 'income';
+
+const FREQ_ECHO: Record<BudgetFrequency, string> = {
+  'one-time': 'one-time',
+  weekly: 'per week',
+  biweekly: 'every 2 weeks',
+  monthly: 'per month',
+  '1st-15th': 'on the 1st & 15th',
+};
 
 export default function AddBudgetScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ prefill_category_id?: string; prefill_name?: string }>();
+
+  const hasPrefill = !!params.prefill_category_id || !!params.prefill_name;
+
   const [name, setName] = useState(params.prefill_name ?? '');
   const [amount, setAmount] = useState('');
-  const [type, setType] = useState('expense');
+  const [type, setType] = useState<BudgetType>('expense');
   const [categoryId, setCategoryId] = useState(params.prefill_category_id ?? '');
   const [categoryLabel, setCategoryLabel] = useState(params.prefill_name ?? '');
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
-  const [categories, setCategories] = useState([]);
-  const [typeOpen, setTypeOpen] = useState(false);
-  const [categoryOpen, setCategoryOpen] = useState(false);
-  const [frequencyOpen, setFrequencyOpen] = useState(false);
-  const [frequency, setFrequency] = useState('monthly');
+  const [categories, setCategories] = useState<{ label: string; value: string }[]>([]);
+  const [frequency, setFrequency] = useState<BudgetFrequency>('monthly');
   const [date, setDate] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [budgets, setBudgets] = useState([]);
+  const [dateOpen, setDateOpen] = useState(false);
   const [userId, setUserId] = useState('');
 
+  const [bootLoading, setBootLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+
+  // touched flags for gentle inline hints (don't shout on first render)
+  const [nameTouched, setNameTouched] = useState(false);
+  const [amountTouched, setAmountTouched] = useState(false);
+
+  const isSemanticExpense = type === 'expense';
+  const semanticColor = isSemanticExpense ? colors.error : colors.success;
+
+  // ── Category load (re-fetches per type; also drives the empty-state affordance) ──
+  const fetchCategories = async (forType: BudgetType, uid: string) => {
+    const [defaults, userCats] = await Promise.all([
+      api.get(`/auth/categories`, { type: forType }).catch(() => []),
+      uid ? api.get(`/auth/categories/user/${uid}`).catch(() => []) : Promise.resolve([]),
+    ]);
+
+    const filteredUserCats = (Array.isArray(userCats) ? userCats : []).filter(
+      (c: any) => c.type?.toLowerCase() === forType.toLowerCase(),
+    );
+
+    const merged = [...(Array.isArray(defaults) ? defaults : []), ...filteredUserCats];
+    const deduped = merged.reduce((acc: any[], curr: any) => {
+      if (!acc.find((c) => c.id === curr.id || c.name === curr.name)) acc.push(curr);
+      return acc;
+    }, []);
+    return deduped.map((c: any) => ({ label: c.name, value: c.id }));
+  };
+
+  // Initial boot: resolve user, load categories for the default type.
   useEffect(() => {
-    const fetchCategories = async () => {
+    let alive = true;
+    (async () => {
       try {
         const user = await getCurrentUser();
-        if (user?.id) setUserId(user.id);
-        const [defaults, userCats] = await Promise.all([
-          api.get(`/auth/categories`, { type }).catch(() => []),
-          user?.id ? api.get(`/auth/categories/user/${user.id}`).catch(() => []) : Promise.resolve([]),
-        ]);
+        const uid = user?.id ?? '';
+        if (alive && uid) setUserId(uid);
+        const items = await fetchCategories(type, uid);
+        if (alive) setCategories(items);
+      } catch (error) {
+        console.error('Failed to load categories', error);
+      } finally {
+        if (alive) setBootLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-        const filteredUserCats = (Array.isArray(userCats) ? userCats : []).filter(
-          (c) => c.type?.toLowerCase() === type.toLowerCase()
-        );
-
-        const merged = [...(Array.isArray(defaults) ? defaults : []), ...filteredUserCats];
-        const deduped = merged.reduce((acc: any[], curr: any) => {
-          if (!acc.find((c) => c.id === curr.id || c.name === curr.name)) acc.push(curr);
-          return acc;
-        }, []);
-        const items = deduped.map((c) => ({ label: c.name, value: c.id }));
-        setCategories(items);
+  // Re-fetch categories whenever the type changes (skip the very first boot run).
+  const didBoot = useRef(false);
+  useEffect(() => {
+    if (!didBoot.current) {
+      didBoot.current = true;
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const items = await fetchCategories(type, userId);
+        if (alive) setCategories(items);
       } catch (error) {
         console.error('Failed to load categories', error);
       }
+    })();
+    return () => {
+      alive = false;
     };
-    fetchCategories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
-  useEffect(() => {
-    const fetchBudgets = async () => {
-      const currentUser = await getCurrentUser();
-      if (!currentUser?.id) return;
+  // ── Derived validity — single source of truth for the CTA ──
+  const parsedAmount = parseFloat(amount);
+  const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const nameValid = name.trim().length > 0;
+  const categoryValid = !!categoryId;
+  const isValid = nameValid && amountValid && categoryValid && !!frequency && !!type && !!date;
 
-      const currentMonth = new Date().getMonth() + 1;
-      const currentYear = new Date().getFullYear();
+  const noCategories = !bootLoading && categories.length === 0;
 
-      try {
-        const data = await api.get(`/auth/budgets/user/${currentUser.id}`, { month: currentMonth, year: currentYear });
-        setBudgets(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error('Failed to load budgets:', error);
-      }
-    };
-    fetchBudgets();
-  }, []);
+  const handleTypeChange = (next: BudgetType) => {
+    if (next === type) return;
+    setType(next);
+    // Reset category on type switch (list re-fetches via the [type] effect).
+    setCategoryId('');
+    setCategoryLabel('');
+  };
 
   const handleSave = async () => {
-    const currentUser = await getCurrentUser();
-    if (!currentUser?.id) return;
+    if (!isValid || saving) {
+      setNameTouched(true);
+      setAmountTouched(true);
+      return;
+    }
+    setSaving(true);
+    setSaveError(false);
 
-    if (!name || !amount || !type || !categoryId || !frequency) {
-      Alert.alert('Missing Fields', 'Please fill in all fields.');
+    const currentUser = await getCurrentUser();
+    if (!currentUser?.id) {
+      setSaving(false);
       return;
     }
 
     const body = {
       name,
-      amount: parseFloat(amount),
+      amount: parsedAmount,
       type,
       frequency,
       month: date.getMonth() + 1,
@@ -115,146 +188,234 @@ export default function AddBudgetScreen() {
     } catch (err) {
       console.error('Save error', err);
       errorHaptic();
-      Alert.alert('Error', 'Failed to save budget.');
+      setSaveError(true);
+      setSaving(false);
     }
   };
 
-  const handleCancel = () => {
-    router.back();
-  };
-
-  const handleDateChange = (event, selectedDate) => {
-    if (Platform.OS === 'android') setShowDatePicker(false); // only close on Android
-
-		if (selectedDate) {
-			setDate(selectedDate);
-		}
-  };
-
-  const renderBudgetItem = ({ item }) => (
-    <View style={styles.transactionItemRow}>
-      <View style={[styles.iconCircle, { backgroundColor: '#4CAF50' }]}>        
-        <MaterialIcons name="pie-chart" size={22} color="white" />
-      </View>
-      <View style={styles.transactionTextContainer}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={styles.transactionAmount}>${item.amount}</Text>
-          <Text style={styles.transactionName}>{item.name}</Text>
-        </View>
-        <Text style={styles.transactionCategory}>{item.category_name || 'Uncategorized'}</Text>
-        <Text style={styles.transactionDate}>
-          {item.start_date ? new Date(item.start_date).toLocaleDateString() : `${item.month}/${item.year}`}
-        </Text>
-      </View>
-    </View>
-  );
-
-  const incomeBudgets = budgets.filter(b => b.type === 'income');
-  const expenseBudgets = budgets.filter(b => b.type === 'expense');
+  const amountLen = (amount || '').length;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={100}
-      >
-        <Text style={styles.title}>Add Budget</Text>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }}>
+        {/* ── Header ── */}
+        <View style={styles.header}>
+          <BackButton fallback="/(tabs)/budget" />
+          <View style={styles.headerCenter}>
+            <Text style={styles.title}>New Budget</Text>
+            <Text style={styles.subtitle}>Set a limit to keep spending on track</Text>
+          </View>
+          <View style={styles.headerSpacer} />
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Budget Name"
-          value={name}
-          onChangeText={setName}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Amount"
-          keyboardType="numeric"
-          value={amount}
-          onChangeText={setAmount}
-        />
-
-				<TouchableOpacity onPress={() => setShowDatePicker(true)}>
-					<Text style={styles.dateSelector}>
-						Select Start Date: {date.toLocaleDateString('default', { month: 'long', day: 'numeric', year: 'numeric' })}
-					</Text>
-				</TouchableOpacity>
-
-        {showDatePicker && Platform.OS === 'android' && (
-					<DateTimePicker
-						value={date}
-						mode="date"
-						display="calendar"
-						onChange={handleDateChange}
-					/>
-				)}
-
-				{Platform.OS === 'ios' && (
-					<DateTimePicker
-						value={date}
-						mode="date"
-						display="spinner"
-						onChange={handleDateChange}
-						style={{ height: 150 }}
-					/>
-				)}
-
-        <Text style={styles.label}>Type</Text>
-        <DropDownPicker
-          open={typeOpen}
-          value={type}
-          items={[{ label: 'Income', value: 'income' }, { label: 'Expense', value: 'expense' }]}
-          setOpen={setTypeOpen}
-          setValue={setType}
-          setItems={() => {}}
-          style={styles.dropdown}
-          dropDownContainerStyle={styles.dropdownContainer}
-          listMode="MODAL"
-          onOpen={() => {
-            setCategoryOpen(false);
-            setFrequencyOpen(false);
-          }}
-          zIndex={3000}
-          zIndexInverse={1000}
-        />
-
-        <Text style={styles.label}>Frequency</Text>
-        <DropDownPicker
-          open={frequencyOpen}
-          value={frequency}
-          items={[
-            { label: 'One-time', value: 'one-time' },
-            { label: 'Weekly', value: 'weekly' },
-            { label: 'Biweekly', value: 'biweekly' },
-            { label: 'Monthly', value: 'monthly' },
-            { label: '1st & 15th', value: '1st-15th' },
-          ]}
-          setOpen={setFrequencyOpen}
-          setValue={setFrequency}
-          setItems={() => {}}
-          style={styles.dropdown}
-          dropDownContainerStyle={styles.dropdownContainer}
-          listMode="MODAL"
-          onOpen={() => {
-            setTypeOpen(false);
-            setCategoryOpen(false);
-          }}
-          zIndex={2500}
-          zIndexInverse={1500}
-        />
-
-        <Text style={styles.label}>Category</Text>
-        <TouchableOpacity
-          style={styles.categorySelector}
-          onPress={() => setShowCategoryPicker(true)}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={100}
         >
-          <Text style={categoryId ? styles.categorySelectorText : styles.categorySelectorPlaceholder}>
-            {categoryLabel || 'Select category'}
-          </Text>
-          <Ionicons name="chevron-forward" size={18} color="#999" />
-        </TouchableOpacity>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            onScrollBeginDrag={() => dateOpen && setDateOpen(false)}
+          >
+            {bootLoading && !hasPrefill ? (
+              <SkeletonForm />
+            ) : (
+              <>
+                {/* ── Type segmented control ── */}
+                <View style={styles.segmentTrack} accessibilityRole="tablist">
+                  <TouchableOpacity
+                    style={[styles.segment, type === 'expense' && styles.segmentActiveExpense]}
+                    onPress={() => handleTypeChange('expense')}
+                    activeOpacity={0.8}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: type === 'expense' }}
+                  >
+                    <Ionicons
+                      name="card-outline"
+                      size={18}
+                      color={type === 'expense' ? colors.error : colors.textMuted}
+                    />
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        type === 'expense' && { color: colors.error, fontWeight: '700' },
+                      ]}
+                    >
+                      Expense
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.segment, type === 'income' && styles.segmentActiveIncome]}
+                    onPress={() => handleTypeChange('income')}
+                    activeOpacity={0.8}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: type === 'income' }}
+                  >
+                    <Ionicons
+                      name="trending-up"
+                      size={18}
+                      color={type === 'income' ? colors.success : colors.textMuted}
+                    />
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        type === 'income' && { color: colors.success, fontWeight: '700' },
+                      ]}
+                    >
+                      Income
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* ── Amount hero ── */}
+                <View style={styles.heroCard}>
+                  <Text style={styles.heroLabel}>BUDGET AMOUNT</Text>
+                  <View style={styles.heroRow}>
+                    <Text style={[styles.heroSign, { color: semanticColor }]}>
+                      {isSemanticExpense ? '−' : '+'}
+                    </Text>
+                    <Text style={[styles.heroCurrency, { color: semanticColor }]}>$</Text>
+                    <TextInput
+                      style={[styles.heroInput, { color: semanticColor }]}
+                      value={amount}
+                      onChangeText={setAmount}
+                      onBlur={() => setAmountTouched(true)}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor={colors.textMuted}
+                      accessibilityLabel="Budget amount"
+                      numberOfLines={1}
+                    />
+                  </View>
+                  <Text style={styles.heroEcho}>{FREQ_ECHO[frequency]}</Text>
+                  {amountTouched && !amountValid && (
+                    <View style={styles.hintRow}>
+                      <Ionicons name="alert-circle-outline" size={14} color={colors.error} />
+                      <Text style={styles.hintText}>Enter a budget amount</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* ── Details card ── */}
+                <View style={styles.detailsCard}>
+                  {/* Name */}
+                  <Text style={styles.fieldLabel}>Name</Text>
+                  <View style={styles.inputRow}>
+                    <Ionicons name="text-outline" size={18} color={colors.textMuted} style={styles.leadingIcon} />
+                    <TextInput
+                      style={styles.fieldInput}
+                      value={name}
+                      onChangeText={setName}
+                      onBlur={() => setNameTouched(true)}
+                      placeholder="Budget name"
+                      placeholderTextColor={colors.textMuted}
+                      numberOfLines={1}
+                    />
+                  </View>
+                  {nameTouched && !nameValid && (
+                    <View style={styles.hintRow}>
+                      <Ionicons name="alert-circle-outline" size={14} color={colors.error} />
+                      <Text style={styles.hintText}>Name your budget</Text>
+                    </View>
+                  )}
+
+                  {/* Category */}
+                  <Text style={[styles.fieldLabel, styles.fieldSpacer]}>Category</Text>
+                  {noCategories ? (
+                    <TouchableOpacity
+                      style={styles.emptyCategoryRow}
+                      onPress={() => setShowCategoryPicker(true)}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={`No ${type} categories yet, create one`}
+                    >
+                      <Ionicons name="pricetag-outline" size={18} color={colors.textMuted} style={styles.leadingIcon} />
+                      <Text style={styles.emptyCategoryText} numberOfLines={1}>
+                        No {type} categories yet
+                      </Text>
+                      <Text style={styles.emptyCreateText}>+ Create</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.inputRow}
+                      onPress={() => setShowCategoryPicker(true)}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Category, ${categoryLabel || 'none'}, opens picker`}
+                    >
+                      <Ionicons name="pricetag-outline" size={18} color={colors.textMuted} style={styles.leadingIcon} />
+                      <Text
+                        style={[styles.fieldInput, !categoryId && styles.placeholderText]}
+                        numberOfLines={1}
+                      >
+                        {categoryLabel || 'Tap to select category'}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={18} color={colors.textDark} style={styles.trailingIcon} />
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Frequency */}
+                  <Text style={[styles.fieldLabel, styles.fieldSpacer]}>Frequency</Text>
+                  <BudgetAddFrequencyChips value={frequency} onChange={setFrequency} />
+
+                  {/* Start date */}
+                  <Text style={[styles.fieldLabel, styles.fieldSpacer]}>Start date</Text>
+                  <BudgetAddStartDateField
+                    value={date}
+                    onChange={setDate}
+                    open={dateOpen}
+                    onToggle={() => setDateOpen((o) => !o)}
+                  />
+                </View>
+
+                {/* ── Inline save error ── */}
+                {saveError && (
+                  <View style={styles.errorCard}>
+                    <Ionicons name="alert-circle-outline" size={20} color={colors.error} />
+                    <View style={styles.errorTextWrap}>
+                      <Text style={styles.errorTitle}>Couldn't save budget</Text>
+                      <Text style={styles.errorSub}>Check your connection and try again.</Text>
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+          </ScrollView>
+
+          {/* ── Sticky footer CTA ── */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              onPress={handleSave}
+              activeOpacity={0.85}
+              disabled={!isValid || saving || bootLoading}
+              accessibilityRole="button"
+              accessibilityLabel="Save budget"
+              accessibilityState={{ disabled: !isValid || saving }}
+              style={(!isValid || bootLoading) && !saving ? styles.ctaDisabled : undefined}
+            >
+              <LinearGradient
+                colors={[...gradients.primaryGradient]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.cta}
+              >
+                {saving ? (
+                  <>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={styles.ctaText}>Saving…</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.ctaText}>Save Budget</Text>
+                    <Ionicons name="arrow-forward" size={18} color="#fff" />
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
 
         {userId !== '' && (
           <CategoryPicker
@@ -271,153 +432,214 @@ export default function AddBudgetScreen() {
               }
               setShowCategoryPicker(false);
             }}
-            type={type as 'income' | 'expense'}
+            type={type}
             userId={userId}
           />
         )}
+      </SafeAreaView>
+    </GradientBackground>
+  );
+}
 
-        <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-          <Text style={styles.saveButtonText}>Save Budget</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
-          <Text style={styles.cancelButtonText}>Cancel</Text>
-        </TouchableOpacity>
-
-        {/* <Text style={styles.sectionTitle}>Income Budgets</Text>
-        <FlatList
-          data={incomeBudgets}
-          renderItem={renderBudgetItem}
-          keyExtractor={(item) => item.id}
-        />
-
-        <Text style={styles.sectionTitle}>Expense Budgets</Text>
-        <FlatList
-          data={expenseBudgets}
-          renderItem={renderBudgetItem}
-          keyExtractor={(item) => item.id}
-        /> */}
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+// ── Loading skeleton for the form body ──
+function SkeletonForm() {
+  return (
+    <View style={{ gap: spacing.lg }}>
+      <Skeleton height={48} borderRadius={radius.md} />
+      <View style={styles.heroCard}>
+        <Skeleton width={110} height={12} borderRadius={radius.sm} />
+        <View style={{ height: spacing.md }} />
+        <Skeleton width={180} height={40} borderRadius={radius.md} />
+      </View>
+      <View style={styles.detailsCard}>
+        <Skeleton width={60} height={14} borderRadius={radius.sm} />
+        <View style={{ height: spacing.sm }} />
+        <Skeleton height={48} borderRadius={radius.md} />
+        <View style={{ height: spacing.md }} />
+        <Skeleton width={80} height={14} borderRadius={radius.sm} />
+        <View style={{ height: spacing.sm }} />
+        <Skeleton height={48} borderRadius={radius.md} />
+        <View style={{ height: spacing.md }} />
+        <Skeleton width={90} height={14} borderRadius={radius.sm} />
+        <View style={{ height: spacing.sm }} />
+        <Skeleton height={44} borderRadius={radius.md} />
+        <View style={{ height: spacing.md }} />
+        <Skeleton height={48} borderRadius={radius.md} />
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: 'white',
-  },
-  container: {
-    flex: 1,
-    padding: 20,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    fontSize: 16,
-  },
-  dateSelector: {
-    color: '#333',
-    fontSize: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  dropdown: {
-    marginBottom: 16,
-    borderColor: '#ccc',
-  },
-  dropdownContainer: { borderColor: '#ccc' },
-  categorySelector: {
+  // Header
+  header: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+    alignItems: 'flex-start',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
-  categorySelectorText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  categorySelectorPlaceholder: {
-    fontSize: 16,
-    color: '#999',
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  saveButton: {
-    backgroundColor: '#4CAF50',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  saveButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  cancelButton: {
-    marginTop: 12,
+  headerCenter: {
+    flex: 1,
     alignItems: 'center',
   },
-  cancelButtonText: {
-    color: 'gray',
-    fontSize: 16,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 24,
-    marginBottom: 8,
-  },
-  transactionItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  iconCircle: {
+  headerSpacer: {
     width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
   },
-  transactionTextContainer: {
+  title: { color: colors.text, ...typography.h3, fontWeight: '800' },
+  subtitle: { color: colors.textMuted, ...typography.small, marginTop: 2 },
+
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xl,
+    gap: spacing.lg,
+  },
+
+  // Type segmented control
+  segmentTrack: {
+    flexDirection: 'row',
+    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+    borderRadius: radius.md,
+    padding: spacing.xs,
+    gap: spacing.xs,
+  },
+  segment: {
     flex: 1,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
-  transactionAmount: {
-    fontWeight: 'bold',
-    fontSize: 16,
+  segmentActiveExpense: {
+    backgroundColor: 'rgba(239,68,68,0.10)',
+    borderColor: 'rgba(239,68,68,0.30)',
   },
-  transactionName: {
-    fontSize: 16,
-    color: '#333',
-    marginLeft: 8,
+  segmentActiveIncome: {
+    backgroundColor: 'rgba(34,197,94,0.10)',
+    borderColor: 'rgba(34,197,94,0.30)',
   },
-  transactionCategory: {
-    color: '#555',
+  segmentText: { ...typography.small, color: colors.textMuted },
+
+  // Amount hero
+  heroCard: {
+    ...glassEffects.glassFloating,
+    padding: spacing.xl,
+    alignItems: 'center',
   },
-  transactionDate: {
-    color: '#999',
-    fontSize: 12,
+  heroLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    letterSpacing: 1,
+    fontWeight: '600',
   },
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+    maxWidth: '100%',
+  },
+  heroSign: { ...typography.h1 },
+  heroCurrency: { ...typography.h1, marginLeft: 2 },
+  heroInput: {
+    ...typography.h1,
+    minWidth: 40,
+    marginLeft: 2,
+    padding: 0,
+    textAlign: 'left',
+  },
+  heroEcho: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+
+  // Details card
+  detailsCard: {
+    ...glassEffects.glass,
+    padding: spacing.lg,
+  },
+  fieldLabel: { ...typography.smallBold, color: colors.text, marginBottom: spacing.sm },
+  fieldSpacer: { marginTop: spacing.lg },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    backgroundColor: colors.glassMedium,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+  },
+  leadingIcon: { marginRight: spacing.sm },
+  trailingIcon: { flexShrink: 0, marginLeft: spacing.sm },
+  fieldInput: {
+    flex: 1,
+    ...typography.body,
+    color: colors.text,
+    padding: 0,
+  },
+  placeholderText: { color: colors.textMuted },
+
+  // Empty category affordance
+  emptyCategoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+    borderStyle: 'dashed',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+  },
+  emptyCategoryText: { flex: 1, ...typography.body, color: colors.textMuted },
+  emptyCreateText: { ...typography.smallBold, color: colors.primary2, flexShrink: 0 },
+
+  // Inline hints
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  hintText: { ...typography.caption, color: colors.error },
+
+  // Inline save error card
+  errorCard: {
+    ...glassEffects.glass,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  errorTextWrap: { flex: 1 },
+  errorTitle: { ...typography.smallBold, color: colors.text },
+  errorSub: { ...typography.small, color: colors.textMuted, marginTop: 2 },
+
+  // Sticky footer
+  footer: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  cta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    minHeight: 48,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.lg,
+  },
+  ctaDisabled: { opacity: 0.5 },
+  ctaText: { ...typography.button, color: '#fff' },
 });

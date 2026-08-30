@@ -1,0 +1,64 @@
+{
+  "componentName": "StatusHeadlineCard",
+  "description": "The dashboard centerpiece (tier 1). A synthesized, plain-language verdict of right-now household financial health with a 3-level worst-signal-wins status (good/watch/alert), one AI-authored warm sentence, and one hero number: this month's cash flow (money in minus money out). Replaces the old arbitrary mood-emoji and the standalone AI-nudge card. This is the ONLY card that floats and the ONLY one using typography.h1.",
+  "platform": "react-native",
+  "designSystem": {
+    "card": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "background": "GradientBackground variant bgDarkPurple (screen-level)",
+    "statusAccent": "4pt (spacing.xs) left rail OR top gradient wash in status color at ~8% ({statusColor}14)"
+  },
+  "props": {
+    "status": { "type": "'good' | 'watch' | 'alert' | 'setup'", "required": true, "description": "Overall status; 'setup' is the empty/new-household onboarding state" },
+    "headline": { "type": "string", "required": true, "description": "AI-authored warm sentence, <=90 chars. Must never be empty; fall back to a per-state template if missing." },
+    "cashFlow": { "type": "number", "required": true, "description": "This month's cash flow = income - expenses. The hero number. Sign-colored." },
+    "moneyIn": { "type": "number", "required": false, "description": "Sub-caption: income this month" },
+    "moneyOut": { "type": "number", "required": false, "description": "Sub-caption: expenses this month" },
+    "scope": { "type": "'household' | 'me'", "default": "household", "description": "Which scope the numbers reflect; drives no visual change here but recomputes inputs" },
+    "period": { "type": "string", "default": "this month", "description": "Label for the top-right control; fixed to 'this month' in v1" },
+    "onPeriodPress": { "type": "function", "required": false, "description": "Forward-compat period switch; ship disabled-styled if not built" },
+    "onCtaPress": { "type": "function", "required": false, "description": "Only used in 'setup' state — the Link-an-account CTA" }
+  },
+  "statusStates": {
+    "good": { "token": "colors.success", "icon": "checkmark-circle", "chipWord": "GOOD", "tone": "warm, affirming" },
+    "watch": { "token": "colors.warning", "icon": "alert-circle", "chipWord": "WATCH", "tone": "gentle heads-up" },
+    "alert": { "token": "colors.error", "icon": "warning", "chipWord": "ALERT", "tone": "calm, direct, actionable — not alarmist" },
+    "setup": { "token": "colors.info", "icon": "information-circle", "chipWord": "SET UP", "tone": "onboarding; hero replaced by primaryGradient CTA button" }
+  },
+  "worstSignalWins": {
+    "inputs": ["billsStatus", "spendStatus", "cashFlowStatus"],
+    "rule": "overall = severityMin(...) where good < watch < alert; any one alert => card is alert",
+    "checks": {
+      "bills": "good=all covered; watch=one due soon; alert=overdue/unpayable",
+      "spending": "good=within weekly budget; watch=<=~20% over; alert=well over",
+      "cashFlow": "good=positive this month; watch=flat/near zero; alert=negative"
+    }
+  },
+  "hero": {
+    "typography": "typography.h1",
+    "colorRule": "getValueColor(cashFlow) — positive success, negative error",
+    "note": "Sign color is DECOUPLED from status color (a Good week can have any sign; a green number can sit in a Watch card)",
+    "subCaption": { "text": "Cash flow · {moneyIn} in − {moneyOut} out", "typography": "typography.caption", "color": "colors.textMuted" }
+  },
+  "sentence": {
+    "typography": "typography.body",
+    "color": "colors.text",
+    "maxLines": 3,
+    "note": "Never dim; never duplicate the hero number verbatim; contextualizes it instead"
+  },
+  "states": ["good", "watch", "alert", "setup", "loading", "error"],
+  "stateTreatments": {
+    "loading": "glassFloating skeleton: chip line + 2 text lines + wide hero bar (reuse components/Skeleton.tsx)",
+    "error": "neutral glass (NOT floating): alert-circle-outline (colors.error), 'Couldn't load your status right now', Retry text button; STILL show locally-computed hero cash-flow number if available",
+    "setup": "chip SET UP; onboarding sentence; hero replaced by primaryGradient CTA 'Link an account' (radius.lg)"
+  },
+  "accessibility": {
+    "role": "summary",
+    "label": "Status: {statusWord}. {headline}. Cash flow this month, {positive|negative} {cashFlowAbs}.",
+    "colorIndependence": "status conveyed by chip icon + word + color together, never color alone",
+    "reducedMotion": "status accent + press use animation.fast; instant under reduce-motion",
+    "dynamicType": "sentence and hero reflow; hero uses min-height reserve, never fixed-height clip"
+  },
+  "developerNotes": "If the status endpoint doesn't return {status, headline}, compute status client-side (worst-signal-wins) and use a deterministic per-state sentence template. Keep cashFlow locally computable (income - expense over current month) so the error state can still show a number."
+}

@@ -1,0 +1,51 @@
+{
+  "componentName": "SharingToggleRow",
+  "description": "A single sharing-preference toggle: leading icon chip, title + subtitle, a color-independent status word (Shared/Private or On/Off), and a switch. Thin wrapper over the Settings archetype SettingsRow (switch variant) — MUST be visually identical to it. Fully tokenized against design-system.ts.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/sharing-preferences-redesign.md#5.2",
+  "props": {
+    "icon": { "type": "keyof Ionicons.glyphMap", "required": true, "description": "Leading glyph (wallet-outline, swap-horizontal-outline, card-outline, trending-up-outline, flag-outline, pricetag-outline, notifications-outline)" },
+    "title": { "type": "string", "required": true, "description": "typography.smallBold colors.text, numberOfLines 1" },
+    "subtitle": { "type": "string", "required": false, "description": "typography.caption colors.textMuted, numberOfLines 1" },
+    "value": { "type": "boolean", "required": true, "description": "Current pref value" },
+    "onChange": { "type": "function", "required": true, "description": "(v: boolean) => void — existing setPrefs updater" },
+    "onLabel": { "type": "string", "default": "Shared", "description": "Status word when on (ACTIVITY row passes 'On')" },
+    "offLabel": { "type": "string", "default": "Private", "description": "Status word when off (ACTIVITY row passes 'Off')" }
+  },
+  "variants": ["default", "activity"],
+  "states": ["default", "pressed", "switchOn", "switchOff", "loading"],
+  "layout": {
+    "minHeight": 48,
+    "paddingVertical": "spacing.md",
+    "iconChip": { "size": 34, "radius": "radius.md", "fill": "${colors.primary2}1a", "iconColor": "colors.primary2", "iconSize": 18 },
+    "leftGap": "spacing.md",
+    "trailingGap": "spacing.sm",
+    "divider": { "height": 1, "color": "colors.borderLight", "betweenRowsOnly": true }
+  },
+  "statusWord": {
+    "on": { "glyph": "●", "color": "colors.success", "type": "typography.caption", "text": "{onLabel}" },
+    "off": { "glyph": "○", "color": "colors.textMuted", "type": "typography.caption", "text": "{offLabel}" },
+    "note": "flexShrink 0; sits before the switch",
+    "colorIndependence": "glyph + word + switch position are three redundant cues; never color-only"
+  },
+  "switchStyling": {
+    "trackColor": { "true": "colors.primary2", "false": "colors.glassMedium" },
+    "thumbColor": "colors.text"
+  },
+  "skeleton": {
+    "component": "components/Skeleton.tsx",
+    "recipe": "Skeleton 34x34 radius.md (chip) + flex1 two lines (60% / 40%) + Skeleton 44x26 radius.full (switch pill)"
+  },
+  "tokens": {
+    "colors": ["primary2", "text", "textMuted", "success", "glassMedium", "borderLight"],
+    "typography": ["smallBold", "caption"],
+    "spacing": ["md", "sm"],
+    "radius": ["md", "full"]
+  },
+  "accessibility": {
+    "role": "switch",
+    "label": "{title}{, subtitle}{, onLabel|offLabel}",
+    "state": "accessibilityState.checked reflects value; announces on change",
+    "target": "whole row >= 48pt (>= 44pt min); switch target is the full row, not just the thumb"
+  }
+}

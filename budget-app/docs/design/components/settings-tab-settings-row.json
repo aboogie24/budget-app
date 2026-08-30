@@ -1,0 +1,53 @@
+{
+  "componentName": "SettingsRow",
+  "description": "A single tappable settings list row: leading icon chip, title + optional subtitle, trailing value/status/chevron or switch. Replaces the local Row in settings.tsx. Fully tokenized against design-system.ts.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-tab-redesign.md#5.1",
+  "props": {
+    "icon": { "type": "keyof Ionicons.glyphMap", "required": true, "description": "Leading glyph rendered in the icon chip" },
+    "title": { "type": "string", "required": true, "description": "Row title, typography.smallBold colors.text, numberOfLines 1" },
+    "subtitle": { "type": "string", "required": false, "description": "typography.caption colors.textMuted, numberOfLines 1" },
+    "value": { "type": "string", "required": false, "description": "Trailing value, typography.caption colors.textMuted, flexShrink 0" },
+    "status": { "type": "'default' | 'info' | 'warning' | 'error'", "default": "default", "description": "Drives icon-chip tint + trailing status; always paired with statusLabel/glyph so it is color-independent" },
+    "statusLabel": { "type": "string", "required": false, "description": "Short word shown in the status color when status != default (e.g. '2 new', 'Needs attention')" },
+    "badgeCount": { "type": "number", "required": false, "description": "Numeric pill on the right (e.g. linked-account error count), colors.error fill / colors.text" },
+    "accessory": { "type": "'chevron' | 'switch' | 'none'", "default": "chevron", "description": "Trailing affordance" },
+    "switchValue": { "type": "boolean", "required": false, "description": "Used when accessory === 'switch'" },
+    "onSwitchChange": { "type": "function", "required": false, "description": "(v: boolean) => void" },
+    "onPress": { "type": "function", "required": false, "description": "Row tap handler; if absent and accessory is chevron, render 'none'" },
+    "destructive": { "type": "boolean", "default": false, "description": "Renders the log-out variant (error-tinted full-width button)" }
+  },
+  "variants": ["default", "info", "warning", "error", "switch", "destructive"],
+  "states": ["default", "pressed", "switchOn", "switchOff", "disabled"],
+  "layout": {
+    "minHeight": 48,
+    "paddingVertical": "spacing.md",
+    "iconChip": { "size": 34, "radius": "radius.md", "fill": "${colors.primary2}1a", "iconColor": "colors.primary2", "iconSize": 18 },
+    "leftGap": "spacing.md",
+    "trailingGap": "spacing.sm",
+    "chevron": { "name": "chevron-forward", "size": 14, "color": "colors.textMuted" }
+  },
+  "statusMap": {
+    "default": { "chipFill": "${colors.primary2}1a", "iconColor": "colors.primary2", "trailing": "value + chevron" },
+    "info": { "chipFill": "${colors.info}1a", "iconColor": "colors.info", "trailing": "● {statusLabel} in colors.info + chevron" },
+    "warning": { "chipFill": "${colors.warning}1a", "iconColor": "colors.warning", "trailing": "⚠ {statusLabel} (alert-circle + word) in colors.warning" },
+    "error": { "chipFill": "${colors.error}1a", "iconColor": "colors.error", "trailing": "⚠ {statusLabel} + optional badgeCount pill (colors.error)" }
+  },
+  "tokens": {
+    "colors": ["primary2", "info", "warning", "error", "text", "textMuted", "glassMedium"],
+    "typography": ["smallBold", "caption"],
+    "spacing": ["md", "sm"],
+    "radius": ["md", "sm"]
+  },
+  "switchStyling": {
+    "trackColor": { "true": "colors.primary2", "false": "colors.glassMedium" },
+    "thumbColor": "colors.text"
+  },
+  "accessibility": {
+    "role": "button | switch",
+    "label": "{title}{, subtitle}{, value/statusLabel}",
+    "switchState": "accessibilityState.checked reflects switchValue; announces on change",
+    "target": "whole row >= 48pt (>= 44pt min); switch row target is the full row, not just the thumb",
+    "colorIndependence": "every non-default status renders a glyph (●/⚠) + a word alongside the color"
+  }
+}

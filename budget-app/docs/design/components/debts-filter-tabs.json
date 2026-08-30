@@ -1,0 +1,34 @@
+{
+  "componentName": "DebtFilterTabs",
+  "description": "Segmented control filtering the debt list by All / Attack / Structured, each with a count badge and bucket icon.",
+  "platform": "react-native",
+  "props": {
+    "active": { "type": "'all' | 'attack' | 'structured'", "required": true },
+    "counts": { "type": "{ all: number, attack: number, structured: number }", "required": true },
+    "onChange": { "type": "function", "required": true }
+  },
+  "tabs": [
+    { "id": "all", "label": "All", "icon": null, "activeColor": "colors.primary2" },
+    { "id": "attack", "label": "Attack", "icon": "flame", "activeColor": "colors.error" },
+    { "id": "structured", "label": "Structured", "icon": "shield-checkmark", "activeColor": "colors.info" }
+  ],
+  "tokens": {
+    "activeFill": "bucket-color @18%",
+    "activeBorder": "bucket-color @30%",
+    "inactiveFill": "colors.glassLight",
+    "inactiveBorder": "colors.borderGlass",
+    "inactiveText": "colors.textMuted",
+    "label": "typography.caption",
+    "countBadge": "colors.glassMedium pill",
+    "radius": "radius.md",
+    "gap": "spacing.sm"
+  },
+  "states": ["default", "active", "pressed"],
+  "accessibility": {
+    "role": "tab",
+    "state": "{ selected }",
+    "label": "{label}, {count} debts",
+    "minTarget": "44pt tall",
+    "colorIndependence": "Attack/Structured reinforced by flame / shield-checkmark icon"
+  }
+}

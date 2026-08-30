@@ -1,0 +1,24 @@
+graph TD
+    A[Calendar tab focus] --> B{Data loaded?}
+    B -->|loading| L[Skeleton grid + 3 skeleton rows]
+    B -->|error| E[Error card: 'Couldn't load' + Retry]
+    E -->|Retry| A
+    B -->|empty month| EM[Empty month card + 'Link account' CTA]
+    B -->|has data| C[Summary Header: Spent so far / Still due / Income]
+
+    C --> D[Month grid or week strip]
+    D -->|tap day| F[Selected-day detail]
+
+    F --> G{Day has events?}
+    G -->|no| H[Empty day: 'Nothing scheduled']
+    G -->|yes| I[Split chips: Received / Spent / Due]
+
+    I --> J[ACTUAL group: solid rows]
+    I --> K[UPCOMING group: dashed/ghosted projected rows]
+
+    K -->|bill gets paid elsewhere| M[Bill disappears, becomes ACTUAL transaction]
+    M --> J
+
+    D -->|toggle expand| D
+    C -->|prev/next month| A
+    C -->|Today| A

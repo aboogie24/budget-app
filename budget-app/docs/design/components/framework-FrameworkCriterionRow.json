@@ -1,0 +1,34 @@
+{
+  "componentName": "FrameworkCriterionRow",
+  "description": "A single level-criterion row: leading met/unmet icon chip, criterion name, detail subtitle, and a trailing 'Not yet' word on unmet rows (color-independent status). Rendered inside the Level Criteria card under an overall progress bar.",
+  "platform": "react-native",
+  "spec": "budget-app/docs/design/specs/framework-redesign.md#7-tier-3--level-criteria-checklist",
+  "props": {
+    "name": { "type": "string", "required": true, "description": "Criterion name." },
+    "detail": { "type": "string", "required": true, "description": "Progress detail, e.g. '$9,000 of $9,000 saved'." },
+    "met": { "type": "boolean", "required": true, "description": "Whether the criterion is satisfied." }
+  },
+  "variants": ["met", "unmet"],
+  "states": ["met", "unmet"],
+  "layout": {
+    "iconChipSize": 32,
+    "iconChipRadius": "radius.full",
+    "verticalPadding": "spacing.sm",
+    "rowSeparator": "1px colors.borderLight bottom border"
+  },
+  "tokens": {
+    "iconChipMetFill": "`${colors.success}26`",
+    "iconChipUnmetFill": "colors.glassLight",
+    "iconMet": "checkmark-circle / colors.success",
+    "iconUnmet": "ellipse-outline / colors.textDark",
+    "nameMet": "typography.smallBold / colors.text",
+    "nameUnmet": "typography.smallBold / colors.textMuted",
+    "detail": "typography.caption / colors.textMuted",
+    "trailingNotYet": "typography.caption / colors.textMuted (unmet only, right-aligned)"
+  },
+  "accessibility": {
+    "role": "text",
+    "label": "{name}, {met ? 'met' : 'not yet'}. {detail}",
+    "colorIndependence": "State conveyed by filled checkmark-circle vs outline ellipse + full- vs muted-opacity name + literal 'Not yet' word, never color alone."
+  }
+}

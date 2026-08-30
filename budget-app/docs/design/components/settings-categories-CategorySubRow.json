@@ -1,0 +1,44 @@
+{
+  "componentName": "CategorySubRow",
+  "description": "An indented subcategory row rendered inside an expanded CategoryParentRow. Smaller icon chip, name, optional rule badge, trash (custom only). Tap opens edit. The sub-list ends with a dashed Add-subcategory row. Re-skin of the current subRow / addSubBtn styles.",
+  "platform": "react-native",
+  "props": {
+    "sub": { "type": "Category", "required": true },
+    "parentColor": { "type": "string", "required": true, "description": "fallback color if sub.color is unset" },
+    "rules": { "type": "number", "required": true },
+    "isSystem": { "type": "boolean", "required": true },
+    "onEdit": { "type": "(sub: Category) => void", "required": true },
+    "onDelete": { "type": "(sub: Category) => void", "required": true }
+  },
+  "layout": {
+    "row": { "flexDirection": "row", "alignItems": "center", "paddingVertical": "spacing.sm", "indentLeft": "spacing.xxl + spacing.xl (tokenized ~56)", "gap": "spacing.sm" },
+    "divider": { "borderBottom": "colors.borderLight" },
+    "iconChip": { "size": 30, "radius": "radius.sm", "fill": "(sub.color ?? parentColor) @ 12%", "icon": "resolveIcon(sub.icon), 14" }
+  },
+  "content": {
+    "name": { "type": "typography.small", "color": "colors.text", "numberOfLines": 1, "note": "raised from #cbd5e1 to colors.text for contrast" },
+    "ruleBadge": { "icon": "git-branch-outline", "text": "colors.accent", "fill": "colors.primary2 @ 12%", "radius": "radius.sm", "shownWhen": "rules > 0" },
+    "systemChip": { "icon": "lock-closed", "text": "System", "color": "colors.textMuted", "fill": "colors.glassMedium", "radius": "radius.sm", "shownWhen": "isSystem" },
+    "trash": { "icon": "trash-outline", "color": "colors.error", "visualSize": 26, "touchTarget": 44, "shownWhen": "!isSystem" }
+  },
+  "addSubcategoryRow": {
+    "description": "Trailing dashed action row inside every expanded parent",
+    "border": "1px dashed colors.borderGlass",
+    "fill": "colors.primary2 @ 8%",
+    "radius": "radius.md",
+    "icon": "add (colors.accent)",
+    "label": { "text": "Add subcategory", "type": "typography.caption(bold)", "color": "colors.accent" },
+    "onPress": "openAddSubcategory(parentId)",
+    "minTouch": 44
+  },
+  "interactions": { "onPress": "onEdit(sub) (system → informational Alert, kept)" },
+  "states": ["default", "pressed", "system-locked"],
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {rules} rules{, System}",
+    "hint": "Double tap to edit",
+    "deleteAction": "Delete {name}",
+    "minTouch": 44
+  },
+  "developerNotes": "Indent stays visually ~56 but expressed via spacing tokens. 12%/8% tints are the only allowed literals."
+}

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/aboogie/budget-backend/internal/recurrence"
 	"github.com/aboogie/budget-backend/models"
 )
 
@@ -168,6 +170,140 @@ func GetToolDefinitions() []models.ClaudeToolDef {
 				"required": []string{"name", "plan_type", "monthly_contribution"},
 			},
 		},
+		{
+			Name:        "assess_savings_goal",
+			Description: "Check whether a savings goal is realistic before creating a plan for it. Given a target amount and target date, returns the required monthly contribution, the couple's free monthly cash flow (surplus minus what active plans already commit), whether it's feasible, and — when it isn't — a realistic later date, a lower target that fits, and how much more per month they'd need to free up. Use this when a couple wants to save for something by a date, then give them a realistic, encouraging read and (if they agree) create the goal and plan.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":           map[string]interface{}{"type": "string", "description": "What they're saving for."},
+					"target_amount":  map[string]interface{}{"type": "number", "description": "The savings target amount."},
+					"current_amount": map[string]interface{}{"type": "number", "description": "How much they already have saved toward it (default 0)."},
+					"target_date":    map[string]interface{}{"type": "string", "description": "The date they want to reach it by, YYYY-MM-DD."},
+				},
+				"required": []string{"target_amount", "target_date"},
+			},
+		},
+		{
+			Name:        "remember_fact",
+			Description: "Save a durable fact about this couple so you remember it in future conversations — their goals in their own words, constraints, preferences, decisions or commitments they've made, or what they've already tried. Use this whenever the user shares something worth remembering long-term. Do NOT use it for transient numbers you can already get from the financial tools. Set scope to 'shared' for couple-level facts both partners should see (shared goals, agreed strategy, household constraints), or 'private' for one person's individual context (personal worries, individual preferences, solo aspirations). When unsure, use 'private' — private facts are never shown to the partner.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"fact": map[string]interface{}{
+						"type":        "string",
+						"description": "The fact to remember, written concisely in your own words.",
+					},
+					"scope": map[string]interface{}{
+						"type":        "string",
+						"description": "'shared' (both partners can see it) or 'private' (only the current user). Defaults to 'private' when unsure.",
+						"enum":        []string{"shared", "private"},
+					},
+				},
+				"required": []string{"fact"},
+			},
+		},
+		{
+			Name:        "create_savings_goal",
+			Description: "Create a new savings goal in the app. This SAVES to the database and appears on the Savings screen. Use after the user agrees to a goal (e.g. a trip, an emergency fund top-up). Run assess_savings_goal FIRST so the target and date are realistic. Defaults to shared with the partner when the user has one; pass is_shared=false only if the user asks for a personal goal.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":           map[string]interface{}{"type": "string", "description": "Goal name, e.g. 'Jamaica trip — December'."},
+					"target_amount":  map[string]interface{}{"type": "number", "description": "Total dollar amount to save."},
+					"target_date":    map[string]interface{}{"type": "string", "description": "Target date YYYY-MM-DD."},
+					"current_amount": map[string]interface{}{"type": "number", "description": "Amount already saved toward it, if any. Defaults to 0."},
+					"is_shared":      map[string]interface{}{"type": "boolean", "description": "Whether the partner can see it. Defaults to true when a household exists."},
+				},
+				"required": []string{"name", "target_amount"},
+			},
+		},
+		{
+			Name:        "update_savings_goal",
+			Description: "Update an existing savings goal: add saved money (add_amount, may be negative for a withdrawal), change the target amount, or move the target date. Use get_savings_goals first to find the goal_id. This SAVES to the database.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"goal_id":       map[string]interface{}{"type": "string", "description": "ID of the goal to update."},
+					"add_amount":    map[string]interface{}{"type": "number", "description": "Dollars to add to current progress (negative to withdraw)."},
+					"target_amount": map[string]interface{}{"type": "number", "description": "New total target, if changing it."},
+					"target_date":   map[string]interface{}{"type": "string", "description": "New target date YYYY-MM-DD, if changing it."},
+				},
+				"required": []string{"goal_id"},
+			},
+		},
+		{
+			Name:        "create_budget",
+			Description: "Create a budget line in the app (Budget tab). This SAVES to the database. Useful as an actionable step in a plan — e.g. a monthly 'Trip fund' expense budget, or trimming a category by creating an explicit cap. Weekly/biweekly budgets count real calendar occurrences per month.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":      map[string]interface{}{"type": "string", "description": "Budget name, e.g. 'Dining out' or 'Jamaica trip fund'."},
+					"amount":    map[string]interface{}{"type": "number", "description": "Amount per frequency period."},
+					"type":      map[string]interface{}{"type": "string", "enum": []string{"expense", "income"}, "description": "Budget type. Defaults to expense."},
+					"frequency": map[string]interface{}{"type": "string", "enum": []string{"weekly", "biweekly", "monthly", "1st-15th"}, "description": "How often the amount applies. Defaults to monthly."},
+					"is_shared": map[string]interface{}{"type": "boolean", "description": "Whether the partner can see it. Defaults to true when a household exists."},
+				},
+				"required": []string{"name", "amount"},
+			},
+		},
+		{
+			Name:        "create_category",
+			Description: "Create a new transaction category (optionally as a subcategory). This SAVES to the database and appears in Settings → Categories. Fails if a same-named category already exists — assign to the existing one instead.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string", "description": "Category name, e.g. 'Pet Care'."},
+					"type":        map[string]interface{}{"type": "string", "enum": []string{"expense", "income"}, "description": "Defaults to expense."},
+					"parent_name": map[string]interface{}{"type": "string", "description": "Optional parent category name to nest under."},
+					"color":       map[string]interface{}{"type": "string", "description": "Optional hex color."},
+					"icon":        map[string]interface{}{"type": "string", "description": "Optional Ionicons icon name."},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "assign_transaction_category",
+			Description: "Categorize transactions: either ONE transaction by id, or ALL of the user's transactions matching a merchant name. Assignments are marked user-verified (the user approves every action). Set create_rule=true with a merchant to also save the mapping so future syncs categorize automatically.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"transaction_id": map[string]interface{}{"type": "string", "description": "A single transaction to categorize."},
+					"merchant":       map[string]interface{}{"type": "string", "description": "Merchant name — categorizes every matching transaction (e.g. 'starbucks')."},
+					"category_name":  map[string]interface{}{"type": "string", "description": "Existing category name to assign."},
+					"create_rule":    map[string]interface{}{"type": "boolean", "description": "Also save a merchant→category rule for future syncs."},
+				},
+				"required": []string{"category_name"},
+			},
+		},
+		{
+			Name:        "upsert_category_rule",
+			Description: "Create or update an auto-categorization rule: merchant (exact normalized name) or keyword (substring) → category. Future synced transactions matching it categorize automatically. Visible in Settings → Category Rules.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"merchant":      map[string]interface{}{"type": "string", "description": "Normalized merchant name for an exact-match rule."},
+					"keyword":       map[string]interface{}{"type": "string", "description": "Substring keyword rule (used when merchant is not given)."},
+					"category_name": map[string]interface{}{"type": "string", "description": "Existing category name the rule maps to."},
+				},
+				"required": []string{"category_name"},
+			},
+		},
+		{
+			Name:        "log_transaction",
+			Description: "Record a manual income or expense transaction the user tells you about (e.g. 'I put $200 aside for the trip', 'log $45 for dinner'). This SAVES to the database and appears in Transactions. Do NOT invent transactions — only log what the user explicitly states. If they name a category, it is matched to their existing categories when possible.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"type":          map[string]interface{}{"type": "string", "enum": []string{"income", "expense"}, "description": "Transaction type."},
+					"amount":        map[string]interface{}{"type": "number", "description": "Positive dollar amount."},
+					"note":          map[string]interface{}{"type": "string", "description": "Short description, e.g. 'Transfer to Jamaica fund'."},
+					"date":          map[string]interface{}{"type": "string", "description": "YYYY-MM-DD. Defaults to today."},
+					"category_name": map[string]interface{}{"type": "string", "description": "Category name to match against their categories, if the user gave one."},
+				},
+				"required": []string{"type", "amount", "note"},
+			},
+		},
 	}
 
 	// Conditionally add web_search tool if Tavily API key is configured
@@ -218,6 +354,24 @@ func ExecuteTool(conn *sql.DB, userID string, householdID string, toolName strin
 		return getPartnerStatus(conn, userID, householdID)
 	case "create_financial_plan":
 		return createFinancialPlanTool(conn, userID, householdID, input)
+	case "assess_savings_goal":
+		return assessSavingsGoalTool(conn, userID, householdID, input)
+	case "remember_fact":
+		return rememberFactTool(conn, userID, householdID, input)
+	case "create_savings_goal":
+		return createSavingsGoalTool(conn, userID, householdID, input)
+	case "update_savings_goal":
+		return updateSavingsGoalTool(conn, userID, householdID, input)
+	case "create_budget":
+		return createBudgetTool(conn, userID, householdID, input)
+	case "log_transaction":
+		return logTransactionTool(conn, userID, householdID, input)
+	case "create_category":
+		return createCategoryTool(conn, userID, householdID, input)
+	case "assign_transaction_category":
+		return assignTransactionCategoryTool(conn, userID, householdID, input)
+	case "upsert_category_rule":
+		return upsertCategoryRuleTool(conn, userID, householdID, input)
 	case "web_search":
 		return executeWebSearch(userID, input)
 	default:
@@ -228,49 +382,54 @@ func ExecuteTool(conn *sql.DB, userID string, householdID string, toolName strin
 func getFinancialSnapshot(conn *sql.DB, userID, householdID string) (string, error) {
 	snapshot := map[string]interface{}{}
 
-	// Budgeted income (expected monthly from budget entries)
-	var budgetedIncome sql.NullFloat64
-	err := conn.QueryRow(`
-		SELECT COALESCE(SUM(
-			CASE frequency
-				WHEN 'weekly' THEN amount * 4
-				WHEN 'biweekly' THEN amount * 2
-				WHEN '1st-15th' THEN amount * 2
-				ELSE amount
-			END
-		), 0) FROM budgets WHERE user_id = $1 AND type = 'income'
-	`, userID).Scan(&budgetedIncome)
-	if err != nil {
+	// Budgeted income — the PLAN, using the same real-calendar occurrence math
+	// as the budget tab (weekly budgets count actual paydays this month).
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	var budgetedIncome float64
+	if budgetRows, err := conn.Query(`
+		SELECT amount, COALESCE(frequency, ''), start_date
+		FROM budgets WHERE user_id = $1 AND type = 'income'
+	`, userID); err != nil {
 		log.Printf("snapshot budgeted income query error: %v", err)
+	} else {
+		for budgetRows.Next() {
+			var amount float64
+			var freq string
+			var start sql.NullTime
+			if budgetRows.Scan(&amount, &freq, &start) == nil {
+				var startPtr *time.Time
+				if start.Valid {
+					startPtr = &start.Time
+				}
+				budgetedIncome += amount * float64(recurrence.OccurrencesInMonth(startPtr, freq, monthStart, monthEnd))
+			}
+		}
+		budgetRows.Close()
 	}
-	snapshot["budgeted_monthly_income"] = budgetedIncome.Float64
+	snapshot["budgeted_monthly_income"] = budgetedIncome
 
-	// Actual income received (transactions this month)
-	var actualIncome sql.NullFloat64
-	err = conn.QueryRow(`
-		SELECT COALESCE(SUM(amount), 0)
+	// Actuals — CALENDAR month (matches the dashboard and budget tab, so the
+	// advisor quotes the same numbers the user sees on screen). Transfers are
+	// excluded by type; run transfer detection before trusting these on a
+	// freshly synced account.
+	var actualIncome, actualExpenses sql.NullFloat64
+	err := conn.QueryRow(`
+		SELECT
+			COALESCE(SUM(amount) FILTER (WHERE type = 'income'), 0),
+			COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0)
 		FROM transactions
-		WHERE user_id = $1 AND type = 'income'
-		  AND date >= NOW() - INTERVAL '30 days'
-	`, userID).Scan(&actualIncome)
+		WHERE user_id = $1
+		  AND date >= date_trunc('month', CURRENT_DATE)
+	`, userID).Scan(&actualIncome, &actualExpenses)
 	if err != nil {
-		log.Printf("snapshot actual income query error: %v", err)
+		log.Printf("snapshot actuals query error: %v", err)
 	}
-	snapshot["actual_income_received"] = actualIncome.Float64
-
-	// Monthly expenses (sum of expense transactions in last 30 days)
-	var monthlyExpenses sql.NullFloat64
-	err = conn.QueryRow(`
-		SELECT COALESCE(SUM(amount), 0)
-		FROM transactions
-		WHERE user_id = $1 AND type = 'expense'
-		  AND date >= NOW() - INTERVAL '30 days'
-	`, userID).Scan(&monthlyExpenses)
-	if err != nil {
-		log.Printf("snapshot expenses query error: %v", err)
-	}
-	snapshot["monthly_expenses"] = monthlyExpenses.Float64
-	snapshot["expected_cash_flow"] = budgetedIncome.Float64 - monthlyExpenses.Float64
+	snapshot["income_received_this_month"] = actualIncome.Float64
+	snapshot["expenses_this_month"] = actualExpenses.Float64
+	snapshot["cash_flow_this_month"] = actualIncome.Float64 - actualExpenses.Float64
+	snapshot["numbers_note"] = "income_received/expenses/cash_flow are ACTUAL calendar-month transactions (internal transfers excluded). budgeted_monthly_income is the PLAN — never compare it against actual expenses as if it were money received."
 
 	// Total debt (column is "balance" not "current_balance")
 	var totalDebt sql.NullFloat64

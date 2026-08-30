@@ -1,0 +1,47 @@
+{
+  "componentName": "HoldingCard",
+  "description": "Tier-3 glass list row for a single holding: ticker badge + name + type, value, and shares/gain detail line. Fully tokenized replacement for the current bespoke card.",
+  "platform": "react-native",
+  "props": {
+    "ticker": { "type": "string", "required": false, "description": "ticker_symbol; badge omitted when absent" },
+    "name": { "type": "string", "required": true, "description": "security_name, falls back to ticker or 'Unknown'" },
+    "type": { "type": "string", "required": false, "description": "security_type, rendered capitalized" },
+    "value": { "type": "number", "required": true, "description": "institution_value" },
+    "quantity": { "type": "number", "required": true, "description": "shares/units; integer shown 0dp, else 4dp" },
+    "price": { "type": "number", "required": true, "description": "institution_price" },
+    "gain": { "type": "number|null", "required": true, "description": "value - cost_basis; gain line omitted when null (missing cost basis)" },
+    "gainPercent": { "type": "number|null", "required": true, "description": "per-holding return %; omitted with gain when null" },
+    "onPress": { "type": "function", "required": false, "description": "Optional deep-link to holding detail (future); ship non-tappable until route exists" }
+  },
+  "variants": ["gain", "loss", "no-cost-basis", "no-ticker"],
+  "states": ["default", "pressed", "loading"],
+  "layout": {
+    "surface": "glassEffects.glass",
+    "radius": "radius.lg",
+    "padding": "spacing.lg",
+    "marginBottom": "spacing.md",
+    "headerRow": "space-between, alignItems flex-start",
+    "detailRow": "space-between, marginTop spacing.sm",
+    "tickerNameGap": "spacing.sm",
+    "minHeight": 44
+  },
+  "tokens": {
+    "tickerBadgeFill": "`${colors.primary2}2e`",
+    "tickerBadgeBorder": "`${colors.primary2}66`",
+    "tickerBadgeRadius": "radius.sm",
+    "tickerBadgePadding": "spacing.xs vertical / spacing.sm horizontal",
+    "tickerText": "typography.caption fontWeight 700 / colors.accent",
+    "name": "typography.smallBold / colors.text (numberOfLines 1)",
+    "type": "typography.caption / colors.textMuted (capitalize)",
+    "value": "typography.bodyBold / colors.text (flexShrink 0)",
+    "sharesDetail": "typography.caption / colors.textMuted",
+    "gainDetail": "typography.caption / getValueColor(gain), prefixed arrow + sign"
+  },
+  "colorIndependence": "Gain/loss encoded by arrow (up/down) + sign (+/-) + color.",
+  "animation": { "press": "scale 0.98 over animation.fast (only when onPress set)" },
+  "accessibility": {
+    "role": "button|text",
+    "label": "{name}, {type}, value {value}, {up|down} {gain}, {gainPercent} percent",
+    "hint": "Double tap to view holding details (when onPress set)"
+  }
+}

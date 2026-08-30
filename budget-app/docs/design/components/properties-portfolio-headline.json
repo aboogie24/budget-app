@@ -1,0 +1,38 @@
+{
+  "componentName": "PropertyPortfolioHeadline",
+  "description": "The screen's floating centerpiece: total value + total equity, equity-% owned, and a stacked equity-vs-mortgage ownership bar. The ONE floating card on the Properties screen.",
+  "platform": "react-native",
+  "surface": "glassEffects.glassFloating",
+  "props": {
+    "totalValue": { "type": "number", "required": true, "description": "Sum of effectiveValue across all properties (dollars)" },
+    "totalEquity": { "type": "number", "required": true, "description": "Sum of (effectiveValue - debt_balance) across all properties" },
+    "propertyCount": { "type": "number", "required": true, "description": "Number of properties, rendered as the '{n} homes' pill" },
+    "loading": { "type": "boolean", "default": false, "description": "When true, render a Skeleton height=132 radius=radius.xl in place of content" }
+  },
+  "derived": {
+    "equityPercent": "totalValue > 0 ? Math.round(totalEquity / totalValue * 100) : null  (hide %-owned + bar when null)",
+    "mortgageTotal": "Math.max(0, totalValue - totalEquity)"
+  },
+  "layout": {
+    "padding": 24,
+    "radius": 20,
+    "valueColumns": 2,
+    "ownershipBarHeight": 8,
+    "ownershipBarRadius": "radius.full"
+  },
+  "tokens": {
+    "label": "typography.caption / colors.textMuted (uppercase 'PORTFOLIO')",
+    "countPill": "colors.glassLight fill, radius.full, typography.caption / colors.textMuted",
+    "totalValue": "typography.h2 / colors.text",
+    "totalEquity": "typography.h2 / colors.primary2",
+    "equityPercent": "typography.caption / colors.success",
+    "ownershipBarEquity": "colors.primary2",
+    "ownershipBarMortgage": "`${colors.error}66`",
+    "legend": "typography.caption / colors.textMuted"
+  },
+  "states": ["default", "loading", "noMortgage (full-width equity bar, no mortgage legend)"],
+  "accessibility": {
+    "role": "summary",
+    "label": "Portfolio: {propertyCount} homes. Total value {totalValue}. Total equity {totalEquity}, {equityPercent} percent owned."
+  }
+}

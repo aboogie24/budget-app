@@ -74,25 +74,17 @@ func CreatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create allocations
+	// Create allocations — auto-suggested in the couple's PRIORITY order, with the
+	// pot distributed (dated savings first, then payoff/fill cascading down the
+	// ranking). Sum is guaranteed <= monthly_contribution.
 	plan.Allocations = []models.PlanAllocation{}
-	perGoalAmount := 0.0
-	if len(req.GoalIDs) > 0 {
-		perGoalAmount = req.MonthlyContribution / float64(len(req.GoalIDs))
-	}
-
-	for i, goalID := range req.GoalIDs {
-		targetType := resolveTargetType(conn.Raw(), userID, goalID)
-		if targetType == "" {
-			continue
-		}
-
+	for _, s := range suggestAllocations(conn.Raw(), userID, req.MonthlyContribution, req.GoalIDs) {
 		var alloc models.PlanAllocation
 		err := conn.QueryRow(`
 			INSERT INTO plan_allocations (plan_id, target_id, target_type, monthly_amount, priority_order)
 			VALUES ($1, $2, $3, $4, $5)
 			RETURNING id, plan_id, target_id, target_type, monthly_amount, priority_order
-		`, plan.ID, goalID, targetType, perGoalAmount, i+1).Scan(
+		`, plan.ID, s.TargetID, s.TargetType, s.MonthlyAmount, s.PriorityOrder).Scan(
 			&alloc.ID, &alloc.PlanID, &alloc.TargetID, &alloc.TargetType,
 			&alloc.MonthlyAmount, &alloc.PriorityOrder,
 		)
@@ -430,6 +422,37 @@ func UpdatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If the pot changed, re-derive allocations across the plan's existing targets
+	// in priority order so they stay consistent with the new monthly_contribution
+	// (the old code left stale amounts that no longer summed to the total). Manual
+	// per-line overrides are re-set here; use the allocation edit endpoint to
+	// adjust individual lines afterward.
+	if body.MonthlyContribution != nil {
+		trows, qerr := conn.Query(`SELECT target_id::text FROM plan_allocations WHERE plan_id = $1 ORDER BY priority_order`, planID)
+		if qerr == nil {
+			var targetIDs []string
+			for trows.Next() {
+				var id string
+				if trows.Scan(&id) == nil {
+					targetIDs = append(targetIDs, id)
+				}
+			}
+			trows.Close()
+			if len(targetIDs) > 0 {
+				if _, derr := conn.Exec(`DELETE FROM plan_allocations WHERE plan_id = $1`, planID); derr == nil {
+					for _, s := range suggestAllocations(conn.Raw(), userID, *body.MonthlyContribution, targetIDs) {
+						if _, ierr := conn.Exec(`
+							INSERT INTO plan_allocations (plan_id, target_id, target_type, monthly_amount, priority_order)
+							VALUES ($1, $2, $3, $4, $5)`,
+							planID, s.TargetID, s.TargetType, s.MonthlyAmount, s.PriorityOrder); ierr != nil {
+							log.Printf("UpdatePlan rebalance insert error: %v", ierr)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":      planID,
@@ -493,14 +516,28 @@ func DeletePlan(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// resolveTargetType checks whether a goal ID is a debt_account or savings_goal.
-func resolveTargetType(conn *sql.DB, userID, goalID string) string {
+// resolveTargetType checks whether a target ID is a debt_account or
+// savings_goal that the user can reach — their own OR a shared household one.
+// (The old version only matched user_id, so shared goals silently failed to
+// attach to a plan.)
+func resolveTargetType(conn *sql.DB, userID, targetID string) string {
+	hh := db.ResolveHouseholdID(conn, userID)
+	var hhArg interface{}
+	if hh != "" {
+		hhArg = hh
+	}
 	var exists bool
-	err := conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM debt_accounts WHERE id = $1 AND user_id = $2)`, goalID, userID).Scan(&exists)
+	err := conn.QueryRow(`
+		SELECT EXISTS(SELECT 1 FROM debt_accounts
+			WHERE id = $1 AND (user_id = $2 OR ($3::uuid IS NOT NULL AND household_id = $3)))
+	`, targetID, userID, hhArg).Scan(&exists)
 	if err == nil && exists {
 		return "debt"
 	}
-	err = conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM savings_goals WHERE id = $1 AND user_id = $2)`, goalID, userID).Scan(&exists)
+	err = conn.QueryRow(`
+		SELECT EXISTS(SELECT 1 FROM savings_goals
+			WHERE id = $1 AND (user_id = $2 OR ($3::uuid IS NOT NULL AND household_id = $3)))
+	`, targetID, userID, hhArg).Scan(&exists)
 	if err == nil && exists {
 		return "savings_goal"
 	}

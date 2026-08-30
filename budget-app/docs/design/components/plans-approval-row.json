@@ -1,0 +1,29 @@
+{
+  "componentName": "ApprovalRow",
+  "description": "A partner's approval state on a plan (detail → Partner Approvals section). Status is a 12%-tinted icon circle + name + a status WORD, so it is never color-only. Optional feedback quote for rejections.",
+  "platform": "react-native",
+  "props": {
+    "approval": { "type": "Approval", "required": true, "description": "id, user_name?, status, feedback?, responded_at?" }
+  },
+  "variants": ["approved", "rejected", "pending"],
+  "statusVisual": {
+    "approved": { "icon": "checkmark-circle", "token": "colors.success", "word": "Approved" },
+    "rejected": { "icon": "close-circle", "token": "colors.error", "word": "Rejected" },
+    "pending": { "icon": "time-outline", "token": "colors.textMuted", "word": "Awaiting review" }
+  },
+  "tokens": {
+    "iconCircle": "36px, radius.full, background = state color at 12%, icon = state color",
+    "name": "typography.smallBold / colors.text",
+    "subLine": "typography.caption / colors.textMuted ('{word}' + optional ' · ' + formatDate)",
+    "feedbackBox": "background rgba(239,68,68,0.08), radius.sm, typography.small / colors.error",
+    "separator": "colors.borderLight"
+  },
+  "approveRejectButtons": {
+    "renderWhen": "plan.status === 'draft' && approvals.some(a => a.status === 'pending')",
+    "approve": { "style": "gradients.successGradient", "icon": "checkmark-circle", "label": "Approve", "onPress": "handleApprove" },
+    "reject": { "style": "outline, colors.error border at 12% tint", "icon": "close-circle", "label": "Reject", "onPress": "open reject sheet" }
+  },
+  "accessibility": {
+    "label": "{name}, {approved|rejected|awaiting review}{, {date}}.{ feedback ? ' Feedback: {feedback}.' : '' }"
+  }
+}

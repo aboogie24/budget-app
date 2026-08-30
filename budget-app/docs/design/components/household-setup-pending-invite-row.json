@@ -1,0 +1,32 @@
+{
+  "componentName": "PendingInviteRow",
+  "description": "A sent invite awaiting acceptance: recipient email, expiry, and a color-independent status chip (Pending / Expired).",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "props": {
+    "inviteeEmail": { "type": "string", "required": true, "description": "Recipient email" },
+    "expiresAt": { "type": "string", "required": true, "description": "ISO expiry timestamp" }
+  },
+  "variants": ["pending", "expired"],
+  "states": ["default"],
+  "derived": { "expired": "new Date(expiresAt) < now" },
+  "layout": {
+    "row": { "direction": "row", "align": "center", "paddingVertical": "spacing.md" },
+    "leadingIcon": { "name": "mail-outline", "size": 16, "color": "colors.warning" },
+    "chip": {
+      "radius": "radius.sm",
+      "flexShrink": 0,
+      "pending": { "fill": "${colors.warning}26", "border": "${colors.warning}40", "icon": "time-outline", "word": "Pending", "color": "colors.warning" },
+      "expired": { "fill": "${colors.error}26", "border": "${colors.error}40", "icon": "close-circle-outline", "word": "Expired", "color": "colors.error" }
+    }
+  },
+  "typography": {
+    "email": { "style": "typography.smallBold", "color": "colors.text", "numberOfLines": 1 },
+    "expiry": { "style": "typography.caption", "color": "colors.textMuted", "text": "Expires {date}" },
+    "chipText": { "style": "typography.caption", "weight": "700" }
+  },
+  "accessibility": {
+    "role": "text",
+    "label": "Invite to {inviteeEmail}, {expired ? 'expired' : 'pending, expires ' + date}"
+  }
+}

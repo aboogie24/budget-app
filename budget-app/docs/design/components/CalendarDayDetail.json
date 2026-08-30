@@ -1,0 +1,37 @@
+{
+  "componentName": "CalendarDayDetail",
+  "description": "The selected-day panel: a title, per-day split chips (Received / Spent / Due), and the day's events grouped ACTUAL then UPCOMING. Each group is rendered with CalendarEventRow.",
+  "platform": "react-native",
+  "designSystem": {
+    "card": "commonStyles.section over glassEffects.glass",
+    "title": "typography.bodyBold colors.text",
+    "groupLabel": "typography.caption colors.textMuted (uppercase)",
+    "padding": "spacing.lg"
+  },
+  "props": {
+    "dateLabel": { "type": "string", "required": true, "description": "e.g. 'Tuesday, June 17'" },
+    "received": { "type": "number", "required": true, "description": "income on this day" },
+    "spent": { "type": "number", "required": true, "description": "actual expenses on this day" },
+    "due": { "type": "number", "required": true, "description": "unpaid projected bills due this day" },
+    "actualEvents": { "type": "EventItem[]", "required": true },
+    "projectedEvents": { "type": "EventItem[]", "required": true }
+  },
+  "splitChips": [
+    { "key": "received", "label": "Received", "color": "colors.success", "treatment": "solid", "showWhen": "received > 0" },
+    { "key": "spent", "label": "Spent", "color": "colors.error", "treatment": "solid", "showWhen": "spent > 0" },
+    { "key": "due", "label": "Due", "color": "colors.warning", "treatment": "dashed border chip", "showWhen": "due > 0" }
+  ],
+  "groups": [
+    { "label": "ACTUAL", "events": "actualEvents", "showWhen": "actualEvents.length > 0" },
+    { "label": "UPCOMING", "events": "projectedEvents", "showWhen": "projectedEvents.length > 0" }
+  ],
+  "states": {
+    "default": "split chips + grouped rows",
+    "emptyDay": "centered sunny-outline (colors.textDark) + 'Nothing scheduled' (colors.textMuted)",
+    "loading": "3 Skeleton rows (reuse components/Skeleton.tsx)"
+  },
+  "accessibility": {
+    "readingOrder": "title -> split summary -> ACTUAL rows -> UPCOMING rows"
+  },
+  "developerNotes": "Group split is the same predicate as CalendarEventRow: projectedEvents = events.filter(isProjected); actualEvents = the rest. Never sum 'spent' and 'due' together."
+}

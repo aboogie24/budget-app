@@ -1,0 +1,45 @@
+{
+  "componentName": "CalendarDayCell",
+  "description": "A single day in the month grid (or week strip). Shows the date number and a row of up to 3 markers that distinguish, at a glance, whether the day had REAL spending/income (solid markers) vs an UPCOMING unpaid bill (hollow ring marker).",
+  "platform": "react-native",
+  "designSystem": {
+    "selectedFill": "colors.primary",
+    "todayRing": "colors.primary2",
+    "selectedCellBg": "rgba(124,58,237,0.18)",
+    "cellRadius": "radius.md",
+    "dayNumberType": "typography.small / smallBold",
+    "tapTargetMin": 44
+  },
+  "props": {
+    "day": { "type": "number", "required": true, "description": "Day of month, or null for grid padding" },
+    "dateKey": { "type": "string", "required": true, "description": "YYYY-MM-DD" },
+    "isToday": { "type": "boolean", "default": false },
+    "isSelected": { "type": "boolean", "default": false },
+    "hasActualSpending": { "type": "boolean", "default": false, "description": "Real expense transaction or paid bill on this day" },
+    "hasIncome": { "type": "boolean", "default": false },
+    "hasUpcomingBill": { "type": "boolean", "default": false, "description": "An unpaid/projected bill is due this day" },
+    "hasOverdueBill": { "type": "boolean", "default": false, "description": "Upcoming bill is overdue — hollow ring turns red" },
+    "overflow": { "type": "boolean", "default": false, "description": "More than 3 markers — render a '+' glyph" },
+    "onPress": { "type": "function", "required": true }
+  },
+  "markers": [
+    { "key": "actualSpend", "show": "hasActualSpending", "shape": "solid dot 5px", "color": "colors.error", "meaning": "real money spent" },
+    { "key": "income", "show": "hasIncome", "shape": "solid dot/triangle 5px", "color": "colors.success", "meaning": "income received" },
+    { "key": "upcomingBill", "show": "hasUpcomingBill", "shape": "HOLLOW ring 5px / 1.5px stroke / transparent center", "color": "colors.warning (or colors.error if overdue)", "meaning": "unpaid bill due — projection" },
+    { "key": "overflow", "show": "overflow", "shape": "'+' glyph", "color": "colors.textMuted" }
+  ],
+  "states": {
+    "default": "number in colors.text, markers below",
+    "today": "1.5px ring colors.primary2 around day circle",
+    "selected": "filled colors.primary circle, white number, cell bg rgba(124,58,237,0.18)",
+    "empty": "number only, no markers",
+    "padding": "renders nothing (null day)"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{weekday} {day}. {hasActualSpending ? 'spending' : ''} {hasIncome ? 'income' : ''} {hasUpcomingBill ? 'bill due' : ''}",
+    "hint": "Double tap to view this day",
+    "note": "Solid vs hollow marker shape carries the actual/projected meaning independent of color."
+  },
+  "developerNotes": "Cap markers at 3, then show '+'. Tappable area must be >= 44pt even though the visible circle is ~32px."
+}

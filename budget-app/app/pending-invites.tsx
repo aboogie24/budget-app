@@ -11,9 +11,20 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton, SkeletonStack } from '@/components/Skeleton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  gradients,
+} from '@/utils/design-system';
 
 type Invite = {
   code: string;
@@ -25,24 +36,182 @@ type Invite = {
   invitee_email?: string;
 };
 
+// ── Expiry math ──
+// Returns the number of whole (ceil) days until `expires_at`. Negative/zero
+// means expired. `≤ 1 && !expired` escalates the status chip to "urgent".
+const daysUntil = (dateStr: string) => {
+  const diff = new Date(dateStr).getTime() - Date.now();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+};
+
+type ChipCase = 'active' | 'urgent' | 'expired';
+
+const chipFor = (
+  expiresAt: string,
+  expired: boolean,
+): { kase: ChipCase; icon: React.ComponentProps<typeof Ionicons>['name']; label: string; color: string } => {
+  if (expired) {
+    return { kase: 'expired', icon: 'alert-circle-outline', label: 'Expired', color: colors.error };
+  }
+  const days = daysUntil(expiresAt);
+  if (days <= 1) {
+    return {
+      kase: 'urgent',
+      icon: 'alarm-outline',
+      label: days <= 0 ? 'Today' : '1 day left',
+      color: colors.error,
+    };
+  }
+  return { kase: 'active', icon: 'time-outline', label: `${days} days left`, color: colors.warning };
+};
+
+// ── Status chip (icon + word + color; never color alone) ──
+function StatusChip({ expiresAt, expired }: { expiresAt: string; expired: boolean }) {
+  const { icon, label, color } = chipFor(expiresAt, expired);
+  return (
+    <View
+      style={[
+        styles.chip,
+        { backgroundColor: `${color}1f`, borderColor: `${color}33` },
+      ]}
+    >
+      <Ionicons name={icon} size={12} color={color} />
+      <Text style={[styles.chipText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+// ── Primary CTA ──
+function AcceptButton({
+  householdName,
+  accepting,
+  onPress,
+}: {
+  householdName: string;
+  accepting: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={accepting}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={`Accept and join ${householdName}`}
+      accessibilityHint="Double tap to join this household"
+      accessibilityState={{ disabled: accepting, busy: accepting }}
+    >
+      <LinearGradient colors={[...gradients.primaryGradient]} style={styles.acceptInner}>
+        {accepting ? (
+          <ActivityIndicator size="small" color={colors.text} />
+        ) : (
+          <>
+            <Ionicons name="checkmark-circle-outline" size={18} color={colors.text} />
+            <Text style={styles.acceptText}>Accept &amp; Join</Text>
+          </>
+        )}
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
+// ── Invite card ──
+function InviteCard({
+  invite,
+  accepting,
+  onAccept,
+}: {
+  invite: Invite;
+  accepting: boolean;
+  onAccept: (code: string, householdName: string) => void;
+}) {
+  const expired = new Date(invite.expires_at).getTime() < Date.now();
+  const { label: statusWord } = chipFor(invite.expires_at, expired);
+  const householdName = invite.household_name || 'Household';
+
+  const a11yLabel = invite.inviter_email
+    ? `${householdName}, invited by ${invite.inviter_email}, ${statusWord}.`
+    : `${householdName}, ${statusWord}.`;
+
+  return (
+    <View style={styles.card} accessible accessibilityLabel={a11yLabel}>
+      <View style={styles.cardHeader}>
+        <View style={styles.iconTile}>
+          <Ionicons name="home" size={20} color={colors.primary2} />
+        </View>
+        <View style={styles.identity}>
+          <Text style={styles.householdName} numberOfLines={1}>
+            {householdName}
+          </Text>
+          {invite.inviter_email ? (
+            <Text style={styles.inviterText} numberOfLines={1}>
+              Invited by {invite.inviter_email}
+            </Text>
+          ) : null}
+        </View>
+        <View style={styles.chipSlot}>
+          <StatusChip expiresAt={invite.expires_at} expired={expired} />
+        </View>
+      </View>
+
+      {expired ? (
+        <View style={styles.ghostBar} accessibilityRole="text">
+          <Ionicons name="close-circle-outline" size={16} color={colors.error} />
+          <Text style={styles.ghostText}>This invite has expired</Text>
+        </View>
+      ) : (
+        <AcceptButton
+          householdName={householdName}
+          accepting={accepting}
+          onPress={() => onAccept(invite.code, householdName)}
+        />
+      )}
+    </View>
+  );
+}
+
+// ── Loading skeleton card (layout-matched) ──
+function SkeletonCard() {
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <Skeleton width={44} height={44} borderRadius={radius.lg} />
+        <View style={styles.identity}>
+          <SkeletonStack count={2} />
+        </View>
+        <Skeleton width={92} height={26} borderRadius={radius.sm} />
+      </View>
+      <Skeleton height={48} borderRadius={radius.lg} />
+    </View>
+  );
+}
+
 export default function PendingInvitesScreen() {
-  const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [errored, setErrored] = useState(false);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [accepting, setAccepting] = useState<string | null>(null);
 
   const loadInvites = useCallback(async () => {
+    setLoading(true);
     try {
       const user = await getCurrentUser();
-      if (!user?.id) return;
+      if (!user?.id) {
+        setInvites([]);
+        setErrored(false);
+        return;
+      }
 
       const data = await api.get(`/auth/households/invites`, { user_id: user.id });
       setInvites(Array.isArray(data) ? data : []);
+      setErrored(false);
     } catch (e) {
       console.error('Failed to load invites:', e);
-      setInvites([]);
+      setErrored(true);
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
     }
   }, []);
 
@@ -53,10 +222,10 @@ export default function PendingInvitesScreen() {
   useFocusEffect(
     useCallback(() => {
       loadInvites();
-    }, [loadInvites])
+    }, [loadInvites]),
   );
 
-  const handleAccept = async (code: string, householdName: string) => {
+  const handleAccept = (code: string, householdName: string) => {
     Alert.alert(
       'Accept Invite',
       `Join "${householdName}"? You can only be in one household at a time.`,
@@ -80,246 +249,243 @@ export default function PendingInvitesScreen() {
             }
           },
         },
-      ]
+      ],
     );
   };
 
-  const daysUntil = (dateStr: string) => {
-    const diff = new Date(dateStr).getTime() - Date.now();
-    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    if (days <= 0) return 'Expired';
-    if (days === 1) return '1 day left';
-    return `${days} days left`;
-  };
-
-  if (loading) {
-    return (
-      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
-        <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#c084fc" />
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
+  const firstLoad = loading && !loadedOnce;
+  const backgroundRefresh = loading && loadedOnce;
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={20} color="#c084fc" />
-          </TouchableOpacity>
-          <Text style={styles.headerText}>Pending Invites</Text>
-          <View style={{ width: 40 }} />
+    <GradientBackground variant="bgDarkPurple">
+      <SafeAreaView style={styles.safe}>
+        {/* ── Header ── */}
+        <View style={styles.header}>
+          <BackButton fallback="/(tabs)/settings" color={colors.primary2} size={20} />
+          <Text style={styles.title}>Pending Invites</Text>
+          {backgroundRefresh ? (
+            <ActivityIndicator size="small" color={colors.primary2} />
+          ) : null}
         </View>
 
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {invites.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <View style={styles.emptyIcon}>
-                <Ionicons name="mail-open-outline" size={40} color="#64748b" />
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          {firstLoad ? (
+            // ── Loading (first load) ──
+            <>
+              <Skeleton width={120} height={14} borderRadius={radius.sm} style={styles.countSkeleton} />
+              <SkeletonCard />
+              <SkeletonCard />
+            </>
+          ) : errored ? (
+            // ── Error (distinct from empty) ──
+            <View style={styles.errorCard}>
+              <Ionicons name="alert-circle-outline" size={22} color={colors.error} />
+              <View style={styles.errorTextCol}>
+                <Text style={styles.errorTitle}>Couldn&apos;t load your invites</Text>
+                <Text style={styles.errorSub}>Check your connection and try again.</Text>
               </View>
-              <Text style={styles.emptyTitle}>No Pending Invites</Text>
+              <TouchableOpacity
+                onPress={loadInvites}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading invites"
+              >
+                <Text style={styles.retryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : invites.length === 0 ? (
+            // ── Empty (loaded ok, none) ──
+            <View style={styles.emptyState}>
+              <View style={styles.emptyIcon}>
+                <Ionicons name="mail-open-outline" size={40} color={colors.textMuted} />
+              </View>
+              <Text style={styles.emptyTitle}>No pending invites</Text>
               <Text style={styles.emptySub}>
-                When someone invites you to their household, it will appear here.
+                When someone invites you to their household, it&apos;ll show up here.
               </Text>
             </View>
           ) : (
+            // ── Populated ──
             <>
               <Text style={styles.countText}>
                 {invites.length} invite{invites.length !== 1 ? 's' : ''} waiting
               </Text>
-              {invites.map((inv) => {
-                const expired = new Date(inv.expires_at).getTime() < Date.now();
-                const isAccepting = accepting === inv.code;
-
-                return (
-                  <View key={inv.code} style={styles.inviteCard}>
-                    <View style={styles.inviteHeader}>
-                      <View style={styles.inviteIcon}>
-                        <Ionicons name="home" size={20} color="#c084fc" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.inviteName}>{inv.household_name || 'Household'}</Text>
-                        {inv.inviter_email && (
-                          <Text style={styles.inviterText}>
-                            Invited by {inv.inviter_email}
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-
-                    <View style={styles.inviteMeta}>
-                      <View style={[styles.expiryChip, expired && styles.expiryChipExpired]}>
-                        <Ionicons
-                          name={expired ? 'alert-circle-outline' : 'time-outline'}
-                          size={12}
-                          color={expired ? '#f87171' : '#fbbf24'}
-                        />
-                        <Text style={[styles.expiryText, expired && styles.expiryTextExpired]}>
-                          {daysUntil(inv.expires_at)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {!expired && (
-                      <TouchableOpacity
-                        style={styles.acceptBtn}
-                        onPress={() => handleAccept(inv.code, inv.household_name)}
-                        disabled={isAccepting}
-                      >
-                        <LinearGradient
-                          colors={['#a855f7', '#7c3aed']}
-                          style={styles.acceptBtnInner}
-                        >
-                          {isAccepting ? (
-                            <ActivityIndicator size="small" color="#fff" />
-                          ) : (
-                            <>
-                              <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
-                              <Text style={styles.acceptBtnText}>Accept & Join</Text>
-                            </>
-                          )}
-                        </LinearGradient>
-                      </TouchableOpacity>
-                    )}
-
-                    {expired && (
-                      <View style={styles.expiredBar}>
-                        <Ionicons name="close-circle-outline" size={16} color="#f87171" />
-                        <Text style={styles.expiredText}>This invite has expired</Text>
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
+              {invites.map((inv) => (
+                <InviteCard
+                  key={inv.code}
+                  invite={inv}
+                  accepting={accepting === inv.code}
+                  onAccept={handleAccept}
+                />
+              ))}
             </>
           )}
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  topBar: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 12,
+  safe: { flex: 1 },
+
+  // ── Header ──
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+  title: {
+    ...typography.h3,
+    color: colors.text,
+    marginLeft: spacing.sm,
+    flex: 1,
   },
-  headerText: { fontSize: 18, fontWeight: '800', color: '#f8fafc' },
-  content: { padding: 16, paddingBottom: 40, gap: 14 },
 
-  /* Count */
-  countText: { color: '#94a3b8', fontSize: 14, fontWeight: '600' },
-
-  /* Invite card */
-  inviteCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+  content: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  inviteHeader: {
+
+  // ── Count ──
+  countText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+  },
+  countSkeleton: { marginBottom: spacing.md },
+
+  // ── Invite card ──
+  card: {
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: spacing.md,
   },
-  inviteIcon: {
+  iconTile: {
     width: 44,
     height: 44,
-    borderRadius: 14,
-    backgroundColor: 'rgba(192,132,252,0.12)',
+    borderRadius: radius.lg,
+    backgroundColor: `${colors.primary2}1f`,
+    borderWidth: 1,
+    borderColor: `${colors.primary2}33`,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(192,132,252,0.2)',
   },
-  inviteName: { fontSize: 17, fontWeight: '800', color: '#f8fafc' },
-  inviterText: { color: '#94a3b8', fontSize: 13, marginTop: 2 },
+  identity: { flex: 1 },
+  householdName: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  inviterText: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  chipSlot: { flexShrink: 0 },
 
-  /* Meta */
-  inviteMeta: { flexDirection: 'row', gap: 8 },
-  expiryChip: {
+  // ── Status chip ──
+  chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(251,191,36,0.12)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: 'rgba(251,191,36,0.2)',
   },
-  expiryChipExpired: {
-    backgroundColor: 'rgba(248,113,113,0.1)',
-    borderColor: 'rgba(248,113,113,0.15)',
+  chipText: {
+    ...typography.caption,
+    fontWeight: '600',
   },
-  expiryText: { color: '#fbbf24', fontSize: 12, fontWeight: '600' },
-  expiryTextExpired: { color: '#f87171' },
 
-  /* Accept */
-  acceptBtn: {},
-  acceptBtnInner: {
-    borderRadius: 14,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  acceptBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
-
-  /* Expired */
-  expiredBar: {
+  // ── Accept CTA ──
+  acceptInner: {
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(248,113,113,0.08)',
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(248,113,113,0.12)',
+    gap: spacing.sm,
   },
-  expiredText: { color: '#f87171', fontWeight: '600', fontSize: 14 },
+  acceptText: {
+    ...typography.button,
+    color: colors.text,
+  },
 
-  /* Empty */
-  emptyCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 20,
-    padding: 32,
+  // ── Expired ghost bar ──
+  ghostBar: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginTop: 40,
+    borderStyle: 'dashed',
+    backgroundColor: `${colors.error}14`,
+    borderColor: `${colors.error}29`,
+  },
+  ghostText: {
+    ...typography.smallBold,
+    color: colors.error,
+  },
+
+  // ── Error notice ──
+  errorCard: {
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    gap: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  errorTextCol: { flex: 1 },
+  errorTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  errorSub: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  retryText: {
+    ...typography.smallBold,
+    color: colors.primary2,
+  },
+
+  // ── Empty ──
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
   },
   emptyIcon: {
     width: 80,
     height: 80,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    ...glassEffects.glass,
+    borderRadius: radius.xxl,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    marginBottom: spacing.lg,
   },
-  emptyTitle: { fontSize: 20, fontWeight: '800', color: '#f8fafc', marginBottom: 8 },
-  emptySub: { color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  emptyTitle: {
+    ...typography.h3,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  emptySub: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
 });

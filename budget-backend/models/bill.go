@@ -20,6 +20,12 @@ type Bill struct {
 	Status       string  `json:"status,omitempty"`
 	CategoryName *string `json:"category_name,omitempty"`
 	DebtName     *string `json:"debt_name,omitempty"`
+	// PaidThisPeriod is true when a bill_payment exists for the current billing
+	// period. The calendar uses it to suppress the scheduled bill once paid (the
+	// real transaction represents it). PaidTransactionID links that payment's
+	// transaction so consumers can dedupe bill against transaction.
+	PaidThisPeriod    bool    `json:"paid_this_period"`
+	PaidTransactionID *string `json:"paid_transaction_id,omitempty"`
 }
 
 // BillPayment tracks an individual payment event for a billing period.

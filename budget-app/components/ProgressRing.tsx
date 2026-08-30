@@ -2,6 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
 interface ProgressRingProps {
   progress: number;
   size: number;
@@ -32,6 +34,8 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
   const strokeDashoffset = animatedValue.interpolate({
     inputRange: [0, 1],
     outputRange: [circumference, 0],
+    // >100% would drive the offset negative and wrap the arc past 12 o'clock.
+    extrapolate: 'clamp',
   });
 
   const centerX = size / 2;
@@ -51,7 +55,7 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
             fill="none"
           />
           {/* Progress circle */}
-          <Circle
+          <AnimatedCircle
             cx={centerX}
             cy={centerY}
             r={radius}
@@ -72,7 +76,7 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
           ]}
         >
           <Text style={{ fontSize: 18, fontWeight: '700', color: color }}>
-            {Math.round(progress * 100)}%
+            {Math.round(Math.min(Math.max(progress, 0), 1) * 100)}%
           </Text>
         </View>
       </View>

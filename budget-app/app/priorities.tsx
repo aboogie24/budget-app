@@ -1,53 +1,94 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  TouchableOpacity,
-  Alert,
-  ScrollView,
-  Modal,
-  ActivityIndicator,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  commonStyles,
+} from '@/utils/design-system';
 
-type Priority = {
-  id: string;
-  user_id: string;
-  household_id?: string;
-  title: string;
-  rank: number;
-  notes: string;
-  is_shared: boolean;
+// ─── Model ──────────────────────────────────────────────────────
+// Priorities is now a RANKING over the couple's real targets — their
+// savings goals and debts. Each entry mirrors a live target; there is
+// nothing to "add" here (targets come from Savings and Debts).
+type TargetType = 'savings_goal' | 'debt';
+
+type PriorityTarget = {
+  target_id: string;
+  target_type: TargetType;
+  name: string;
+  rank: number; // 0 = unranked
+  current: number; // savings: current_amount
+  target: number; // savings: target_amount
+  target_date: string; // savings, may be ''
+  balance: number; // debt: balance
+  apr: number; // debt
+  min_payment: number; // debt
+  effective_monthly: number; // $/month flowing to this target from active plans
+};
+
+// Type-indicator metadata. Color is a *supporting* accent — the icon + label
+// carry the meaning, so the distinction survives without color.
+const TYPE_META: Record<
+  TargetType,
+  { label: string; icon: keyof typeof Ionicons.glyphMap; accent: string; tint: string }
+> = {
+  savings_goal: {
+    label: 'Savings goal',
+    icon: 'flag',
+    accent: colors.success,
+    tint: 'rgba(34,197,94,0.12)', // colors.success @ 12%
+  },
+  debt: {
+    label: 'Debt',
+    icon: 'card',
+    accent: colors.info,
+    tint: 'rgba(59,130,246,0.12)', // colors.info @ 12%
+  },
+};
+
+const DISABLED_OPACITY = 0.35;
+
+const targetKey = (t: PriorityTarget) => `${t.target_type}:${t.target_id}`;
+
+const formatCurrency = (n: number) =>
+  `$${Math.round(n).toLocaleString('en-US')}`;
+
+const formatDate = (raw: string): string | null => {
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 };
 
 export default function PrioritiesScreen() {
   const router = useRouter();
-  const [priorities, setPriorities] = useState<Priority[]>([]);
+  const [targets, setTargets] = useState<PriorityTarget[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<Priority | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Form state
-  const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
 
   const loadPriorities = useCallback(async () => {
     try {
       const userId = await api.getUserId();
-      if (!userId) return;
-      const data = await api.get<Priority[]>('/auth/priorities', { user_id: userId });
-      const list = Array.isArray(data) ? data : [];
-      list.sort((a, b) => (a.rank || 99) - (b.rank || 99));
-      setPriorities(list);
+      if (!userId) {
+        setError('No user session found');
+        return;
+      }
+      // Backend returns the list already sorted (ranked first, unranked last).
+      const data = await api.get<PriorityTarget[]>('/auth/priorities', {
+        user_id: userId,
+      });
+      setTargets(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
       console.error('Failed to load priorities:', e);
@@ -61,331 +102,381 @@ export default function PrioritiesScreen() {
     loadPriorities();
   }, [loadPriorities]);
 
-  const resetForm = () => {
-    setTitle('');
-    setNotes('');
-    setEditing(null);
-  };
-
-  const openEdit = (p: Priority) => {
-    setEditing(p);
-    setTitle(p.title);
-    setNotes(p.notes || '');
-    setShowForm(true);
-  };
-
-  const handleSave = async () => {
-    if (!title.trim()) {
-      Alert.alert('Validation', 'Title is required.');
-      return;
-    }
-
-    const userId = await api.getUserId();
-    if (!userId) {
-      Alert.alert('Error', 'No user session found.');
-      return;
-    }
-
-    const payload = {
-      user_id: userId,
-      title: title.trim(),
-      rank: editing ? editing.rank : priorities.length + 1,
-      notes: notes.trim(),
-      is_shared: false,
-    };
-
-    try {
-      if (editing) {
-        await api.put(`/auth/priorities/${editing.id}`, payload);
-      } else {
-        await api.post('/auth/priorities', payload);
-      }
-      setShowForm(false);
-      resetForm();
+  useFocusEffect(
+    useCallback(() => {
       loadPriorities();
-    } catch (e) {
-      console.error('Save priority error:', e);
-      Alert.alert('Error', 'Failed to save priority.');
-    }
-  };
+    }, [loadPriorities]),
+  );
 
-  const handleDelete = (p: Priority) => {
-    Alert.alert('Delete Priority', `Remove "${p.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await api.delete(`/auth/priorities/${p.id}`);
-            loadPriorities();
-          } catch (e) {
-            console.error('Delete priority error:', e);
-            Alert.alert('Error', 'Failed to delete priority.');
-          }
-        },
-      },
-    ]);
-  };
-
-  const moveItem = async (index: number, direction: 'up' | 'down') => {
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= priorities.length) return;
-
-    const reordered = [...priorities];
-    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
-    setPriorities(reordered);
-
+  // Optimistically reorder locally, then persist the full new order.
+  // The backend writes ranks 1..N in array order.
+  const persistOrder = useCallback(async (ordered: PriorityTarget[]) => {
     try {
+      const userId = await api.getUserId();
+      if (!userId) throw new Error('No user session');
       await api.patch('/auth/priorities/reorder', {
-        order: reordered.map((p) => p.id),
+        user_id: userId,
+        order: ordered.map((t) => ({
+          target_id: t.target_id,
+          target_type: t.target_type,
+        })),
       });
     } catch (e) {
       console.error('Reorder error:', e);
+      // Re-sync from source of truth on failure.
       loadPriorities();
     }
+  }, [loadPriorities]);
+
+  const moveItem = (index: number, direction: 'up' | 'down') => {
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= targets.length) return;
+
+    const reordered = [...targets];
+    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
+    // Reflect the new 1..N ranks locally so badges update immediately.
+    const withRanks = reordered.map((t, i) => ({ ...t, rank: i + 1 }));
+    setTargets(withRanks);
+    persistOrder(withRanks);
   };
 
-  const rankColor = (rank: number) => {
-    if (rank === 1) return '#fbbf24';
-    if (rank === 2) return '#94a3b8';
-    if (rank === 3) return '#cd7f32';
-    return '#64748b';
+  // ── Header (static — renders in every state) ──
+  const renderHeader = () => (
+    <>
+      <View style={styles.headerRow}>
+        <BackButton fallback="/(tabs)/goals" />
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          Financial Priorities
+        </Text>
+        {/* Spacer to keep the title balanced with the back button. */}
+        <View style={styles.headerSpacer} />
+      </View>
+
+      <Text style={styles.contextStrip}>
+        Rank your savings goals and debts so your money flows to what matters most first. Reorder
+        with the arrows.
+      </Text>
+    </>
+  );
+
+  // ── Loading skeleton card (layout-matched to a real target card) ──
+  const renderSkeletonCard = (key: number) => (
+    <View key={key} style={styles.card}>
+      <View style={styles.cardRow}>
+        <Skeleton width={40} height={40} borderRadius={radius.md} />
+        <View style={styles.cardBody}>
+          <Skeleton height={16} width="70%" />
+          <View style={{ height: spacing.sm }} />
+          <Skeleton height={12} width="45%" />
+        </View>
+      </View>
+      <View style={commonStyles.divider} />
+      <Skeleton height={12} width="40%" />
+    </View>
+  );
+
+  const renderTargetCard = (t: PriorityTarget, index: number) => {
+    const meta = TYPE_META[t.target_type];
+    const isTop = index === 0;
+    const upDisabled = index === 0;
+    const downDisabled = index === targets.length - 1;
+    const rank = index + 1;
+
+    // Context line — goal shows progress (+ date); debt shows balance + APR.
+    let contextText: string;
+    if (t.target_type === 'savings_goal') {
+      const dateLabel = formatDate(t.target_date);
+      contextText =
+        `${formatCurrency(t.current)} of ${formatCurrency(t.target)}` +
+        (dateLabel ? ` · by ${dateLabel}` : '');
+    } else {
+      contextText = `${formatCurrency(t.balance)} balance · ${t.apr}% APR`;
+    }
+
+    // Effective monthly funding from active plans.
+    const funded = t.effective_monthly > 0;
+    const fundingText = funded
+      ? `${formatCurrency(t.effective_monthly)}/mo from plans`
+      : 'Not funded yet';
+
+    const a11yLabel =
+      `Priority ${rank}${isTop ? ', top priority' : ''}: ${t.name}, ${meta.label}. ` +
+      `${contextText}. ${fundingText}.`;
+
+    return (
+      <View
+        key={targetKey(t)}
+        style={styles.card}
+        accessible
+        accessibilityLabel={a11yLabel}
+      >
+        <View style={styles.cardRow}>
+          {/* Rank badge — number carries order; color is a supporting accent. */}
+          <View style={[styles.rankBadge, { borderColor: meta.accent, backgroundColor: meta.tint }]}>
+            <Text style={[styles.rankText, { color: meta.accent }]}>{rank}</Text>
+          </View>
+
+          {/* Body */}
+          <View style={styles.cardBody}>
+            <View style={styles.titleRow}>
+              <Text style={styles.cardTitle} numberOfLines={2}>
+                {t.name}
+              </Text>
+              {isTop && (
+                <View style={styles.topPill}>
+                  <Ionicons name="star" size={11} color={colors.warning} />
+                  <Text style={styles.topPillText}>TOP</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Type indicator: icon + label + color (color-independent). */}
+            <View style={styles.typeRow}>
+              <View style={[styles.typeChip, { backgroundColor: meta.tint }]}>
+                <Ionicons name={meta.icon} size={11} color={meta.accent} />
+                <Text style={[styles.typeChipText, { color: meta.accent }]}>{meta.label}</Text>
+              </View>
+            </View>
+
+            {/* Context — goal progress / debt balance. */}
+            <Text style={styles.contextText} numberOfLines={2}>
+              {contextText}
+            </Text>
+          </View>
+
+          {/* Reorder control column */}
+          <View style={styles.reorderCol}>
+            <TouchableOpacity
+              onPress={() => moveItem(index, 'up')}
+              disabled={upDisabled}
+              style={styles.reorderBtn}
+              accessibilityRole="button"
+              accessibilityLabel={`Move ${t.name} up`}
+              accessibilityState={{ disabled: upDisabled }}
+              hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="chevron-up"
+                size={20}
+                color={upDisabled ? colors.textMuted : colors.text}
+                style={upDisabled ? { opacity: DISABLED_OPACITY } : undefined}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => moveItem(index, 'down')}
+              disabled={downDisabled}
+              style={styles.reorderBtn}
+              accessibilityRole="button"
+              accessibilityLabel={`Move ${t.name} down`}
+              accessibilityState={{ disabled: downDisabled }}
+              hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="chevron-down"
+                size={20}
+                color={downDisabled ? colors.textMuted : colors.text}
+                style={downDisabled ? { opacity: DISABLED_OPACITY } : undefined}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={commonStyles.divider} />
+
+        {/* Funding row — effective monthly $ flowing from active plans. */}
+        <View style={styles.fundingRow}>
+          <Ionicons
+            name={funded ? 'trending-up' : 'remove-circle-outline'}
+            size={14}
+            color={funded ? colors.success : colors.textMuted}
+          />
+          <Text style={[styles.fundingText, !funded && styles.fundingMuted]}>{fundingText}</Text>
+        </View>
+      </View>
+    );
+  };
+
+  const renderContent = () => {
+    if (error) {
+      return (
+        <ErrorState
+          title="Couldn't load your priorities"
+          message="Check your connection and try again."
+          retryLabel="Retry"
+          onRetry={() => {
+            setError(null);
+            setLoading(true);
+            loadPriorities();
+          }}
+        />
+      );
+    }
+
+    if (loading) {
+      return (
+        <View>
+          {renderSkeletonCard(0)}
+          {renderSkeletonCard(1)}
+          {renderSkeletonCard(2)}
+        </View>
+      );
+    }
+
+    if (targets.length === 0) {
+      return (
+        <EmptyState
+          icon="flag-outline"
+          title="Nothing to rank yet"
+          description="Add savings goals or debts to rank them. Your targets show up here automatically."
+          actionLabel="Go to Goals"
+          onAction={() => router.push('/(tabs)/goals')}
+        />
+      );
+    }
+
+    return <View>{targets.map((t, index) => renderTargetCard(t, index))}</View>;
   };
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 120 }}>
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color="#e5e7eb" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Financial Priorities</Text>
-            <TouchableOpacity
-              onPress={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            >
-              <Ionicons name="add-circle" size={28} color="#c084fc" />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.subtitle}>
-            Rank what matters most to keep your spending aligned with your goals.
-          </Text>
-
-          {error && (
-            <ErrorState
-              title="Something went wrong"
-              message={error}
-              onRetry={() => {
-                setError(null);
-                setLoading(true);
-                loadPriorities();
-              }}
-            />
-          )}
-
-          {!error && loading ? (
-            <ActivityIndicator color="#c084fc" style={{ marginTop: 40 }} />
-          ) : !error && priorities.length === 0 ? (
-            <EmptyState
-              icon="flag-outline"
-              title="No priorities set"
-              description="Define your financial priorities to stay focused on what matters"
-              actionLabel="Add Priority"
-              onAction={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            />
-          ) : (
-            priorities.map((p, index) => (
-              <View key={p.id} style={styles.card}>
-                <View style={styles.cardRow}>
-                  <View style={[styles.rankBadge, { borderColor: rankColor(p.rank) }]}>
-                    <Text style={[styles.rankText, { color: rankColor(p.rank) }]}>
-                      #{p.rank}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.cardTitle}>{p.title}</Text>
-                    {p.notes ? <Text style={styles.notesText}>{p.notes}</Text> : null}
-                  </View>
-                  <View style={styles.actions}>
-                    <TouchableOpacity
-                      onPress={() => moveItem(index, 'up')}
-                      disabled={index === 0}
-                      style={{ opacity: index === 0 ? 0.3 : 1 }}
-                    >
-                      <Ionicons name="chevron-up" size={20} color="#cbd5e1" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => moveItem(index, 'down')}
-                      disabled={index === priorities.length - 1}
-                      style={{ opacity: index === priorities.length - 1 ? 0.3 : 1 }}
-                    >
-                      <Ionicons name="chevron-down" size={20} color="#cbd5e1" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={styles.cardActions}>
-                  <TouchableOpacity onPress={() => openEdit(p)} style={styles.actionBtn}>
-                    <Ionicons name="pencil" size={14} color="#c084fc" />
-                    <Text style={styles.actionText}>Edit</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleDelete(p)} style={styles.actionBtn}>
-                    <Ionicons name="trash-outline" size={14} color="#f472b6" />
-                    <Text style={[styles.actionText, { color: '#f472b6' }]}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
-          )}
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          {renderHeader()}
+          <View style={styles.listWrap}>{renderContent()}</View>
         </ScrollView>
-
-        {/* Add/Edit Modal */}
-        <Modal visible={showForm} animationType="slide" transparent>
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>
-                  {editing ? 'Edit Priority' : 'New Priority'}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setShowForm(false);
-                    resetForm();
-                  }}
-                >
-                  <Ionicons name="close" size={24} color="#cbd5e1" />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.label}>Title</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Pay off student loans"
-                placeholderTextColor="#94a3b8"
-                value={title}
-                onChangeText={setTitle}
-              />
-
-              <Text style={styles.label}>Notes (optional)</Text>
-              <TextInput
-                style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
-                placeholder="Why is this important?"
-                placeholderTextColor="#94a3b8"
-                multiline
-                value={notes}
-                onChangeText={setNotes}
-              />
-
-              <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
-                <LinearGradient
-                  colors={['#a855f7', '#7c3aed']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.saveBtnInner}
-                >
-                  <Text style={styles.saveBtnText}>
-                    {editing ? 'Update' : 'Add Priority'}
-                  </Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxxl + spacing.xxl,
+  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: spacing.sm,
   },
-  headerTitle: { color: '#f8fafc', fontSize: 20, fontWeight: '800' },
-  subtitle: { color: '#94a3b8', fontSize: 13, marginBottom: 16 },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  headerTitle: {
+    ...typography.h3,
+    color: colors.text,
+    flex: 1,
   },
+  headerSpacer: {
+    width: 44,
+    height: 44,
+  },
+  contextStrip: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+  },
+  listWrap: {
+    marginTop: spacing.xl,
+  },
+
+  // Card
   card: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 10,
+    ...commonStyles.card,
   },
-  cardRow: { flexDirection: 'row', alignItems: 'center' },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
   rankBadge: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    borderWidth: 2,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    flexShrink: 0,
   },
-  rankText: { fontWeight: '800', fontSize: 14 },
-  cardTitle: { color: '#f8fafc', fontWeight: '700', fontSize: 15 },
-  notesText: { color: '#94a3b8', fontSize: 12, marginTop: 4 },
-  actions: { gap: 2 },
-  cardActions: { flexDirection: 'row', gap: 16, marginTop: 10 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  actionText: { color: '#c084fc', fontWeight: '700', fontSize: 13 },
-  emptyState: { alignItems: 'center', marginTop: 60, gap: 8 },
-  emptyText: { color: '#e5e7eb', fontWeight: '700', fontSize: 16 },
-  emptySubtext: { color: '#94a3b8', fontSize: 13, textAlign: 'center' },
-  modalBackdrop: {
+  rankText: {
+    ...typography.smallBold,
+  },
+  cardBody: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
+    marginLeft: spacing.md,
   },
-  modalContent: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-  },
-  modalHeader: {
+  titleRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
-  modalTitle: { color: '#f8fafc', fontSize: 18, fontWeight: '800' },
-  label: { color: '#e5e7eb', fontSize: 13, fontWeight: '700', marginBottom: 6, marginTop: 12 },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#f8fafc',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    fontSize: 15,
+  cardTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    flexShrink: 1,
   },
-  saveBtn: { borderRadius: 14, overflow: 'hidden', marginTop: 20, marginBottom: 20 },
-  saveBtnInner: {
+  topPill: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(234,179,8,0.12)', // colors.warning @ 12%
+  },
+  topPillText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.warning,
+  },
+
+  // Type indicator
+  typeRow: {
+    flexDirection: 'row',
+    marginTop: spacing.xs,
+  },
+  typeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+  },
+  typeChipText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+
+  contextText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+
+  // Reorder column
+  reorderCol: {
+    flexShrink: 0,
+    marginLeft: spacing.sm,
+  },
+  reorderBtn: {
+    width: 44,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
   },
-  saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+
+  // Funding row
+  fundingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  fundingText: {
+    ...typography.smallBold,
+    color: colors.success,
+  },
+  fundingMuted: {
+    color: colors.textMuted,
+    fontWeight: '400',
+  },
 });

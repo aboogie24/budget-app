@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_budgets_user_category_type_unique;

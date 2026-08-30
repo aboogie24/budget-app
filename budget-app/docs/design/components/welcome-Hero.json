@@ -1,0 +1,22 @@
+{
+  "componentName": "WelcomeHero",
+  "description": "The value-proposition hero on the welcome screen: title + subtitle rendered directly on the bgDarkPurple gradient (no card surface). Replaces the dark-text-on-white-card hero. Copy preserved from the original screen.",
+  "platform": "react-native",
+  "designSystem": {
+    "surface": "none — sits directly on GradientBackground",
+    "title": { "typography": "typography.h1", "color": "colors.text", "maxLines": 2 },
+    "subtitle": { "typography": "typography.body", "color": "colors.textMuted", "maxLines": 3, "marginTop": "spacing.md" }
+  },
+  "props": {
+    "title": { "type": "string", "required": true, "default": "Build your money rhythm together" },
+    "subtitle": { "type": "string", "required": true, "default": "Shared budgets, linked accounts, and real-time priorities built for partners." }
+  },
+  "states": ["default", "loading"],
+  "stateTreatments": {
+    "loading": "Two Skeleton lines for the title (70% / 45% width, 32h) and two for the subtitle (90% / 60% width, 16h); reuse components/Skeleton.tsx"
+  },
+  "accessibility": {
+    "titleRole": "header",
+    "dynamicType": "title numberOfLines 2, subtitle numberOfLines 3 — reflow, no fixed heights"
+  }
+}

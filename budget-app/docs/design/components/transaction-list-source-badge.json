@@ -1,0 +1,27 @@
+{
+  "componentName": "TransactionSourceBadge",
+  "description": "Small tokenized badge showing where a transaction came from. Replaces the current bespoke hex color map. Status is always word + color + tint so it is never color-alone (Bank and Plaid intentionally share colors.info; the label disambiguates).",
+  "platform": "react-native",
+  "props": {
+    "source": { "type": "'teller' | 'plaid' | 'flinks' | 'bank' | undefined", "required": false, "description": "Undefined → Manual" }
+  },
+  "variants": ["teller", "plaid", "flinks", "bank", "manual"],
+  "mapping": {
+    "teller": { "label": "Teller", "token": "colors.warning" },
+    "plaid": { "label": "Plaid", "token": "colors.info" },
+    "flinks": { "label": "Flinks", "token": "colors.success" },
+    "bank": { "label": "Bank", "token": "colors.info" },
+    "default": { "label": "Manual", "token": "colors.textMuted" }
+  },
+  "tokens": {
+    "fill": "${color}1f",
+    "text": "typography.caption weight 700, color {token}",
+    "radius": "radius.sm",
+    "paddingHorizontal": "spacing.sm",
+    "paddingVertical": "spacing.xs"
+  },
+  "accessibility": {
+    "label": "Source: {label}",
+    "colorIndependence": "label word always present; never rely on color alone"
+  }
+}

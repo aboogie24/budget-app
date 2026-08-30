@@ -1,0 +1,31 @@
+graph TD
+    A[Open Dashboard tab] --> B{Data loaded?}
+    B -->|No| C[Loading: skeleton headline + this-week + strip + 3 rows]
+    B -->|Status endpoint failed| E[Error: neutral headline + Retry, still show local cash-flow number]
+    B -->|New household, no data| F[Empty: SET UP headline + Link-an-account CTA]
+    B -->|Yes| D[Populated dashboard]
+
+    C --> D
+    E -->|Retry| B
+    F -->|Link an account| G[Link-account flow]
+
+    D --> H{Solo or household?}
+    H -->|Solo, members < 2| I[Me scope forced, no toggle, no avatars]
+    H -->|Household| J[Household scope default, ScopeToggle + avatars shown]
+
+    J -->|Tap 'Me'| K[Re-scope whole screen to current user]
+    K -->|Tap 'Household'| J
+
+    D --> L[Compute status: worst-signal-wins bills+spending+cashflow]
+    L -->|all good| M[Green GOOD headline]
+    L -->|one watch| N[Yellow WATCH headline]
+    L -->|any alert| O[Red ALERT headline]
+
+    D --> P{Attention items?}
+    P -->|Non-empty| Q[Show AttentionCard under headline]
+    P -->|Empty| R[Skip tier 2, this-week proof moves up]
+
+    Q -->|Pay / Fix / Review| S[Item action -> refresh]
+    D --> T[Tap this-week column -> Budget / Goals / Bills]
+    D --> U[Tap trajectory strip -> Progress / Net-worth screen]
+    D --> V[Tap 'See all' -> Transactions screen]

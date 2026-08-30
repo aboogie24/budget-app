@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/recurrence"
 	"github.com/aboogie/budget-backend/models"
 
 	"github.com/gofrs/uuid"
@@ -77,6 +79,12 @@ func CreateBudget(w http.ResponseWriter, r *http.Request) {
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, budget.ID, budget.UserID, budget.HouseholdID, budget.Name, budget.Amount, budget.Type, budget.CategoryID, budget.CreatedAt, budget.UpdatedAt, budget.StartDate, budget.Frequency, budget.IsShared)
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" && pqErr.Constraint == "idx_budgets_user_category_type_unique" {
+			validationError(w, "You already have a budget for this category. Edit the existing one instead.")
+			return
+		}
+		log.Printf("CreateBudget insert error: %v", err)
 		http.Error(w, "Failed to create budget", http.StatusInternalServerError)
 		return
 	}
@@ -311,6 +319,29 @@ func GetBudgetByID(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(b)
 }
 
+// occurrencesInMonth delegates to the shared recurrence implementation used by
+// GetBudgetSummary, the dashboard status signals, and the AI financial
+// snapshot — all three must agree or the same budget reads differently across
+// surfaces.
+func occurrencesInMonth(startDate *time.Time, frequency string, monthStart, monthEnd time.Time) int {
+	return recurrence.OccurrencesInMonth(startDate, frequency, monthStart, monthEnd)
+}
+
+// dropEmptyKey strips the ""-keyed bucket (uncategorized transactions) from a
+// per-category aggregate before it goes over the wire.
+func dropEmptyKey(m map[string]float64) map[string]float64 {
+	if _, ok := m[""]; !ok {
+		return m
+	}
+	out := make(map[string]float64, len(m))
+	for k, v := range m {
+		if k != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // GetBudgetSummary returns budget-vs-actual spending per category for a
 // given month/year. One endpoint replaces three separate frontend calls.
 func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
@@ -456,6 +487,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		  AND t.type = 'expense'
 		  AND t.date >= $1 AND t.date < $2
 		  AND COALESCE(t.source, '') != 'bill'
+		  AND t.id NOT IN (SELECT transaction_id FROM bill_payments WHERE transaction_id IS NOT NULL)
 	`
 	txQuerySplit := `
 		SELECT ts.category_id::text, COALESCE(c.parent_id::text, ''), ts.amount
@@ -466,6 +498,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		  AND t.type = 'expense'
 		  AND t.date >= $1 AND t.date < $2
 		  AND COALESCE(t.source, '') != 'bill'
+		  AND t.id NOT IN (SELECT transaction_id FROM bill_payments WHERE transaction_id IS NOT NULL)
 	`
 	var txRows *sql.Rows
 	if hhID == "" {
@@ -651,12 +684,13 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		TransactionCount int                  `json:"transaction_count"`
 		HasUnverified    bool                 `json:"has_unverified"`
 		UnverifiedCount  int                  `json:"unverified_count"`
-		Subcategories    []subcategorySummary  `json:"subcategories"`
+		Subcategories    []subcategorySummary `json:"subcategories"`
 	}
 	type budgetSummary struct {
 		ID              string            `json:"id"`
 		Name            string            `json:"name"`
 		Type            string            `json:"type"`
+		CategoryID      *string           `json:"category_id,omitempty"`
 		Amount          float64           `json:"budgeted"`
 		Spent           float64           `json:"spent"`
 		Remaining       float64           `json:"remaining"`
@@ -826,19 +860,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	countOccurrences := func(startDate *time.Time, freq string) int {
-		if startDate != nil && startDate.After(monthEnd) {
-			return 0
-		}
-		switch freq {
-		case "weekly":
-			return 4
-		case "biweekly":
-			return 2
-		case "1st-15th":
-			return 2
-		default:
-			return 1
-		}
+		return occurrencesInMonth(startDate, freq, monthStart, monthEnd)
 	}
 
 	var summaries []budgetSummary
@@ -925,6 +947,7 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 			ID:              b.ID,
 			Name:            b.Name,
 			Type:            b.Type,
+			CategoryID:      b.CategoryID,
 			Amount:          effective,
 			Spent:           spent,
 			Remaining:       remaining,
@@ -1000,6 +1023,20 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		summaries = []budgetSummary{}
 	}
 
+	// Bill payments are excluded from the transaction aggregate (bills track
+	// via bill_payments), so fold each bill's paid amount into its category
+	// for the emitted per-category map — the budget tab's category rows count
+	// bill spending, and dropping it zeroed every bill-backed category.
+	spentWithBills := make(map[string]float64, len(spentByCategory))
+	for k, v := range spentByCategory {
+		spentWithBills[k] = v
+	}
+	for _, be := range billList {
+		if be.CategoryID != nil && *be.CategoryID != "" {
+			spentWithBills[*be.CategoryID] += billPaid[be.ID]
+		}
+	}
+
 	totalRemaining := totalIncome - totalBudgeted
 	if totalRemaining < 0 {
 		totalRemaining = 0
@@ -1015,6 +1052,13 @@ func GetBudgetSummary(w http.ResponseWriter, r *http.Request) {
 		"total_remaining":  totalRemaining,
 		"total_unverified": globalTotalUnverified,
 		"budgets":          summaries,
+		// Per-category actuals for ALL categories, independent of budgets.
+		// Without these, categorized spending is invisible on the budget tab
+		// until a budget exists for the category — the client previously
+		// derived per-category spend only from budget entries.
+		"spent_by_category":      dropEmptyKey(spentWithBills),
+		"earned_by_category":     dropEmptyKey(earnedByCategory),
+		"unverified_by_category": unverifiedByCategory,
 	})
 }
 
@@ -1043,4 +1087,67 @@ func DeleteBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateBudgetAmountRequest is the body for PATCH /auth/budgets/{id}/amount.
+type updateBudgetAmountRequest struct {
+	UserID string  `json:"user_id"`
+	Amount float64 `json:"amount"`
+}
+
+// UpdateBudgetAmount updates only a budget's amount — a lightweight alternative
+// to UpdateBudget (which requires the full budget body) for the inline amount
+// edit on the budget screen. It does not touch the budget's category link.
+// PATCH /auth/budgets/{id}/amount
+func UpdateBudgetAmount(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "Missing budget ID", http.StatusBadRequest)
+		return
+	}
+
+	var req updateBudgetAmountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
+	if req.Amount <= 0 {
+		validationError(w, "Amount must be greater than zero")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	if !householdAccessCheck(w, dbClient.Conn, "budgets", id, req.UserID) {
+		return
+	}
+
+	res, err := dbClient.Exec(`
+		UPDATE budgets SET amount = $1, updated_at = NOW(), updated_by = $3
+		WHERE id = $2
+	`, req.Amount, id, req.UserID)
+	if err != nil {
+		log.Printf("UpdateBudgetAmount error: %v", err)
+		http.Error(w, "Failed to update budget", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "Budget not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":     id,
+		"amount": req.Amount,
+	})
 }

@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { api } from '../../utils/apiClient';
 import { colors, spacing, radius, typography, glassEffects } from '../../utils/design-system';
 import GradientBackground from '../../components/GradientBackground';
@@ -36,6 +36,63 @@ type Conversation = {
   updated_at: string;
 };
 
+// A queued advisor action awaiting the user's Approve/Decline.
+type PendingAction = {
+  action_id: string;
+  tool_name: string;
+  summary: string;
+  status: 'pending' | 'approved' | 'declined' | 'failed';
+  resultNote?: string;
+};
+
+// Module scope: static styles + a memoized bubble. Streaming updates state on
+// every SSE chunk — without React.memo each chunk re-rendered EVERY markdown
+// bubble in the conversation (the VirtualizedList slow-update warning).
+const mdStyles = StyleSheet.create({
+  body: { color: colors.text, fontSize: 15, lineHeight: 22 },
+  heading1: { color: '#fff', fontSize: 20, fontWeight: '700' as const, marginTop: 12, marginBottom: 6 },
+  heading2: { color: '#fff', fontSize: 18, fontWeight: '700' as const, marginTop: 10, marginBottom: 4 },
+  heading3: { color: '#fff', fontSize: 16, fontWeight: '600' as const, marginTop: 8, marginBottom: 4 },
+  strong: { color: '#fff', fontWeight: '700' as const },
+  em: { color: colors.text, fontStyle: 'italic' as const },
+  bullet_list: { marginTop: 4, marginBottom: 4 },
+  ordered_list: { marginTop: 4, marginBottom: 4 },
+  list_item: { marginBottom: 4, flexDirection: 'row' as const },
+  bullet_list_icon: { color: colors.accent, fontSize: 14, marginRight: 6, marginTop: 2 },
+  ordered_list_icon: { color: colors.accent, fontSize: 14, marginRight: 6, marginTop: 2 },
+  code_inline: { backgroundColor: 'rgba(124,58,237,0.15)', color: colors.accent, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 },
+  fence: { backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 12, marginVertical: 8 },
+  code_block: { color: '#e0e0f0', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 },
+  blockquote: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: 12, marginVertical: 6, opacity: 0.9 },
+  hr: { backgroundColor: 'rgba(255,255,255,0.1)', height: 1, marginVertical: 12 },
+  table: { borderColor: 'rgba(255,255,255,0.1)' },
+  th: { backgroundColor: 'rgba(124,58,237,0.1)', padding: 8 },
+  td: { padding: 8, borderColor: 'rgba(255,255,255,0.08)' },
+  tr: { borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+  link: { color: colors.accent, textDecorationLine: 'underline' as const },
+  paragraph: { marginTop: 2, marginBottom: 6 },
+});
+
+const MessageBubble = React.memo(function MessageBubble({ item }: { item: Message }) {
+  const isUser = item.role === 'user';
+  return (
+    <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.aiBubble]}>
+      {!isUser && (
+        <View style={styles.aiAvatar}>
+          <Ionicons name="sparkles" size={14} color={colors.accent} />
+        </View>
+      )}
+      <View style={[styles.messageContent, isUser ? styles.userContent : styles.aiContent]}>
+        {isUser ? (
+          <Text style={[styles.messageText, styles.userText]}>{item.content}</Text>
+        ) : (
+          <Markdown style={mdStyles}>{item.content}</Markdown>
+        )}
+      </View>
+    </View>
+  );
+});
+
 // ─── Component ─────────────────────────────────────────────────
 
 export default function AIChatScreen() {
@@ -52,6 +109,8 @@ export default function AIChatScreen() {
   const [streamingText, setStreamingText] = useState('');
   const [loading, setLoading] = useState(true);
   const [showConvoList, setShowConvoList] = useState(true);
+  const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
+  const [resolvingActionId, setResolvingActionId] = useState<string | null>(null);
 
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -70,6 +129,20 @@ export default function AIChatScreen() {
       loadConversations();
     }, [])
   );
+
+  // If we arrived from a proactive nudge with a seed question, open a fresh
+  // conversation and send it automatically (once).
+  const params = useLocalSearchParams<{ seed?: string | string[] }>();
+  const seedConsumed = useRef(false);
+  useEffect(() => {
+    const seed = Array.isArray(params.seed) ? params.seed[0] : params.seed;
+    if (seed && !seedConsumed.current && !loading) {
+      seedConsumed.current = true;
+      setShowConvoList(false);
+      sendMessage(seed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.seed, loading]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -130,8 +203,11 @@ export default function AIChatScreen() {
 
   // ─── Send Message with SSE Streaming ──────────────────────
 
-  async function sendMessage() {
-    const text = inputText.trim();
+  async function sendMessage(overrideText?: string) {
+    // overrideText may be a seed string (from a tapped nudge). Guard against
+    // event objects passed by onPress/onSubmitEditing handlers.
+    const source = typeof overrideText === 'string' ? overrideText : inputText;
+    const text = source.trim();
     if (!text || isStreaming) return;
 
     setInputText('');
@@ -184,6 +260,21 @@ export default function AIChatScreen() {
             if (event.type === 'text') {
               accumulated += event.text;
               hasNewText = true;
+            } else if (event.type === 'pending_action') {
+              // The advisor queued a write — render the approval card.
+              setPendingActions((prev) =>
+                prev.some((a) => a.action_id === event.action_id)
+                  ? prev
+                  : [
+                      ...prev,
+                      {
+                        action_id: event.action_id,
+                        tool_name: event.tool_name,
+                        summary: event.summary,
+                        status: 'pending',
+                      },
+                    ],
+              );
             } else if (event.type === 'error') {
               console.error('Stream error:', event.error);
             }
@@ -255,59 +346,136 @@ export default function AIChatScreen() {
   function openConversation(convoId: string) {
     setActiveConvoId(convoId);
     setShowConvoList(false);
+    setPendingActions([]);
     loadMessages(convoId);
+    loadPendingActions(convoId);
   }
 
   function startNewChat() {
     setActiveConvoId(null);
     setMessages([]);
+    setPendingActions([]);
     setShowConvoList(false);
     setTimeout(() => inputRef.current?.focus(), 300);
   }
 
+  // Unresolved approvals survive app restarts — reload them with the convo.
+  async function loadPendingActions(convoId: string) {
+    try {
+      const res = await api.get<{ actions: any[] }>('/auth/ai/actions', { status: 'pending' });
+      const forConvo = (res?.actions || []).filter((a) => a.conversation_id === convoId);
+      setPendingActions(
+        forConvo.map((a) => ({
+          action_id: a.id,
+          tool_name: a.tool_name,
+          summary: a.summary,
+          status: 'pending' as const,
+        })),
+      );
+    } catch (e) {
+      console.log('Pending actions load failed (non-blocking):', e);
+    }
+  }
+
+  async function resolveAction(action: PendingAction, approve: boolean) {
+    if (resolvingActionId) return;
+    setResolvingActionId(action.action_id);
+    try {
+      const res: any = await api.post(
+        `/auth/ai/actions/${action.action_id}/${approve ? 'approve' : 'decline'}`,
+        undefined,
+      );
+      setPendingActions((prev) =>
+        prev.map((a) =>
+          a.action_id === action.action_id
+            ? {
+                ...a,
+                status: approve ? (res?.status === 'failed' ? 'failed' : 'approved') : 'declined',
+                resultNote: res?.result?.visible_at
+                  ? `Done — see ${res.result.visible_at}`
+                  : undefined,
+              }
+            : a,
+        ),
+      );
+    } catch (e: any) {
+      setPendingActions((prev) =>
+        prev.map((a) =>
+          a.action_id === action.action_id
+            ? { ...a, status: 'failed', resultNote: e?.message || 'Failed' }
+            : a,
+        ),
+      );
+    } finally {
+      setResolvingActionId(null);
+    }
+  }
+
   // ─── Render Functions ─────────────────────────────────────
 
-  const mdStyles = StyleSheet.create({
-    body: { color: colors.text, fontSize: 15, lineHeight: 22 },
-    heading1: { color: '#fff', fontSize: 20, fontWeight: '700' as const, marginTop: 12, marginBottom: 6 },
-    heading2: { color: '#fff', fontSize: 18, fontWeight: '700' as const, marginTop: 10, marginBottom: 4 },
-    heading3: { color: '#fff', fontSize: 16, fontWeight: '600' as const, marginTop: 8, marginBottom: 4 },
-    strong: { color: '#fff', fontWeight: '700' as const },
-    em: { color: colors.text, fontStyle: 'italic' as const },
-    bullet_list: { marginTop: 4, marginBottom: 4 },
-    ordered_list: { marginTop: 4, marginBottom: 4 },
-    list_item: { marginBottom: 4, flexDirection: 'row' as const },
-    bullet_list_icon: { color: colors.accent, fontSize: 14, marginRight: 6, marginTop: 2 },
-    ordered_list_icon: { color: colors.accent, fontSize: 14, marginRight: 6, marginTop: 2 },
-    code_inline: { backgroundColor: 'rgba(124,58,237,0.15)', color: colors.accent, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 },
-    fence: { backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 12, marginVertical: 8 },
-    code_block: { color: '#e0e0f0', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 },
-    blockquote: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: 12, marginVertical: 6, opacity: 0.9 },
-    hr: { backgroundColor: 'rgba(255,255,255,0.1)', height: 1, marginVertical: 12 },
-    table: { borderColor: 'rgba(255,255,255,0.1)' },
-    th: { backgroundColor: 'rgba(124,58,237,0.1)', padding: 8 },
-    td: { padding: 8, borderColor: 'rgba(255,255,255,0.08)' },
-    tr: { borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
-    link: { color: colors.accent, textDecorationLine: 'underline' as const },
-    paragraph: { marginTop: 2, marginBottom: 6 },
-  });
+  const renderMessage = useCallback(
+    ({ item }: { item: Message }) => <MessageBubble item={item} />,
+    [],
+  );
 
-  function renderMessage({ item }: { item: Message }) {
-    const isUser = item.role === 'user';
+  // Approval cards for actions the advisor queued — rendered under the
+  // messages so they read as part of the conversation.
+  function renderActionCards() {
+    if (pendingActions.length === 0) return null;
     return (
-      <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.aiBubble]}>
-        {!isUser && (
-          <View style={styles.aiAvatar}>
-            <Ionicons name="sparkles" size={14} color={colors.accent} />
-          </View>
-        )}
-        <View style={[styles.messageContent, isUser ? styles.userContent : styles.aiContent]}>
-          {isUser ? (
-            <Text style={[styles.messageText, styles.userText]}>{item.content}</Text>
-          ) : (
-            <Markdown style={mdStyles}>{item.content}</Markdown>
-          )}
-        </View>
+      <View style={{ gap: 8, marginTop: 8 }}>
+        {pendingActions.map((a) => {
+          const resolved = a.status !== 'pending';
+          const isResolving = resolvingActionId === a.action_id;
+          const statusColor =
+            a.status === 'approved' ? colors.success : a.status === 'failed' ? colors.error : colors.textMuted;
+          return (
+            <View key={a.action_id} style={styles.actionCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="construct-outline" size={14} color={colors.primary2} />
+                <Text style={styles.actionCardLabel}>Advisor wants to:</Text>
+              </View>
+              <Text style={styles.actionCardSummary}>{a.summary}</Text>
+              {resolved ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons
+                    name={a.status === 'approved' ? 'checkmark-circle' : a.status === 'failed' ? 'warning' : 'close-circle'}
+                    size={14}
+                    color={statusColor}
+                  />
+                  <Text style={[styles.actionCardStatus, { color: statusColor }]}>
+                    {a.status === 'approved' ? a.resultNote || 'Approved & done' : a.status === 'failed' ? a.resultNote || 'Failed' : 'Declined'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={styles.actionApprove}
+                    onPress={() => resolveAction(a, true)}
+                    disabled={isResolving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Approve: ${a.summary}`}
+                  >
+                    {isResolving ? (
+                      <ActivityIndicator size="small" color={colors.text} />
+                    ) : (
+                      <Text style={styles.actionApproveText}>Approve</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.actionDecline}
+                    onPress={() => resolveAction(a, false)}
+                    disabled={isResolving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Decline: ${a.summary}`}
+                  >
+                    <Text style={styles.actionDeclineText}>Decline</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          );
+        })}
       </View>
     );
   }
@@ -479,7 +647,15 @@ export default function AIChatScreen() {
                 </Text>
               </View>
             }
-            ListFooterComponent={renderStreamingMessage}
+            // Element, not an inline component: a new function identity per
+            // render makes FlatList unmount/remount the whole footer subtree
+            // on every streaming chunk.
+            ListFooterComponent={
+              <>
+                {renderStreamingMessage()}
+                {renderActionCards()}
+              </>
+            }
           />
 
           {/* Streaming indicator */}
@@ -502,12 +678,12 @@ export default function AIChatScreen() {
               multiline
               maxLength={2000}
               editable={!isStreaming}
-              onSubmitEditing={sendMessage}
+              onSubmitEditing={() => sendMessage()}
               blurOnSubmit={false}
             />
             <TouchableOpacity
               style={[styles.sendBtn, (!inputText.trim() || isStreaming) && styles.sendBtnDisabled]}
-              onPress={sendMessage}
+              onPress={() => sendMessage()}
               disabled={!inputText.trim() || isStreaming}
             >
               <Ionicons
@@ -543,7 +719,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg,
   },
   headerTitle: {
-    ...typography.h2,
+    ...typography.h3, fontWeight: '800',
     color: colors.text,
   },
   headerSubtitle: {
@@ -771,6 +947,57 @@ const styles = StyleSheet.create({
   },
   thinkingText: {
     ...typography.small,
+    color: colors.textMuted,
+  },
+
+  // Advisor action approval cards
+  actionCard: {
+    ...glassEffects.glass,
+    borderColor: `${colors.primary2}44`,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  actionCardLabel: {
+    ...typography.caption,
+    color: colors.primary2,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    fontSize: 10,
+  },
+  actionCardSummary: {
+    ...typography.small,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  actionCardStatus: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+  actionApprove: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionApproveText: {
+    ...typography.smallBold,
+    color: colors.text,
+  },
+  actionDecline: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radius.md,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionDeclineText: {
+    ...typography.smallBold,
     color: colors.textMuted,
   },
 

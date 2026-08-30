@@ -1,0 +1,32 @@
+{
+  "componentName": "DebtSummaryHero",
+  "description": "Floating hero card summarizing total debt, min payment, avg APR, account count, and the Attack/Structured split. The only floating card on the debts screen.",
+  "platform": "react-native",
+  "surface": "glassEffects.glassFloating",
+  "props": {
+    "totalBalance": { "type": "number", "required": true, "description": "Sum of all debt balances" },
+    "totalMinPayment": { "type": "number", "required": true, "description": "Sum of min payments (shown as monthly paydown badge)" },
+    "weightedApr": { "type": "number", "required": true, "description": "Balance-weighted average APR" },
+    "accountCount": { "type": "number", "required": true, "description": "Number of debt accounts" },
+    "attackTotal": { "type": "number", "required": true, "description": "Sum of Attack-bucket balances" },
+    "structuredTotal": { "type": "number", "required": true, "description": "Sum of Structured-bucket balances" },
+    "onSelectBucket": { "type": "function", "required": false, "description": "Optional: tapping a split tile filters to that bucket" }
+  },
+  "tokens": {
+    "heroNumber": "typography.h1",
+    "heroColor": "colors.text",
+    "label": "typography.caption / colors.textMuted",
+    "statValue": "typography.smallBold",
+    "aprColor": "colors.warning",
+    "paydownBadge": "colors.success on success@12%",
+    "attackColor": "colors.error",
+    "structuredColor": "colors.info",
+    "radius": "radius.xl",
+    "innerPadding": "spacing.xl",
+    "splitTile": "glassEffects.glass / radius.md"
+  },
+  "states": ["default"],
+  "accessibility": {
+    "label": "Total debt {totalBalance}, minimum payment {totalMinPayment}, average APR {weightedApr} percent, {accountCount} accounts. Attack {attackTotal}, Structured {structuredTotal}."
+  }
+}

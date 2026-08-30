@@ -7,35 +7,216 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  FlatList,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
 import { api } from '@/utils/apiClient';
 import { getLinkedAccountStatus, createUpdateLinkToken, resetLinkedAccountError } from '@/utils/api';
-import { EmptyState } from '@/components/EmptyState';
-import { ErrorState } from '@/components/ErrorState';
-import { SkeletonCard } from '@/components/SkeletonLoader';
+import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import { colors, spacing, radius, typography, glassEffects } from '@/utils/design-system';
 
 const APP_SCHEME = 'budgetapp';
+
+type ItemStatus = 'good' | 'pending_expiration' | 'error' | 'revoked' | string;
 
 type LinkedAccountStatus = {
   id: string;
   institution_name: string;
-  item_status: 'good' | 'pending_expiration' | 'error' | 'revoked';
+  item_status: ItemStatus;
   error_code: string | null;
   created_at: string;
   updated_at: string;
 };
 
+/* ── Status → token/icon/label map (icon + word + color, never color alone) ─ */
+type StatusMeta = {
+  color: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  label: string;
+};
+
+const getStatusMeta = (status: ItemStatus): StatusMeta => {
+  switch (status) {
+    case 'good':
+      return { color: colors.success, icon: 'checkmark-circle', label: 'Connected' };
+    case 'pending_expiration':
+      return { color: colors.warning, icon: 'alert-circle-outline', label: 'Needs Attention' };
+    case 'error':
+      return { color: colors.error, icon: 'warning-outline', label: 'Error' };
+    case 'revoked':
+      return { color: colors.textMuted, icon: 'close-circle-outline', label: 'Revoked' };
+    default:
+      return { color: colors.textMuted, icon: 'help-circle-outline', label: String(status) };
+  }
+};
+
+const isAttention = (status: ItemStatus) =>
+  status === 'error' || status === 'pending_expiration' || status === 'revoked';
+
+/* ── Small relative date helper: "today" / "Jul 4" / "Jul 4, 2026" ───────── */
+const formatDate = (iso: string) => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
+const formatSynced = (iso: string) => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const isSameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (isSameDay) return 'today';
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+};
+
+/* ── Status badge (icon + word + color) ──────────────────────────────────── */
+function LinkedStatusBadge({ status }: { status: ItemStatus }) {
+  const meta = getStatusMeta(status);
+  return (
+    <View style={[styles.badge, { backgroundColor: `${meta.color}1f` }]}>
+      <Ionicons name={meta.icon} size={12} color={meta.color} />
+      <Text style={[styles.badgeLabel, { color: meta.color }]} numberOfLines={1}>
+        {meta.label}
+      </Text>
+    </View>
+  );
+}
+
+/* ── One account row (both group variants) ───────────────────────────────── */
+function LinkedAccountRow({
+  account,
+  isReAuthLoading,
+  onReAuth,
+  onRelink,
+  showDivider,
+}: {
+  account: LinkedAccountStatus;
+  isReAuthLoading: boolean;
+  onReAuth: () => void;
+  onRelink: () => void;
+  showDivider: boolean;
+}) {
+  const status = account.item_status;
+  const attention = isAttention(status);
+  const isError = status === 'error';
+  const isRevoked = status === 'revoked';
+  const accentColor = isError ? colors.error : isRevoked ? colors.textMuted : colors.warning;
+
+  const noticeLabel =
+    status === 'pending_expiration'
+      ? 'Authentication Expired'
+      : status === 'error'
+      ? 'Connection Issue'
+      : 'Access Revoked';
+
+  const subtitle = attention
+    ? `Linked ${formatDate(account.created_at)}`
+    : `Synced ${formatSynced(account.updated_at)}`;
+
+  const statusWord = getStatusMeta(status).label;
+  const rowA11y = `${account.institution_name}, ${statusWord}, ${
+    attention ? `linked ${formatDate(account.created_at)}` : `synced ${formatSynced(account.updated_at)}`
+  }.`;
+
+  return (
+    <View style={[styles.row, showDivider && styles.rowDivider]}>
+      <View
+        style={styles.rowTop}
+        accessible
+        accessibilityLabel={rowA11y}
+      >
+        <View style={styles.iconChip}>
+          <Ionicons name="business-outline" size={18} color={colors.primary2} />
+        </View>
+
+        <View style={styles.rowMiddle}>
+          <Text style={styles.accountName} numberOfLines={1}>
+            {account.institution_name}
+          </Text>
+          <Text style={styles.accountSub} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        </View>
+
+        <View style={styles.rowRight}>
+          <LinkedStatusBadge status={status} />
+        </View>
+      </View>
+
+      {attention && (
+        <View
+          style={[
+            styles.notice,
+            { backgroundColor: `${accentColor}14`, borderLeftColor: accentColor },
+          ]}
+        >
+          <View style={styles.noticeHead}>
+            <Ionicons
+              name={isRevoked ? 'close-circle-outline' : 'warning-outline'}
+              size={16}
+              color={accentColor}
+            />
+            <Text style={[styles.noticeLabel, { color: accentColor }]}>{noticeLabel}</Text>
+          </View>
+
+          {isRevoked ? (
+            <Text style={styles.noticeCode} numberOfLines={2}>
+              Access revoked — relink to reconnect
+            </Text>
+          ) : account.error_code ? (
+            <Text style={styles.noticeCode} numberOfLines={2}>
+              {account.error_code}
+            </Text>
+          ) : null}
+
+          <TouchableOpacity
+            style={[styles.actionBtn, isReAuthLoading && styles.actionBtnDisabled]}
+            onPress={isRevoked ? onRelink : onReAuth}
+            disabled={isReAuthLoading}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`${isRevoked ? 'Link account' : 'Re-authenticate'} ${account.institution_name}`}
+            accessibilityState={{ busy: isReAuthLoading, disabled: isReAuthLoading }}
+          >
+            {isReAuthLoading ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <>
+                <Ionicons
+                  name={isRevoked ? 'link-outline' : 'refresh-outline'}
+                  size={14}
+                  color={colors.text}
+                />
+                <Text style={styles.actionBtnText}>
+                  {isRevoked ? 'Link Account' : 'Re-authenticate'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function LinkedAccountsScreen() {
   const router = useRouter();
   const [accounts, setAccounts] = useState<LinkedAccountStatus[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [reAuthLoading, setReAuthLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +236,7 @@ export default function LinkedAccountsScreen() {
       setAccounts([]);
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
     }
   }, []);
 
@@ -74,28 +256,11 @@ export default function LinkedAccountsScreen() {
     setRefreshing(false);
   }, [loadAccounts]);
 
-  /* ── Get status badge color ───────────────────────────────────── */
-  const getStatusBadge = (status: LinkedAccountStatus['item_status']) => {
-    switch (status) {
-      case 'good':
-        return { color: '#10b981', label: 'Connected' };
-      case 'pending_expiration':
-        return { color: '#f59e0b', label: 'Needs Attention' };
-      case 'error':
-        return { color: '#ef4444', label: 'Error' };
-      case 'revoked':
-        return { color: '#6b7280', label: 'Revoked' };
-      default:
-        return { color: '#94a3b8', label: status };
-    }
-  };
-
-  /* ── Re-authenticate account ─────────────────────────────────── */
+  /* ── Re-authenticate account (flow unchanged) ────────────────────── */
   const handleReAuth = async (accountId: string) => {
     setReAuthLoading(accountId);
     try {
-      // Get update link token
-      const tokenData = await createUpdateLinkToken(accountId);
+      const tokenData: any = await createUpdateLinkToken(accountId);
       const linkToken = tokenData?.link_token;
 
       if (!linkToken) {
@@ -104,7 +269,6 @@ export default function LinkedAccountsScreen() {
         return;
       }
 
-      // Open Plaid Link in browser
       const url = `${API_URL}/plaid/link-page?token=${encodeURIComponent(linkToken)}`;
       const result = await WebBrowser.openAuthSessionAsync(url, `${APP_SCHEME}://`);
 
@@ -114,7 +278,6 @@ export default function LinkedAccountsScreen() {
         const path = parsed.hostname === 'app' ? parsed.pathname.replace('/', '') : parsed.hostname;
 
         if (path === 'plaid-success') {
-          // Clear the error state after successful re-auth
           await resetLinkedAccountError(accountId);
           Alert.alert('Success', 'Account re-authenticated successfully.');
           await loadAccounts();
@@ -128,41 +291,63 @@ export default function LinkedAccountsScreen() {
     }
   };
 
-  /* ── Render: Loading state ──────────────────────────────────── */
-  if (loading) {
+  /* ── Derived groups (§3) ─────────────────────────────────────────── */
+  const attentionAccounts = accounts.filter((a) => isAttention(a.item_status));
+  const goodAccounts = accounts.filter((a) => !isAttention(a.item_status));
+  const showSkeleton = loading && !loadedOnce;
+  const silentRefreshing = loading && loadedOnce;
+
+  /* ── Header (static, always rendered) ────────────────────────────── */
+  const Header = (
+    <View style={styles.header}>
+      <BackButton fallback="/(tabs)/settings" color={colors.primary2} />
+      <Text style={styles.headerTitle} numberOfLines={1}>
+        Linked Accounts
+      </Text>
+      <View style={styles.headerRight}>
+        {silentRefreshing ? <ActivityIndicator color={colors.primary2} size="small" /> : null}
+      </View>
+    </View>
+  );
+
+  /* ── Summary line (§6.2) ─────────────────────────────────────────── */
+  const Summary = () => {
+    if (accounts.length === 0) return null;
+    const connectedCount = goodAccounts.length;
+    const attentionCount = attentionAccounts.length;
     return (
-      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={22} color="#c084fc" />
-          </TouchableOpacity>
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.headerSection}>
-              <View style={styles.headerIcon}>
-                <Ionicons name="link-outline" size={40} color="#c084fc" />
-              </View>
-              <Text style={styles.headerTitle}>Linked Accounts</Text>
-              <Text style={styles.headerSubtitle}>
-                Manage your connected bank accounts and sync status
+      <View
+        style={styles.summary}
+        accessible
+        accessibilityLabel={`${connectedCount} connected${
+          attentionCount > 0 ? `, ${attentionCount} needs attention` : ''
+        }.`}
+      >
+        {attentionCount > 0 && (
+          <>
+            <View style={styles.summaryChip}>
+              <Ionicons name="alert-circle" size={13} color={colors.warning} />
+              <Text style={[styles.summaryText, { color: colors.warning }]}>
+                {attentionCount} needs attention
               </Text>
             </View>
-            <SkeletonCard lines={3} />
-            <SkeletonCard lines={3} />
-            <SkeletonCard lines={3} />
-            <SkeletonCard lines={3} />
-          </ScrollView>
-        </SafeAreaView>
-      </LinearGradient>
+            <Text style={styles.summaryDivider}>·</Text>
+          </>
+        )}
+        <View style={styles.summaryChip}>
+          <Ionicons name="checkmark-circle" size={13} color={colors.success} />
+          <Text style={[styles.summaryText, { color: colors.success }]}>
+            {connectedCount} connected
+          </Text>
+        </View>
+      </View>
     );
-  }
+  };
 
-  /* ── Render: Main screen ──────────────────────────────────────── */
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#c084fc" />
-        </TouchableOpacity>
+        {Header}
 
         <ScrollView
           contentContainerStyle={styles.scrollContent}
@@ -171,374 +356,383 @@ export default function LinkedAccountsScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor="#a855f7"
-              colors={['#a855f7']}
+              tintColor={colors.primary2}
+              colors={[colors.primary2]}
             />
           }
         >
-          {/* Header */}
-          <View style={styles.headerSection}>
-            <View style={styles.headerIcon}>
-              <Ionicons name="link-outline" size={40} color="#c084fc" />
-            </View>
-            <Text style={styles.headerTitle}>Linked Accounts</Text>
-            <Text style={styles.headerSubtitle}>
-              Manage your connected bank accounts and sync status
-            </Text>
-          </View>
-
-          {/* Error state */}
-          {error && (
-            <ErrorState
-              title="Something went wrong"
-              message={error}
-              onRetry={() => {
-                setError(null);
-                loadAccounts();
-              }}
-            />
-          )}
-
-          {/* Empty state */}
-          {!error && accounts.length === 0 && (
-            <EmptyState
-              icon="link-outline"
-              title="No linked accounts"
-              description="Start by linking your first bank account to get started"
-              actionLabel="Link Account"
-              onAction={() => router.push('/link-account')}
-            />
-          )}
-
-          {/* Accounts list */}
-          {accounts.length > 0 && (
-            <View style={styles.accountsList}>
-              {accounts.map((account) => {
-                const badge = getStatusBadge(account.item_status);
-                const hasError = account.item_status === 'error' || account.item_status === 'pending_expiration';
-
-                return (
-                  <View key={account.id} style={styles.accountCard}>
-                    <View style={styles.cardHeader}>
-                      <View style={styles.cardLeft}>
-                        <View style={styles.bankIcon}>
-                          <Ionicons name="business-outline" size={24} color="#c084fc" />
-                        </View>
-                        <View style={styles.cardTitle}>
-                          <Text style={styles.accountName}>{account.institution_name}</Text>
-                          <Text style={styles.accountDate}>
-                            Linked {new Date(account.created_at).toLocaleDateString()}
-                          </Text>
-                        </View>
+          {/* Loading skeleton (first load only, layout-matched) */}
+          {showSkeleton ? (
+            <>
+              <View style={styles.summary}>
+                <Skeleton width={96} height={16} borderRadius={radius.full} />
+                <Text style={styles.summaryDivider}>·</Text>
+                <Skeleton width={96} height={16} borderRadius={radius.full} />
+              </View>
+              <Skeleton width={96} height={12} style={{ marginBottom: spacing.sm }} />
+              <View style={styles.groupCard}>
+                {[0, 1, 2].map((i) => (
+                  <View key={i} style={[styles.row, i > 0 && styles.rowDivider]}>
+                    <View style={styles.rowTop}>
+                      <Skeleton width={36} height={36} borderRadius={radius.md} />
+                      <View style={styles.rowMiddle}>
+                        <Skeleton width="55%" height={12} style={{ marginBottom: spacing.xs }} />
+                        <Skeleton width="30%" height={10} />
                       </View>
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          { backgroundColor: `${badge.color}18` },
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.statusDot,
-                            { backgroundColor: badge.color },
-                          ]}
-                        />
-                        <Text style={[styles.statusLabel, { color: badge.color }]}>
-                          {badge.label}
-                        </Text>
-                      </View>
+                      <Skeleton width={72} height={20} borderRadius={radius.full} />
                     </View>
-
-                    {/* Error section */}
-                    {hasError && account.error_code && (
-                      <View style={styles.errorSection}>
-                        <View style={styles.errorContent}>
-                          <Ionicons name="warning-outline" size={18} color="#f59e0b" />
-                          <View style={{ flex: 1, marginLeft: 8 }}>
-                            <Text style={styles.errorLabel}>
-                              {account.item_status === 'pending_expiration'
-                                ? 'Authentication Expired'
-                                : 'Connection Issue'}
-                            </Text>
-                            <Text style={styles.errorDesc}>{account.error_code}</Text>
-                          </View>
-                        </View>
-                        <TouchableOpacity
-                          style={[styles.reAuthBtn, reAuthLoading === account.id && styles.btnDisabled]}
-                          onPress={() => handleReAuth(account.id)}
-                          disabled={reAuthLoading === account.id}
-                          activeOpacity={0.7}
-                        >
-                          {reAuthLoading === account.id ? (
-                            <ActivityIndicator size="small" color="#fff" />
-                          ) : (
-                            <>
-                              <Ionicons name="refresh-outline" size={14} color="#fff" />
-                              <Text style={styles.reAuthBtnText}>Re-authenticate</Text>
-                            </>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {/* Last synced info */}
-                    {!hasError && (
-                      <Text style={styles.syncedText}>
-                        Last synced {new Date(account.updated_at).toLocaleDateString()}
-                      </Text>
-                    )}
                   </View>
-                );
-              })}
+                ))}
+              </View>
+            </>
+          ) : error ? (
+            /* Error state — inline glass card, screen not blanked */
+            <View style={styles.stateCard}>
+              <Ionicons name="alert-circle-outline" size={40} color={colors.error} />
+              <Text style={styles.stateTitle}>Couldn't load your accounts</Text>
+              <Text style={styles.stateBody}>{error || 'Check your connection and try again.'}</Text>
+              <TouchableOpacity
+                style={styles.textBtn}
+                onPress={() => {
+                  setError(null);
+                  loadAccounts();
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading accounts"
+              >
+                <Text style={styles.textBtnLabel}>Retry</Text>
+              </TouchableOpacity>
             </View>
-          )}
+          ) : accounts.length === 0 ? (
+            /* Empty state — friendly, one primary CTA */
+            <View style={styles.empty}>
+              <View style={styles.emptyIcon}>
+                <Ionicons name="link-outline" size={40} color={colors.primary2} />
+              </View>
+              <Text style={styles.emptyTitle}>No accounts linked yet</Text>
+              <Text style={styles.emptyBody}>
+                Link your first bank account to sync balances and transactions automatically.
+              </Text>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => router.push('/link-account')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Link Account"
+              >
+                <Text style={styles.primaryBtnText}>Link Account</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <Summary />
 
-          {/* Link new account button */}
-          {accounts.length > 0 && (
-            <TouchableOpacity
-              style={styles.linkButton}
-              onPress={() => router.push('/link-account')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="add-circle-outline" size={18} color="#fff" />
-              <Text style={styles.linkButtonText}>Link New Account</Text>
-            </TouchableOpacity>
+              {/* NEEDS ATTENTION group */}
+              {attentionAccounts.length > 0 && (
+                <View style={styles.group}>
+                  <Text style={styles.groupLabel}>NEEDS ATTENTION</Text>
+                  <View style={styles.groupCard}>
+                    {attentionAccounts.map((account, i) => (
+                      <LinkedAccountRow
+                        key={account.id}
+                        account={account}
+                        isReAuthLoading={reAuthLoading === account.id}
+                        onReAuth={() => handleReAuth(account.id)}
+                        onRelink={() => router.push('/link-account')}
+                        showDivider={i > 0}
+                      />
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* CONNECTED group */}
+              {goodAccounts.length > 0 && (
+                <View style={styles.group}>
+                  <Text style={styles.groupLabel}>CONNECTED</Text>
+                  <View style={styles.groupCard}>
+                    {goodAccounts.map((account, i) => (
+                      <LinkedAccountRow
+                        key={account.id}
+                        account={account}
+                        isReAuthLoading={reAuthLoading === account.id}
+                        onReAuth={() => handleReAuth(account.id)}
+                        onRelink={() => router.push('/link-account')}
+                        showDivider={i > 0}
+                      />
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Link new account CTA (dashed) */}
+              <TouchableOpacity
+                style={styles.ctaBtn}
+                onPress={() => router.push('/link-account')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Link New Account"
+              >
+                <Ionicons name="add-circle-outline" size={18} color={colors.primary2} />
+                <Text style={styles.ctaBtnText}>Link New Account</Text>
+              </TouchableOpacity>
+            </>
           )}
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
   safeArea: { flex: 1 },
-  scrollContent: { padding: 20, paddingBottom: 40 },
-
-  /* Back button */
-  backBtn: {
-    marginHorizontal: 20,
-    marginTop: 12,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 
   /* Header */
-  headerSection: {
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 32,
-  },
-  headerIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(192,132,252,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    gap: spacing.md,
   },
   headerTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#fff',
-    marginBottom: 8,
+    ...typography.h3, fontWeight: '800',
+    color: colors.text,
+    flex: 1,
   },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'center',
-    lineHeight: 20,
-    paddingHorizontal: 16,
+  headerRight: {
+    width: 32,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
 
-  /* Error state */
-  errorText: {
-    color: '#f87171',
-    backgroundColor: 'rgba(248,113,113,0.1)',
-    padding: 12,
-    borderRadius: 10,
-    textAlign: 'center',
-    marginBottom: 16,
-    fontSize: 13,
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+
+  /* Summary line */
+  summary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+    gap: spacing.sm,
+  },
+  summaryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  summaryText: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+  summaryDivider: {
+    ...typography.caption,
+    color: colors.borderGlass,
+  },
+
+  /* Groups */
+  group: {
+    marginBottom: spacing.lg,
+  },
+  groupLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+  },
+  groupCard: {
+    ...glassEffects.glass,
+    paddingHorizontal: spacing.lg,
+  },
+
+  /* Rows */
+  row: {
+    paddingVertical: spacing.md,
+  },
+  rowDivider: {
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  rowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    minHeight: 44,
+  },
+  iconChip: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: `${colors.primary2}1f`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  rowMiddle: {
+    flex: 1,
+    minWidth: 0,
+  },
+  accountName: {
+    ...typography.smallBold,
+    color: colors.text,
+    marginBottom: 2,
+  },
+  accountSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  rowRight: {
+    flexShrink: 0,
+  },
+
+  /* Status badge */
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.full,
+  },
+  badgeLabel: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+
+  /* Attention notice */
+  notice: {
+    marginTop: spacing.md,
+    borderRadius: radius.md,
+    padding: spacing.md,
     borderLeftWidth: 3,
-    borderLeftColor: '#ef4444',
+  },
+  noticeHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  noticeLabel: {
+    ...typography.smallBold,
+  },
+  noticeCode: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+  },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.primary,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    gap: spacing.sm,
+  },
+  actionBtnDisabled: {
+    opacity: 0.6,
+  },
+  actionBtnText: {
+    ...typography.smallBold,
+    color: colors.text,
+  },
+
+  /* Link CTA (dashed) */
+  ctaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    minHeight: 44,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.primary2,
+    backgroundColor: `${colors.primary2}0a`,
+  },
+  ctaBtnText: {
+    ...typography.smallBold,
+    color: colors.primary2,
   },
 
   /* Empty state */
-  emptyState: {
+  empty: {
     alignItems: 'center',
-    paddingVertical: 60,
+    paddingVertical: spacing.xxxl,
+    paddingHorizontal: spacing.lg,
   },
   emptyIcon: {
-    marginBottom: 16,
+    width: 80,
+    height: 80,
+    borderRadius: radius.full,
+    backgroundColor: `${colors.primary2}1a`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#f8fafc',
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    color: '#94a3b8',
+    ...typography.h3,
+    color: colors.text,
     textAlign: 'center',
-    paddingHorizontal: 20,
-    lineHeight: 18,
+    marginBottom: spacing.sm,
   },
-
-  /* Accounts list */
-  accountsList: {
-    gap: 12,
-    marginBottom: 24,
+  emptyBody: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
   },
-
-  accountCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(192,132,252,0.15)',
-  },
-
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-
-  cardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: 8,
-  },
-
-  bankIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(192,132,252,0.12)',
+  primaryBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+  },
+  primaryBtnText: {
+    ...typography.smallBold,
+    color: colors.text,
   },
 
-  cardTitle: {
-    flex: 1,
-  },
-
-  accountName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#f8fafc',
-    marginBottom: 2,
-  },
-
-  accountDate: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-
-  statusBadge: {
-    flexDirection: 'row',
+  /* Error state */
+  stateCard: {
+    ...glassEffects.glass,
+    padding: spacing.xl,
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    gap: 6,
+    marginTop: spacing.lg,
   },
-
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  stateTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    textAlign: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
   },
-
-  statusLabel: {
-    fontSize: 11,
-    fontWeight: '700',
+  stateBody: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.md,
   },
-
-  /* Error section */
-  errorSection: {
-    backgroundColor: 'rgba(245,158,11,0.08)',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: '#f59e0b',
-  },
-
-  errorContent: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-
-  errorLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#f59e0b',
-  },
-
-  errorDesc: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginTop: 2,
-  },
-
-  reAuthBtn: {
-    flexDirection: 'row',
+  textBtn: {
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#7c3aed',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    gap: 6,
   },
-
-  reAuthBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-
-  btnDisabled: {
-    opacity: 0.6,
-  },
-
-  syncedText: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 4,
-  },
-
-  /* Link button */
-  linkButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#7c3aed',
-    paddingVertical: 14,
-    borderRadius: 12,
-    gap: 8,
-  },
-
-  linkButtonText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-
-  centerContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  textBtnLabel: {
+    ...typography.smallBold,
+    color: colors.primary2,
   },
 });

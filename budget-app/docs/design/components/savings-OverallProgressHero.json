@@ -1,0 +1,43 @@
+{
+  "componentName": "OverallProgressHero",
+  "description": "The floating summary card at the top of the Savings screen. Aggregates every goal into one headline: total saved, total target, overall percent, and count chips (goals / funded / behind). The ONLY card on the screen that floats and uses h1 — mirrors the dashboard StatusHeadlineCard's role.",
+  "platform": "react-native",
+  "props": {
+    "totalCurrent": { "type": "number", "required": true, "description": "sum of current_amount across goals" },
+    "totalTarget": { "type": "number", "required": true, "description": "sum of target_amount across goals" },
+    "overallPercent": { "type": "number", "required": true, "description": "min(totalCurrent/totalTarget*100, 100)" },
+    "goalCount": { "type": "number", "required": true },
+    "fundedCount": { "type": "number", "default": 0, "description": "goals where current >= target" },
+    "behindCount": { "type": "number", "default": 0, "description": "goals with a genuinely at-risk deadline" },
+    "loading": { "type": "boolean", "default": false, "description": "renders Skeleton placeholders in the same layout" }
+  },
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "borderRadius": "radius.xl",
+    "padding": "spacing.xl",
+    "marginBottom": "spacing.xl"
+  },
+  "content": {
+    "label": { "text": "OVERALL PROGRESS", "type": "typography.caption", "transform": "uppercase", "color": "colors.textMuted" },
+    "value": { "text": "{fmt(totalCurrent)}", "type": "typography.h1", "color": "colors.text" },
+    "valueSuffix": { "text": "saved of {fmt(totalTarget)} target", "type": "typography.small", "color": "colors.textMuted" },
+    "progressBar": { "recipe": "shared progress bar (§6)", "fill": "colors.primary", "track": "colors.glassLight", "height": 8, "borderRadius": "radius.full" },
+    "percentLabel": { "text": "{overallPercent}%", "type": "typography.smallBold", "color": "colors.primary" },
+    "summaryChips": {
+      "type": "typography.caption",
+      "chips": [
+        { "icon": "ellipse", "text": "{goalCount} goals", "color": "colors.textMuted", "always": true },
+        { "icon": "checkmark-circle", "text": "{fundedCount} funded", "color": "colors.success", "show": "fundedCount > 0" },
+        { "icon": "alert-circle", "text": "{behindCount} behind", "color": "colors.warning", "show": "behindCount > 0" }
+      ],
+      "separator": "·"
+    }
+  },
+  "states": ["default", "zero (all values 0 — empty screen)", "loading-skeleton"],
+  "accessibility": {
+    "role": "summary",
+    "label": "Overall progress, {fmt(totalCurrent)} saved of {fmt(totalTarget)}, {overallPercent} percent. {goalCount} goals, {fundedCount} funded, {behindCount} behind.",
+    "note": "Count chips pair icon + number + word so they are color-independent."
+  },
+  "developerNotes": "Reuse the totals already computed in savings.tsx (totalCurrent/totalTarget/overallPercent). Only fundedCount/behindCount are new — derive from getGoalStatus. Keep visible in the zero/empty state showing $0 / $0 so the screen has an anchor. This is the only card using glassFloating + h1."
+}

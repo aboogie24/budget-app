@@ -6,6 +6,7 @@ import (
 	"github.com/aboogie/budget-backend/handlers"
 	"github.com/aboogie/budget-backend/internal/flinks"
 	plaidclient "github.com/aboogie/budget-backend/internal/plaid"
+	"github.com/aboogie/budget-backend/internal/teller"
 	"github.com/aboogie/budget-backend/middleware"
 
 	"github.com/gorilla/mux"
@@ -23,6 +24,12 @@ func SetupRoutes(r *mux.Router) {
 		log.Println("Flinks client initialized (env=" + flinksClient.Env() + ")")
 	}
 
+	// Initialize Teller client (logs availability)
+	tellerClient := teller.NewClient()
+	if tellerClient.IsAvailable() {
+		log.Println("Teller client initialized (env=" + tellerClient.Env() + ")")
+	}
+
 	r.Use(middleware.RecoveryMiddleware)
 	r.Use(middleware.Logging)
 
@@ -31,12 +38,21 @@ func SetupRoutes(r *mux.Router) {
 
 	// Transactions
 	authRoutes.HandleFunc("/transactions/backfill-categories", handlers.BackfillTransactionCategories).Methods("POST")
+	authRoutes.HandleFunc("/transactions/recategorize", handlers.RecategorizeTransactions).Methods("POST")
+	authRoutes.HandleFunc("/transactions/ai-categorize", handlers.AICategorizeTransactions).Methods("POST")
+	authRoutes.HandleFunc("/transactions/detect-transfers", handlers.DetectTransfers).Methods("POST")
+	authRoutes.HandleFunc("/dashboard/attention", handlers.GetAttention).Methods("GET")
+	authRoutes.HandleFunc("/dashboard/status", handlers.GetDashboardStatus).Methods("GET")
+	authRoutes.HandleFunc("/dashboard/networth/snapshot", handlers.RecordNetWorthSnapshot).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.CreateTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions", handlers.GetTransactions).Methods("GET")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.SplitTransaction).Methods("POST")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.GetTransactionSplits).Methods("GET")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.UpdateTransactionSplits).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}/split", handlers.DeleteTransactionSplits).Methods("DELETE")
+	authRoutes.HandleFunc("/transactions/{id}/category", handlers.SetTransactionCategory).Methods("PATCH")
+	authRoutes.HandleFunc("/transactions/verify-batch", handlers.VerifyTransactionsBatch).Methods("PATCH")
+	authRoutes.HandleFunc("/transactions/{id}/verify", handlers.VerifyTransaction).Methods("PATCH")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.UpdateTransaction).Methods("PUT")
 	authRoutes.HandleFunc("/transactions/{id}", handlers.DeleteTransaction).Methods("Delete")
 	authRoutes.HandleFunc("/savings-goals", handlers.ListSavingsGoals).Methods("GET")
@@ -61,11 +77,18 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/sharing-preferences", handlers.GetSharingPreferences).Methods("GET")
 	authRoutes.HandleFunc("/sharing-preferences", handlers.UpsertSharingPreferences).Methods("POST")
 	authRoutes.HandleFunc("/bank/sync", handlers.SyncBankAccount).Methods("POST")
+	authRoutes.HandleFunc("/bank/sync-all", handlers.SyncAllBankAccounts).Methods("POST")
 	authRoutes.HandleFunc("/bank/providers", handlers.GetBankProviders).Methods("GET")
 
 	// Flinks (bank connection)
 	authRoutes.HandleFunc("/flinks/authorize-token", handlers.FlinksAuthorizeToken).Methods("POST")
 	authRoutes.HandleFunc("/flinks/connect", handlers.FlinksConnect).Methods("POST")
+
+	// Teller (bank connection)
+	authRoutes.HandleFunc("/teller/connect", handlers.TellerConnect).Methods("POST")
+
+	// SimpleFIN (bank connection via user-supplied setup token)
+	authRoutes.HandleFunc("/simplefin/connect", handlers.SimpleFINConnect).Methods("POST")
 	authRoutes.HandleFunc("/plaid/sync", handlers.SyncTransactions(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.SyncInvestments(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/plaid/investments", handlers.GetInvestmentHoldings).Methods("GET")
@@ -83,10 +106,14 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/bills", handlers.ListBills).Methods("GET")
 	authRoutes.HandleFunc("/bills", handlers.CreateBill).Methods("POST")
 	authRoutes.HandleFunc("/bills/auto-detect", handlers.AutoDetectBillPayments).Methods("POST")
+	authRoutes.HandleFunc("/bills/suggestions", handlers.GetBillSuggestions).Methods("GET")
+	authRoutes.HandleFunc("/bills/suggestions/accept", handlers.AcceptBillSuggestion).Methods("POST")
+	authRoutes.HandleFunc("/bills/suggestions/dismiss", handlers.DismissBillSuggestion).Methods("POST")
 	authRoutes.HandleFunc("/bills/{id}", handlers.UpdateBill).Methods("PUT")
 	authRoutes.HandleFunc("/bills/{id}", handlers.DeleteBill).Methods("DELETE")
 	authRoutes.HandleFunc("/bills/{id}/pay", handlers.MarkBillPaid).Methods("POST")
 	authRoutes.HandleFunc("/bills/{id}/payments", handlers.ListBillPayments).Methods("GET")
+	authRoutes.HandleFunc("/bill-payments", handlers.ListBillPaymentsInRange).Methods("GET")
 
 	// Auth (Login, Register, OAuth)
 	r.HandleFunc("/users/register", handlers.RegisterUser).Methods("POST")
@@ -116,6 +143,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/budgets/user/{user_id}", handlers.GetBudgetsByUser).Methods("GET")
 	authRoutes.HandleFunc("/budgets/user/{user_id}/summary", handlers.GetBudgetSummary).Methods("GET")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.GetBudgetByID).Methods("GET")
+	authRoutes.HandleFunc("/budgets/{id}/amount", handlers.UpdateBudgetAmount).Methods("PATCH")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.UpdateBudget).Methods("PUT")
 	authRoutes.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
 
@@ -128,6 +156,9 @@ func SetupRoutes(r *mux.Router) {
 
 	// Plaid link page (public — serves HTML for WebView)
 	r.HandleFunc("/plaid/link-page", handlers.PlaidLinkPage).Methods("GET")
+
+	// Teller Connect page (public — serves HTML for WebView)
+	r.HandleFunc("/teller/connect-page", handlers.TellerConnectPage).Methods("GET")
 
 	// Plaid webhooks (public — receives real-time updates from Plaid)
 	r.HandleFunc("/webhooks/plaid", handlers.HandlePlaidWebhook(plaid)).Methods("POST")
@@ -178,6 +209,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/ai/conversations/{id}", handlers.DeleteAIConversation).Methods("DELETE")
 
 	// Financial Plans (behind auth)
+	authRoutes.HandleFunc("/plans/savings-feasibility", handlers.AssessSavingsFeasibility).Methods("POST")
 	authRoutes.HandleFunc("/plans", handlers.CreatePlan).Methods("POST")
 	authRoutes.HandleFunc("/plans", handlers.ListPlans).Methods("GET")
 	authRoutes.HandleFunc("/plans/{id}", handlers.GetPlan).Methods("GET")
@@ -188,6 +220,8 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/plans/{id}/approvals", handlers.GetPlanApprovals).Methods("GET")
 
 	// Milestones
+	authRoutes.HandleFunc("/plans/{id}/allocations/{allocId}", handlers.UpdateAllocation).Methods("PATCH")
+	authRoutes.HandleFunc("/plans/{id}/allocations/{allocId}", handlers.DeleteAllocation).Methods("DELETE")
 	authRoutes.HandleFunc("/plans/{id}/milestones", handlers.CreateMilestone).Methods("POST")
 	authRoutes.HandleFunc("/plans/{planId}/milestones/{milestoneId}", handlers.UpdateMilestone).Methods("PUT")
 
@@ -199,6 +233,9 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/ai/framework-level", handlers.GetFrameworkLevel).Methods("GET")
 
 	// AI Nudges
+	authRoutes.HandleFunc("/ai/actions", handlers.ListAIPendingActions).Methods("GET")
+	authRoutes.HandleFunc("/ai/actions/{id}/approve", handlers.ApproveAIPendingAction).Methods("POST")
+	authRoutes.HandleFunc("/ai/actions/{id}/decline", handlers.DeclineAIPendingAction).Methods("POST")
 	authRoutes.HandleFunc("/ai/nudges", handlers.GetNudges).Methods("GET")
 	authRoutes.HandleFunc("/ai/nudges/generate", handlers.GenerateNudgesNow).Methods("POST")
 	authRoutes.HandleFunc("/ai/nudges/{id}/dismiss", handlers.DismissNudge).Methods("POST")
@@ -206,5 +243,9 @@ func SetupRoutes(r *mux.Router) {
 	// What-if & Monthly Review
 	authRoutes.HandleFunc("/ai/what-if", handlers.SimulateWhatIf).Methods("POST")
 	authRoutes.HandleFunc("/ai/monthly-review", handlers.GetMonthlyReview).Methods("GET")
+
+	// Advisor memory — what the AI remembers about the couple
+	authRoutes.HandleFunc("/ai/memories", handlers.GetAdvisorMemories).Methods("GET")
+	authRoutes.HandleFunc("/ai/memories/{id}", handlers.DeleteAdvisorMemory).Methods("DELETE")
 
 }

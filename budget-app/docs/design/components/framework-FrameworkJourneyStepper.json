@@ -1,0 +1,42 @@
+{
+  "componentName": "FrameworkJourneyStepper",
+  "description": "Horizontal 5-level ladder (Foundation -> Attack Debt -> Build Security -> Grow Wealth -> Dream Big) with connector line, dots, and labels. The current level is highlighted with fill + glow + a primary2 'you are here' ring; completed steps show a checkmark; future steps are outlined.",
+  "platform": "react-native",
+  "spec": "budget-app/docs/design/specs/framework-redesign.md#6-tier-2--journey-stepper",
+  "props": {
+    "currentLevel": { "type": "number", "required": true, "description": "Active level 1-5." },
+    "levelNames": { "type": "string[]", "required": true, "description": "The 5 level names in order." },
+    "loading": { "type": "boolean", "default": false, "description": "Renders 5 skeleton dots + connector." }
+  },
+  "variants": ["default", "loading"],
+  "states": ["default", "loading"],
+  "layout": {
+    "dotSize": 26,
+    "stepContainerTapTarget": ">=44 (padded, for future interactivity)",
+    "connectorHeight": 2,
+    "labelLines": 2
+  },
+  "tokens": {
+    "card": "glassEffects.glass",
+    "cardPadding": "spacing.lg",
+    "sectionTitle": "typography.smallBold / colors.text",
+    "dotCompletedFill": "level token color",
+    "dotCompletedGlyph": "checkmark / colors.text",
+    "dotCurrentFill": "level token color",
+    "dotCurrentGlow": "shadowColor = level token color",
+    "dotCurrentRing": "1.5px colors.primary2",
+    "dotCurrentGlyph": "level number / typography.caption bold / colors.text",
+    "dotFutureBorder": "2px colors.borderGlass",
+    "connectorDefault": "colors.glassLight",
+    "connectorBehindDone": "prior level token color",
+    "labelCurrent": "typography.caption bold / colors.text",
+    "labelPast": "typography.caption / colors.textMuted",
+    "labelFuture": "typography.caption / colors.textDark"
+  },
+  "accessibility": {
+    "role": "progressbar",
+    "label": "Journey: level {currentLevel} of 5, current level {levelNames[currentLevel-1]}.",
+    "colorIndependence": "Step state conveyed by glyph (checkmark=done, number=current, empty=future) + label weight + the primary2 ring on current, never color alone.",
+    "reducedMotion": "No animated transitions between step states."
+  }
+}

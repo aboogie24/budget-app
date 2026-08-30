@@ -8,10 +8,13 @@ import {
 } from '../haptics';
 
 jest.mock('expo-haptics');
-jest.mock('react-native/Libraries/Utilities/Platform', () => ({
-  OS: 'ios',
-  select: (obj) => obj.ios,
-}));
+jest.mock('react-native/Libraries/Utilities/Platform', () => {
+  const platform = {
+    OS: 'ios',
+    select: (obj: any) => obj.ios,
+  };
+  return { __esModule: true, default: platform, ...platform };
+});
 
 describe('Haptics Utilities', () => {
   beforeEach(() => {

@@ -1,0 +1,18 @@
+appId: com.github.aboogie.budgetapp
+name: 02-add-transaction
+---
+- launchApp
+# Quick-add from Home's + button.
+- tapOn: "Add Expense"
+- inputText: "Maestro Coffee"
+- tapOn: "0.00"
+- inputText: "4.50"
+- hideKeyboard
+# Category is required — pick the first visible option in the picker.
+- tapOn: "Tap to select category"
+- tapOn: "Coffee Shops"
+- tapOn: "Save"
+# Back on Home without an error card = the POST succeeded.
+- extendedWaitUntil:
+    visible: "This Week"
+    timeout: 15000

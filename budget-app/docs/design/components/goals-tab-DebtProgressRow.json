@@ -1,0 +1,31 @@
+{
+  "componentName": "GoalsDebtProgressRow",
+  "description": "A single debt's payoff progress bar in the TIER 5 Debt Payoff Progress card. Tokenized, with a color-INDEPENDENT status word so the fill color is never the only signal.",
+  "platform": "react-native",
+  "props": {
+    "name": { "type": "string", "required": true },
+    "remaining": { "type": "number", "required": true },
+    "paidPercent": { "type": "number", "required": true, "description": "0-100" },
+    "eta": { "type": "string", "required": false, "description": "e.g. 'Aug 2041'; omit if unknown" },
+    "balanceVisible": { "type": "boolean", "default": true }
+  },
+  "statusModel": {
+    "lt30": { "fill": "colors.error", "word": "Just started" },
+    "30to60": { "fill": "colors.warning", "word": "In progress" },
+    "gt60": { "fill": "colors.success", "word": "On track" }
+  },
+  "tokens": {
+    "name": "typography.small / colors.text",
+    "meta": "typography.caption / colors.textMuted ('{remaining} left · {eta}')",
+    "track": "colors.glassLight, radius.full, height ~6",
+    "fill": "gradients.primaryGradient blended toward the status fill color, radius.full",
+    "percentCaption": "typography.caption / colors.textDark ('{paidPercent}% paid off · {word}')"
+  },
+  "states": ["default", "masked"],
+  "colorIndependence": "Progress status conveyed by fill color + the status word (Just started / In progress / On track), not color alone.",
+  "accessibility": {
+    "role": "text",
+    "label": "{name}, {remaining} left, {paidPercent} percent paid off, {status word}."
+  },
+  "developerNotes": "The `original = current * 1.3` payoff estimate is synthetic — prefer a real opening-balance field if the debt API exposes one. The bar shows % + status word so a rough estimate never reads as a precise claim."
+}

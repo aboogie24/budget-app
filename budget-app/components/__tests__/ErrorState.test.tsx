@@ -17,19 +17,20 @@ jest.mock('@/utils/ThemeContext', () => ({
   }),
 }));
 
-// Mock GlassCard component
-jest.mock('../GlassCard', () => ({
-  GlassCard: ({ children, ...props }: any) => (
+// Mock GlassCard component (imported as default in ErrorState)
+jest.mock('../GlassCard', () => {
+  const GlassCard = ({ children, ...props }: any) => (
     <div testID="glass-card" {...props}>
       {children}
     </div>
-  ),
-}));
+  );
+  return { __esModule: true, default: GlassCard, GlassCard };
+});
 
 // Mock Ionicons
 jest.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name, size, color }: any) => (
-    <div testID={`icon-${name}`} data-size={size} data-color={color}>
+    <div {...({ testID: `icon-${name}`, "data-size": size, "data-color": color } as any)}>
       {name}
     </div>
   ),
@@ -51,7 +52,7 @@ describe('ErrorState Component', () => {
   it('renders error icon', () => {
     render(<ErrorState {...defaultProps} />);
 
-    const icon = screen.getByTestID('icon-alert-circle-outline');
+    const icon = screen.getByTestId('icon-alert-circle-outline');
     expect(icon).toBeTruthy();
   });
 
@@ -148,7 +149,7 @@ describe('ErrorState Component', () => {
   it('renders GlassCard wrapper', () => {
     render(<ErrorState {...defaultProps} />);
 
-    const glassCard = screen.getByTestID('glass-card');
+    const glassCard = screen.getByTestId('glass-card');
     expect(glassCard).toBeTruthy();
   });
 

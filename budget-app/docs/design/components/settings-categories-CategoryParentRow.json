@@ -1,0 +1,45 @@
+{
+  "componentName": "CategoryParentRow",
+  "description": "A top-level category row: icon chip, name, meta (sub count + rule count), and a right cluster (trash for custom, chevron). Tap toggles expand/collapse; long-press opens edit. Expanded, it hosts CategorySubRows + a dashed Add-subcategory row. Re-skin of the current parentSection/parentRow onto the design system.",
+  "platform": "react-native",
+  "props": {
+    "category": { "type": "Category", "required": true },
+    "isExpanded": { "type": "boolean", "required": true },
+    "subCount": { "type": "number", "required": true },
+    "totalRules": { "type": "number", "required": true },
+    "isSystem": { "type": "boolean", "required": true },
+    "onToggle": { "type": "(id: string) => void", "required": true },
+    "onEdit": { "type": "(cat: Category) => void", "required": true },
+    "onDelete": { "type": "(cat: Category) => void", "required": true }
+  },
+  "layout": {
+    "card": "glassEffects.glass",
+    "border": "colors.borderGlass",
+    "radius": "radius.lg",
+    "marginBottom": "spacing.md",
+    "row": { "flexDirection": "row", "alignItems": "center", "padding": "spacing.md", "gap": "spacing.md" },
+    "iconChip": { "size": 40, "radius": "radius.md", "fill": "category.color @ 12%", "icon": "resolveIcon(category.icon) in category.color, 20" }
+  },
+  "content": {
+    "name": { "type": "typography.bodyBold", "color": "colors.text", "numberOfLines": 1 },
+    "meta": { "type": "typography.caption", "color": "colors.textMuted", "text": "{subCount} subs · ⑂ {totalRules} rules", "note": "omit each clause when its count is 0" },
+    "ruleBadge": { "icon": "git-branch-outline", "fill": "colors.primary2 @ 12%", "text": "colors.accent", "radius": "radius.sm" },
+    "systemChip": { "icon": "lock-closed", "text": "System", "color": "colors.textMuted", "fill": "colors.glassMedium", "radius": "radius.sm", "shownWhen": "isSystem" },
+    "trash": { "icon": "trash-outline", "color": "colors.error", "chip": "colors.glassLight @ radius.sm", "visualSize": 28, "touchTarget": 44, "shownWhen": "!isSystem" },
+    "chevron": { "icon": "chevron-up | chevron-down", "color": "colors.textMuted", "size": 16 }
+  },
+  "interactions": {
+    "onPress": "onToggle(category.id) — expand/collapse",
+    "onLongPress": "onEdit(category) (system → informational Alert, kept)",
+    "expandMotion": "LayoutAnimation easeInEaseOut ≈ animation.medium; instant under reduced motion"
+  },
+  "states": ["default", "expanded", "pressed", "system-locked", "skeleton"],
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {subCount} subcategories, {totalRules} rules{, System, locked}",
+    "hint": "Double tap to expand, long press to edit",
+    "minTouch": 44,
+    "colorIndependence": "System state carries lock icon + word; delete carries trash shape."
+  },
+  "developerNotes": "Trash and chevron get hitSlop to reach 44 while keeping the compact 28/16 visuals. category.color @ 12% is the one allowed literal tint."
+}

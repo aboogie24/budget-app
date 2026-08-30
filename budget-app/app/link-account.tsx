@@ -6,9 +6,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  FlatList,
   Modal,
   ScrollView,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -18,7 +21,11 @@ import * as WebBrowser from 'expo-web-browser';
 import { WebView } from 'react-native-webview';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
-import { fetchLinkedAccounts, deleteLinkedAccount, syncPlaidTransactions, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
+import { fetchLinkedAccounts, deleteLinkedAccount, syncAllBankAccounts, syncPlaidTransactions, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
+import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import { colors, gradients, glassEffects, spacing, radius, typography } from '@/utils/design-system';
 
 /* Try to load native Plaid SDK — will be undefined in Expo Go */
 let PlaidLink: any = null;
@@ -36,6 +43,8 @@ type LinkedAccount = {
   item_id: string;
   provider?: string;
   created_at: string;
+  item_status?: string | null;
+  error_code?: string | null;
 };
 
 type ProviderInfo = {
@@ -44,7 +53,315 @@ type ProviderInfo = {
   description?: string;
 };
 
-type SelectedProvider = 'plaid' | 'flinks' | null;
+type ProviderKey = 'plaid' | 'flinks' | 'teller' | 'simplefin';
+type SelectedProvider = ProviderKey | null;
+
+/* ── Provider presentation map (colors from design-system, never hardcoded) ── */
+const PROVIDER_META: Record<
+  ProviderKey,
+  {
+    label: string;
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    color: string;
+    description: string;
+    features: string[];
+  }
+> = {
+  plaid: {
+    label: 'Plaid',
+    icon: 'shield-checkmark-outline',
+    color: colors.info,
+    description: '12,000+ US institutions',
+    features: ['Instant verification', 'Real-time updates'],
+  },
+  flinks: {
+    label: 'Flinks',
+    icon: 'globe-outline',
+    color: colors.success,
+    description: '15,000+ North American institutions',
+    features: ['Strong Canadian coverage', 'OAuth + scraping'],
+  },
+  teller: {
+    label: 'Teller',
+    icon: 'business-outline',
+    color: colors.warning,
+    description: 'US banks & credit unions',
+    features: ['Fast US coverage', 'Read-only access'],
+  },
+  simplefin: {
+    label: 'SimpleFIN',
+    icon: 'key-outline',
+    color: colors.primary2,
+    description: 'Bring your own SimpleFIN Bridge token',
+    features: ['You control the connection', 'No connection limits'],
+  },
+};
+
+const providerColor = (provider?: string): string =>
+  provider && provider in PROVIDER_META
+    ? PROVIDER_META[provider as ProviderKey].color
+    : colors.info;
+
+const providerLabel = (provider?: SelectedProvider | string): string =>
+  provider && provider in PROVIDER_META
+    ? PROVIDER_META[provider as ProviderKey].label
+    : 'Plaid';
+
+/* ══════════════════════════════════════════════════════════════════
+   Sub-component: provider badge (inline label pill)
+   ══════════════════════════════════════════════════════════════════ */
+function LinkAccountProviderBadge({ provider }: { provider?: string }) {
+  if (!provider) return null;
+  const color = providerColor(provider);
+  const label = providerLabel(provider);
+  return (
+    <View style={[styles.badge, { backgroundColor: `${color}1f` }]}>
+      <Text style={[styles.badgeText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Sub-component: linked account row (shared list-row contract)
+   ══════════════════════════════════════════════════════════════════ */
+function LinkAccountLinkedRow({
+  account,
+  isLast,
+  onReconnect,
+  onUnlink,
+}: {
+  account: LinkedAccount;
+  isLast: boolean;
+  onReconnect: (item: LinkedAccount) => void;
+  onUnlink: (item: LinkedAccount) => void;
+}) {
+  const needsReauth = account.item_status === 'login_required';
+  const canReconnect = needsReauth && account.provider === 'teller';
+  const chipColor = needsReauth ? colors.warning : colors.primary2;
+  const name = account.institution_name || 'Bank Account';
+
+  return (
+    <View style={[styles.row, !isLast && styles.rowDivider]}>
+      <View style={[styles.rowChip, { backgroundColor: `${chipColor}1f` }]}>
+        <Ionicons
+          name={needsReauth ? 'warning-outline' : 'business-outline'}
+          size={20}
+          color={chipColor}
+        />
+      </View>
+
+      <View style={styles.rowMiddle}>
+        <View style={styles.rowNameLine}>
+          <Text style={styles.rowName} numberOfLines={1}>
+            {name}
+          </Text>
+          <LinkAccountProviderBadge provider={account.provider} />
+        </View>
+        {needsReauth ? (
+          <Text style={styles.rowSubtitleWarning} numberOfLines={1}>
+            Reconnect needed — login expired
+          </Text>
+        ) : (
+          <Text style={styles.rowSubtitle} numberOfLines={1}>
+            Linked{' '}
+            {account.created_at
+              ? new Date(account.created_at).toLocaleDateString()
+              : ''}
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.rowTrailing}>
+        {canReconnect && (
+          <TouchableOpacity
+            style={styles.reconnectPill}
+            onPress={() => onReconnect(account)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Reconnect ${name}`}
+          >
+            <Ionicons name="refresh" size={14} color={colors.warning} />
+            <Text style={styles.reconnectPillText}>Reconnect</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          style={styles.unlinkBtn}
+          onPress={() => onUnlink(account)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={`Unlink ${name}`}
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.error} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Sub-component: provider radio row (the CHOOSE A PROVIDER option)
+   ══════════════════════════════════════════════════════════════════ */
+function LinkAccountProviderRow({
+  provider,
+  selected,
+  disabled,
+  isLast,
+  onPress,
+}: {
+  provider: ProviderKey;
+  selected: boolean;
+  disabled: boolean;
+  isLast: boolean;
+  onPress: () => void;
+}) {
+  const meta = PROVIDER_META[provider];
+  return (
+    <TouchableOpacity
+      style={[
+        styles.providerRow,
+        !isLast && styles.rowDivider,
+        selected && styles.providerRowSelected,
+        disabled && styles.dimmed,
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.7}
+      accessibilityRole="radio"
+      accessibilityState={{ selected, disabled }}
+      accessibilityLabel={`${meta.label}, ${meta.description}`}
+    >
+      <View style={styles.providerTopRow}>
+        <View style={[styles.rowChip, { backgroundColor: `${meta.color}1f` }]}>
+          <Ionicons name={meta.icon} size={20} color={meta.color} />
+        </View>
+        <View style={styles.rowMiddle}>
+          <Text style={styles.rowName} numberOfLines={1}>
+            {meta.label}
+          </Text>
+          <Text style={styles.rowSubtitle} numberOfLines={1}>
+            {meta.description}
+          </Text>
+        </View>
+        <Ionicons
+          name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+          size={24}
+          color={selected ? colors.primary2 : colors.textMuted}
+        />
+      </View>
+      <View style={styles.featureRow}>
+        {meta.features.slice(0, 2).map((f) => (
+          <View key={f} style={styles.featureItem}>
+            <Ionicons name="checkmark" size={14} color={colors.textMuted} />
+            <Text style={styles.featureText}>{f}</Text>
+          </View>
+        ))}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Sub-component: connect CTA (primary gradient / secondary outline)
+   ══════════════════════════════════════════════════════════════════ */
+function LinkAccountConnectCTA({
+  variant = 'primary',
+  label,
+  icon,
+  busy = false,
+  disabled = false,
+  onPress,
+}: {
+  variant?: 'primary' | 'secondary';
+  label: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  busy?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const isDisabled = disabled || busy;
+  const inner = (
+    <>
+      {busy ? (
+        <ActivityIndicator
+          size="small"
+          color={variant === 'primary' ? colors.text : colors.primary2}
+          style={styles.ctaLeading}
+        />
+      ) : (
+        <Ionicons
+          name={icon}
+          size={20}
+          color={variant === 'primary' ? colors.text : colors.primary2}
+          style={styles.ctaLeading}
+        />
+      )}
+      <Text style={variant === 'primary' ? styles.ctaPrimaryText : styles.ctaSecondaryText}>
+        {label}
+      </Text>
+    </>
+  );
+
+  if (variant === 'secondary') {
+    return (
+      <TouchableOpacity
+        style={[styles.ctaBase, styles.ctaSecondary, isDisabled && styles.dimmed]}
+        onPress={onPress}
+        disabled={isDisabled}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: isDisabled }}
+        accessibilityLabel={label}
+      >
+        {inner}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={isDisabled}
+      activeOpacity={0.8}
+      style={isDisabled ? styles.dimmed : undefined}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: isDisabled }}
+      accessibilityLabel={label}
+    >
+      <LinearGradient
+        colors={[...gradients.primaryGradient]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={[styles.ctaBase, styles.ctaPrimary]}
+      >
+        {inner}
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Sub-component: static intro card (the ONE floating card)
+   ══════════════════════════════════════════════════════════════════ */
+function LinkAccountIntroCard() {
+  return (
+    <View style={styles.introCard}>
+      <View style={styles.introIconCircle}>
+        <Ionicons name="link-outline" size={32} color={colors.primary2} />
+      </View>
+      <Text style={styles.introTitle}>Link your bank</Text>
+      <Text style={styles.introBody}>
+        Securely sync transactions across your household.
+      </Text>
+    </View>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Sub-component: group label (uppercase caption)
+   ══════════════════════════════════════════════════════════════════ */
+function LinkAccountGroupLabel({ children }: { children: React.ReactNode }) {
+  return <Text style={styles.groupLabel}>{children}</Text>;
+}
 
 export default function LinkAccountScreen() {
   const router = useRouter();
@@ -56,6 +373,7 @@ export default function LinkAccountScreen() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   /* ── Provider selection state ────────────────────────────────── */
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -67,6 +385,13 @@ export default function LinkAccountScreen() {
   const [flinksWebViewVisible, setFlinksWebViewVisible] = useState(false);
   const [flinksConnectUrl, setFlinksConnectUrl] = useState<string | null>(null);
   const [flinksLoading, setFlinksLoading] = useState(false);
+
+  /* ── Teller state ────────────────────────────────────────────── */
+  const [tellerWebViewVisible, setTellerWebViewVisible] = useState(false);
+  const [tellerConnectUrl, setTellerConnectUrl] = useState<string | null>(null);
+  const [simplefinModalVisible, setSimplefinModalVisible] = useState(false);
+  const [simplefinToken, setSimplefinToken] = useState('');
+  const [tellerLoading, setTellerLoading] = useState(false);
 
   /* ── Check native SDK availability ────────────────────────── */
   const plaidModule: any = PlaidLink;
@@ -85,12 +410,8 @@ export default function LinkAccountScreen() {
       setProviders(list);
 
       // If only Plaid is available, skip provider selection
-      const flinksAvailable = list.some((p) => p.name === 'flinks');
-      if (!flinksAvailable) {
-        setShowProviderSelection(false);
-      } else {
-        setShowProviderSelection(true);
-      }
+      const hasChoice = list.some((p) => p.name !== 'plaid');
+      setShowProviderSelection(hasChoice);
     } catch {
       // If providers endpoint fails, fall back to Plaid-only
       setProviders([{ name: 'plaid' }]);
@@ -139,6 +460,17 @@ export default function LinkAccountScreen() {
     fetchLinkToken();
     fetchProviders();
   }, []);
+
+  /* ── Retry (inline error card) ─────────────────────────────── */
+  const handleRetry = async () => {
+    setError(null);
+    setRefreshing(true);
+    try {
+      await Promise.all([fetchLinkToken(), fetchProviders(), loadAccounts()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   /* ── Exchange public token with backend (Plaid) ──────────── */
   const exchangeToken = async (
@@ -291,13 +623,112 @@ export default function LinkAccountScreen() {
     return true;
   };
 
+  /* ── Teller Connect flow ────────────────────────────────────── */
+  // enrollmentId is set when re-authenticating a disconnected enrollment —
+  // Teller Connect skips the institution picker and goes straight to login.
+  const openTellerConnect = (enrollmentId?: string) => {
+    setTellerLoading(true);
+    try {
+      // The backend serves the Teller Connect widget; it posts the enrollment
+      // back to this WebView via window.ReactNativeWebView.postMessage.
+      const base = `${api.getBaseUrl()}/teller/connect-page`;
+      setTellerConnectUrl(enrollmentId ? `${base}?enrollment_id=${encodeURIComponent(enrollmentId)}` : base);
+      setTellerWebViewVisible(true);
+    } catch (e: any) {
+      console.error('Teller connect error:', e);
+      Alert.alert('Error', 'Failed to start Teller connection: ' + (e.message || String(e)));
+    } finally {
+      setTellerLoading(false);
+    }
+  };
+
+  /* ── Handle messages posted from the Teller Connect WebView ──── */
+  const handleTellerMessage = async (raw: string) => {
+    let payload: any;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return; // ignore non-JSON messages
+    }
+
+    if (payload.event === 'exit') {
+      setTellerWebViewVisible(false);
+      setTellerConnectUrl(null);
+      return;
+    }
+    if (payload.event === 'failure') {
+      setTellerWebViewVisible(false);
+      setTellerConnectUrl(null);
+      Alert.alert('Connection failed', payload.message || 'Teller could not connect your bank.');
+      return;
+    }
+    if (payload.event !== 'success' || !payload.access_token) {
+      return;
+    }
+
+    setTellerWebViewVisible(false);
+    setTellerConnectUrl(null);
+    setLinking(true);
+    try {
+      await api.post('/auth/teller/connect', {
+        access_token: payload.access_token,
+        enrollment_id: payload.enrollment_id,
+        user_id: payload.user_id,
+        institution: payload.institution ?? '',
+      });
+      Alert.alert('Linked!', 'Bank account connected via Teller. Data will sync shortly.');
+      loadAccounts();
+    } catch (e: any) {
+      console.error('Teller connect error:', e);
+      Alert.alert('Error', 'Could not complete Teller connection: ' + (e.message || String(e)));
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  /* ── SimpleFIN flow: user pastes a setup token from their bridge ── */
+  const handleSimplefinSubmit = async () => {
+    const token = simplefinToken.trim();
+    if (!token) return;
+    setLinking(true);
+    try {
+      const res: any = await api.post('/auth/simplefin/connect', { setup_token: token });
+      setSimplefinModalVisible(false);
+      setSimplefinToken('');
+      Alert.alert(
+        'Linked!',
+        `Connected via SimpleFIN${res?.institution ? ` (${res.institution})` : ''}. Data will sync shortly.`,
+      );
+      loadAccounts();
+    } catch (e: any) {
+      console.error('SimpleFIN connect error:', e);
+      // Setup tokens are one-time-use, so a failure needs a fresh token.
+      Alert.alert(
+        'Connection failed',
+        (e.message || String(e)) +
+          '\n\nSetup tokens are single-use — generate a new one at your SimpleFIN bridge and try again.',
+      );
+    } finally {
+      setLinking(false);
+    }
+  };
+
   /* ── Handle Connect button press ───────────────────────────── */
   const handleConnectPress = () => {
     if (selectedProvider === 'plaid') {
       openPlaidBrowser();
     } else if (selectedProvider === 'flinks') {
       openFlinksConnect();
+    } else if (selectedProvider === 'teller') {
+      openTellerConnect();
+    } else if (selectedProvider === 'simplefin') {
+      setSimplefinModalVisible(true);
     }
+  };
+
+  /* ── Reconnect a disconnected Teller enrollment ────────────── */
+  const handleReconnect = (item: LinkedAccount) => {
+    openTellerConnect(item.item_id);
   };
 
   /* ── Unlink an account ──────────────────────────────────────── */
@@ -327,202 +758,280 @@ export default function LinkAccountScreen() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const [txSync, invSync, liabSync, balSync] = await Promise.allSettled([
+      // Plaid still uses its dedicated sync endpoint (provider stub returns an
+      // error). Teller / Flinks go through /auth/bank/sync-all, which skips
+      // Plaid accounts to avoid noisy log errors.
+      const [plaidTxSync, txSync, invSync, liabSync, balSync] = await Promise.allSettled([
         syncPlaidTransactions(),
+        syncAllBankAccounts(),
         syncPlaidInvestments(),
         syncPlaidLiabilities(),
         syncPlaidBalances(),
       ]);
-      const txCount = txSync.status === 'fulfilled' ? (txSync.value as any)?.synced ?? 0 : 0;
+      const plaidTxTotal = plaidTxSync.status === 'fulfilled' ? (plaidTxSync.value as any)?.synced ?? 0 : 0;
+      const bankTxTotal = txSync.status === 'fulfilled' ? (txSync.value as any)?.synced ?? 0 : 0;
+      const txTotal = plaidTxTotal + bankTxTotal;
+      const perProvider: Record<string, number> = {
+        ...((txSync.status === 'fulfilled' ? (txSync.value as any)?.per_provider : {}) || {}),
+      };
+      if (plaidTxTotal > 0) perProvider.plaid = (perProvider.plaid || 0) + plaidTxTotal;
+      const txAccounts: Array<{ provider: string; error?: string }> =
+        txSync.status === 'fulfilled' ? (txSync.value as any)?.accounts ?? [] : [];
+      const reauthNeeded = txAccounts.filter(
+        (a) => a.error && a.error.includes('enrollment.disconnected'),
+      ).length;
       const invCount = invSync.status === 'fulfilled' ? (invSync.value as any)?.synced ?? 0 : 0;
       const liabCount = liabSync.status === 'fulfilled' ? (liabSync.value as any)?.synced ?? 0 : 0;
       const balCount = balSync.status === 'fulfilled' ? (balSync.value as any)?.synced ?? 0 : 0;
+
       const parts: string[] = [];
-      if (txCount > 0) parts.push(`${txCount} transaction${txCount !== 1 ? 's' : ''}`);
+      if (txTotal > 0) {
+        const breakdown = Object.entries(perProvider)
+          .filter(([, n]) => n > 0)
+          .map(([p, n]) => `${n} ${p.charAt(0).toUpperCase() + p.slice(1)}`)
+          .join(', ');
+        parts.push(
+          `${txTotal} transaction${txTotal !== 1 ? 's' : ''}${breakdown ? ` (${breakdown})` : ''}`,
+        );
+      }
       if (invCount > 0) parts.push(`${invCount} holding${invCount !== 1 ? 's' : ''}`);
       if (liabCount > 0) parts.push(`${liabCount} liabilit${liabCount !== 1 ? 'ies' : 'y'}`);
       if (balCount > 0) parts.push(`${balCount} account balance${balCount !== 1 ? 's' : ''}`);
-      Alert.alert('Sync Complete', parts.length > 0 ? parts.join(', ') + ' synced.' : 'Everything is up to date.');
+
+      const summary = parts.length > 0 ? parts.join(', ') + ' synced.' : 'Everything is up to date.';
+      const reauthLine = reauthNeeded > 0
+        ? `\n\n${reauthNeeded} account${reauthNeeded !== 1 ? 's' : ''} need${reauthNeeded === 1 ? 's' : ''} to be reconnected — tap Reconnect below.`
+        : '';
+      Alert.alert('Sync Complete', summary + reauthLine);
     } catch {
       Alert.alert('Error', 'Sync failed. Please try again.');
     } finally {
       setSyncing(false);
+      // Refetch so item_status changes (e.g. login_required) show immediately.
+      loadAccounts();
     }
   };
 
-  /* ── Provider badge helper ──────────────────────────────────── */
-  const getProviderBadge = (provider?: string) => {
-    if (!provider) return null;
-    const label = provider.charAt(0).toUpperCase() + provider.slice(1);
-    const color = provider === 'flinks' ? '#34d399' : '#60a5fa';
+  /* ── Derived: reauth accounts + availability gating ────────── */
+  const reauthAccounts = accounts.filter((a) => a.item_status === 'login_required');
+  const isFlinksAvailable = providers.some((p) => p.name === 'flinks');
+  const isTellerAvailable = providers.some((p) => p.name === 'teller');
+  const isSimplefinAvailable = providers.some((p) => p.name === 'simplefin');
+  const busy = linking || flinksLoading || tellerLoading;
+
+  const availableProviderKeys: ProviderKey[] = [
+    'plaid',
+    ...(isFlinksAvailable ? (['flinks'] as ProviderKey[]) : []),
+    ...(isTellerAvailable ? (['teller'] as ProviderKey[]) : []),
+    ...(isSimplefinAvailable ? (['simplefin'] as ProviderKey[]) : []),
+  ];
+
+  /* ══════════════════════════════════════════════════════════════
+     Shared header
+     ══════════════════════════════════════════════════════════════ */
+  const renderHeader = (showRefresh: boolean) => (
+    <View style={styles.header}>
+      <BackButton fallback="/accounts" color={colors.primary2} />
+      <Text style={styles.headerTitle}>Link Account</Text>
+      <View style={styles.headerRight}>
+        {showRefresh ? (
+          <ActivityIndicator size="small" color={colors.primary2} />
+        ) : null}
+      </View>
+    </View>
+  );
+
+  /* ══════════════════════════════════════════════════════════════
+     Reconnect banner (AttentionCard visual pattern)
+     ══════════════════════════════════════════════════════════════ */
+  const renderReconnectBanner = () => {
+    if (reauthAccounts.length === 0) return null;
     return (
-      <View style={[styles.providerBadge, { backgroundColor: `${color}20` }]}>
-        <Text style={[styles.providerBadgeText, { color }]}>{label}</Text>
+      <View style={styles.attentionCard}>
+        <View style={styles.attentionHeader}>
+          <Ionicons name="alert-circle" size={14} color={colors.warning} />
+          <Text style={styles.attentionHeaderText}>Needs your attention</Text>
+        </View>
+        {reauthAccounts.map((item, i) => {
+          const canReconnect = item.provider === 'teller';
+          const name = item.institution_name || 'Bank account';
+          return (
+            <View
+              key={item.id}
+              style={[
+                styles.attentionRow,
+                i < reauthAccounts.length - 1 && styles.rowDivider,
+              ]}
+            >
+              <View style={[styles.attentionIcon, { backgroundColor: `${colors.warning}1f` }]}>
+                <Ionicons name="warning-outline" size={16} color={colors.warning} />
+              </View>
+              <View style={styles.attentionText}>
+                <Text style={styles.attentionTitle} numberOfLines={2}>
+                  {name} needs reconnecting
+                </Text>
+              </View>
+              {canReconnect && (
+                <TouchableOpacity
+                  style={styles.attentionCta}
+                  onPress={() => handleReconnect(item)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Reconnect ${name}`}
+                >
+                  <Text style={styles.attentionCtaText}>Reconnect</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })}
       </View>
     );
   };
 
-  /* ── Provider selection cards ────────────────────────────────── */
-  const renderProviderSelection = () => {
-    const isFlinksAvailable = providers.some((p) => p.name === 'flinks');
-    if (!isFlinksAvailable) return null;
+  /* ══════════════════════════════════════════════════════════════
+     Trust footer
+     ══════════════════════════════════════════════════════════════ */
+  const renderTrustFooter = () => (
+    <View style={styles.trustRow}>
+      <Ionicons name="lock-closed-outline" size={14} color={colors.textMuted} />
+      <Text style={styles.trustText}>Bank-level encryption · Read-only access</Text>
+    </View>
+  );
+
+  /* ══════════════════════════════════════════════════════════════
+     Loading skeleton body
+     ══════════════════════════════════════════════════════════════ */
+  const renderSkeletonRow = (last = false) => (
+    <View style={[styles.row, !last && styles.rowDivider]}>
+      <Skeleton width={40} height={40} borderRadius={radius.md} />
+      <View style={styles.rowMiddle}>
+        <Skeleton width="60%" height={12} />
+        <Skeleton width="40%" height={10} style={styles.skelSub} />
+      </View>
+      <Skeleton width={24} height={24} borderRadius={radius.full} />
+    </View>
+  );
+
+  const renderLoadingBody = () => (
+    <>
+      <Skeleton width={120} height={10} style={styles.skelLabel} />
+      <View style={styles.glassCard}>
+        {renderSkeletonRow()}
+        {renderSkeletonRow(true)}
+      </View>
+      <Skeleton width={140} height={10} style={styles.skelLabel} />
+      <View style={styles.glassCard}>
+        {renderSkeletonRow()}
+        {renderSkeletonRow()}
+        {renderSkeletonRow(true)}
+      </View>
+      <Skeleton height={48} borderRadius={radius.lg} style={styles.skelCta} />
+    </>
+  );
+
+  /* ══════════════════════════════════════════════════════════════
+     Provider chooser + CTA
+     ══════════════════════════════════════════════════════════════ */
+  const renderConnectSection = () => {
+    // Direct-Plaid fallback (no choice worth showing).
+    if (!showProviderSelection) {
+      if (loading || !linkToken) {
+        return <Skeleton height={48} borderRadius={radius.lg} style={styles.skelCta} />;
+      }
+      return (
+        <LinkAccountConnectCTA
+          variant="primary"
+          icon={accounts.length > 0 ? 'add-circle-outline' : 'shield-checkmark-outline'}
+          busy={linking}
+          label={
+            linking
+              ? 'Opening Plaid…'
+              : accounts.length > 0
+              ? 'Link Another Account'
+              : 'Connect with Plaid'
+          }
+          onPress={openPlaidBrowser}
+        />
+      );
+    }
+
+    // Provider radio group.
+    const primaryLabel = busy
+      ? `Connecting via ${providerLabel(selectedProvider)}…`
+      : selectedProvider
+      ? `Connect with ${providerLabel(selectedProvider)}`
+      : 'Select a provider';
+    const primaryIcon: React.ComponentProps<typeof Ionicons>['name'] = selectedProvider
+      ? PROVIDER_META[selectedProvider].icon
+      : 'shield-checkmark-outline';
 
     return (
-      <View style={styles.providerSection}>
-        <Text style={styles.providerSectionTitle}>Choose a provider</Text>
-
-        {/* Plaid Card */}
-        <TouchableOpacity
-          style={[
-            styles.providerCard,
-            selectedProvider === 'plaid' && styles.providerCardSelected,
-          ]}
-          onPress={() => setSelectedProvider('plaid')}
-          activeOpacity={0.7}
-        >
-          <View style={styles.providerCardRow}>
-            <View style={[styles.providerIconWrap, { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
-              <Ionicons name="card-outline" size={24} color="#60a5fa" />
-            </View>
-            <View style={styles.providerCardText}>
-              <Text style={styles.providerName}>Plaid</Text>
-              <Text style={styles.providerDesc}>
-                Connect to 12,000+ US financial institutions
-              </Text>
-            </View>
-            {selectedProvider === 'plaid' && (
-              <View style={styles.providerCheck}>
-                <Ionicons name="checkmark-circle" size={24} color="#a855f7" />
-              </View>
-            )}
-          </View>
-          <View style={styles.featureRow}>
-            <View style={styles.featureItem}>
-              <Ionicons name="checkmark" size={14} color="#94a3b8" />
-              <Text style={styles.featureText}>Instant verification</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <Ionicons name="checkmark" size={14} color="#94a3b8" />
-              <Text style={styles.featureText}>Real-time updates</Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* Flinks Card */}
-        <TouchableOpacity
-          style={[
-            styles.providerCard,
-            selectedProvider === 'flinks' && styles.providerCardSelected,
-          ]}
-          onPress={() => setSelectedProvider('flinks')}
-          activeOpacity={0.7}
-        >
-          <View style={styles.providerCardRow}>
-            <View style={[styles.providerIconWrap, { backgroundColor: 'rgba(52,211,153,0.12)' }]}>
-              <Ionicons name="globe-outline" size={24} color="#34d399" />
-            </View>
-            <View style={styles.providerCardText}>
-              <Text style={styles.providerName}>Flinks</Text>
-              <Text style={styles.providerDesc}>
-                Connect to 15,000+ North American institutions
-              </Text>
-            </View>
-            {selectedProvider === 'flinks' && (
-              <View style={styles.providerCheck}>
-                <Ionicons name="checkmark-circle" size={24} color="#a855f7" />
-              </View>
-            )}
-          </View>
-          <View style={styles.featureRow}>
-            <View style={styles.featureItem}>
-              <Ionicons name="checkmark" size={14} color="#94a3b8" />
-              <Text style={styles.featureText}>Strong Canadian coverage</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <Ionicons name="checkmark" size={14} color="#94a3b8" />
-              <Text style={styles.featureText}>OAuth + screen scraping</Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* Connect button */}
-        <TouchableOpacity
-          style={[
-            styles.button,
-            (!selectedProvider || linking || flinksLoading) && styles.buttonDisabled,
-          ]}
-          onPress={handleConnectPress}
-          disabled={!selectedProvider || linking || flinksLoading}
-          activeOpacity={0.8}
-        >
-          {(linking || flinksLoading) ? (
-            <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-          ) : (
-            <Ionicons
-              name={selectedProvider === 'flinks' ? 'globe-outline' : 'shield-checkmark-outline'}
-              size={20}
-              color="#fff"
-              style={{ marginRight: 8 }}
+      <>
+        <LinkAccountGroupLabel>CHOOSE A PROVIDER</LinkAccountGroupLabel>
+        <View style={[styles.glassCard, busy && styles.dimmedGroup]}>
+          {availableProviderKeys.map((key, i) => (
+            <LinkAccountProviderRow
+              key={key}
+              provider={key}
+              selected={selectedProvider === key}
+              disabled={busy}
+              isLast={i === availableProviderKeys.length - 1}
+              onPress={() => setSelectedProvider(key)}
             />
-          )}
-          <Text style={styles.buttonText}>
-            {linking || flinksLoading
-              ? `Connecting via ${selectedProvider === 'flinks' ? 'Flinks' : 'Plaid'}...`
-              : selectedProvider
-              ? `Connect with ${selectedProvider === 'flinks' ? 'Flinks' : 'Plaid'}`
-              : 'Select a provider'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+          ))}
+        </View>
+        <LinkAccountConnectCTA
+          variant="primary"
+          icon={primaryIcon}
+          busy={busy}
+          disabled={!selectedProvider}
+          label={primaryLabel}
+          onPress={handleConnectPress}
+        />
+      </>
     );
   };
 
-  /* ── Flinks WebView Modal ───────────────────────────────────── */
-  const renderFlinksWebView = () => (
+  /* ══════════════════════════════════════════════════════════════
+     WebView modal (shared chrome for Flinks + Teller)
+     ══════════════════════════════════════════════════════════════ */
+  const renderWebViewModal = (opts: {
+    visible: boolean;
+    provider: 'Flinks' | 'Teller';
+    url: string | null;
+    onClose: () => void;
+    webViewProps: React.ComponentProps<typeof WebView>;
+  }) => (
     <Modal
-      visible={flinksWebViewVisible}
+      visible={opts.visible}
       animationType="slide"
       presentationStyle="fullScreen"
-      onRequestClose={() => {
-        setFlinksWebViewVisible(false);
-        setFlinksConnectUrl(null);
-      }}
+      onRequestClose={opts.onClose}
     >
-      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
-        <SafeAreaView style={styles.webViewSafeArea}>
-          <View style={styles.webViewHeader}>
-            <TouchableOpacity
-              style={styles.webViewCloseBtn}
-              onPress={() => {
-                setFlinksWebViewVisible(false);
-                setFlinksConnectUrl(null);
-              }}
-            >
-              <Ionicons name="close" size={22} color="#c084fc" />
-            </TouchableOpacity>
-            <Text style={styles.webViewTitle}>Connect with Flinks</Text>
-            <View style={{ width: 40 }} />
+      <GradientBackground variant="bgDarkPurple">
+        <SafeAreaView style={styles.flex}>
+          <View style={styles.modalHeader}>
+            <BackButton
+              iconName="close"
+              color={colors.primary2}
+              onPress={opts.onClose}
+            />
+            <Text style={styles.headerTitle}>Connect with {opts.provider}</Text>
+            <View style={styles.headerRight} />
           </View>
-          {flinksConnectUrl && (
+          {opts.url && (
             <WebView
-              source={{ uri: flinksConnectUrl }}
+              {...opts.webViewProps}
+              source={{ uri: opts.url }}
               style={styles.webView}
-              onNavigationStateChange={(navState) => {
-                handleFlinksNavigation(navState.url);
-              }}
-              onShouldStartLoadWithRequest={(request) => {
-                // Check if this is the success redirect
-                if (request.url.includes('loginId=')) {
-                  handleFlinksNavigation(request.url);
-                  return false;
-                }
-                return true;
-              }}
               startInLoadingState
               renderLoading={() => (
                 <View style={styles.webViewLoading}>
-                  <ActivityIndicator size="large" color="#c084fc" />
-                  <Text style={styles.webViewLoadingText}>Loading Flinks Connect...</Text>
+                  <ActivityIndicator size="large" color={colors.primary2} />
+                  <Text style={styles.webViewLoadingText}>
+                    Loading {opts.provider} Connect…
+                  </Text>
                 </View>
               )}
               javaScriptEnabled
@@ -530,154 +1039,220 @@ export default function LinkAccountScreen() {
             />
           )}
         </SafeAreaView>
-      </LinearGradient>
+      </GradientBackground>
     </Modal>
   );
 
-  /* ── Render: loading state ──────────────────────────────────── */
+  const flinksModal = renderWebViewModal({
+    visible: flinksWebViewVisible,
+    provider: 'Flinks',
+    url: flinksConnectUrl,
+    onClose: () => {
+      setFlinksWebViewVisible(false);
+      setFlinksConnectUrl(null);
+    },
+    webViewProps: {
+      onNavigationStateChange: (navState) => {
+        handleFlinksNavigation(navState.url);
+      },
+      onShouldStartLoadWithRequest: (request) => {
+        if (request.url.includes('loginId=')) {
+          handleFlinksNavigation(request.url);
+          return false;
+        }
+        return true;
+      },
+    },
+  });
+
+  const tellerModal = renderWebViewModal({
+    visible: tellerWebViewVisible,
+    provider: 'Teller',
+    url: tellerConnectUrl,
+    onClose: () => {
+      setTellerWebViewVisible(false);
+      setTellerConnectUrl(null);
+    },
+    webViewProps: {
+      onMessage: (event) => {
+        handleTellerMessage(event.nativeEvent.data);
+      },
+    },
+  });
+
+  /* ── SimpleFIN setup-token modal (no WebView — just paste a token) ── */
+  const simplefinModal = (
+    <Modal
+      visible={simplefinModalVisible}
+      animationType="slide"
+      transparent
+      onRequestClose={() => setSimplefinModalVisible(false)}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.sfinOverlay}
+      >
+        <View style={styles.sfinSheet}>
+          <View style={styles.sfinHeader}>
+            <Ionicons name="key-outline" size={20} color={colors.primary2} />
+            <Text style={styles.sfinTitle}>Connect with SimpleFIN</Text>
+            <TouchableOpacity
+              onPress={() => setSimplefinModalVisible(false)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={22} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.sfinStep}>
+            1. Sign up at <Text style={styles.sfinBold}>bridge.simplefin.org</Text> and connect
+            your bank there.{'\n'}
+            2. Create a new app connection to get a <Text style={styles.sfinBold}>setup token</Text>.{'\n'}
+            3. Paste the token below — it's single-use and becomes this app's read-only access.
+          </Text>
+
+          <TextInput
+            style={styles.sfinInput}
+            value={simplefinToken}
+            onChangeText={setSimplefinToken}
+            placeholder="Paste your SimpleFIN setup token…"
+            placeholderTextColor={colors.textDark}
+            multiline
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel="SimpleFIN setup token"
+          />
+
+          <TouchableOpacity
+            style={[styles.sfinSubmit, (!simplefinToken.trim() || linking) && styles.dimmed]}
+            onPress={handleSimplefinSubmit}
+            disabled={!simplefinToken.trim() || linking}
+            accessibilityRole="button"
+            accessibilityLabel="Connect SimpleFIN"
+          >
+            {linking ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <Text style={styles.sfinSubmitText}>Connect</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+
+  /* ══════════════════════════════════════════════════════════════
+     Render: loading state (header + intro static, skeleton body)
+     ══════════════════════════════════════════════════════════════ */
   if (loadingAccounts || loadingProviders) {
     return (
-      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={22} color="#c084fc" />
-          </TouchableOpacity>
-          <View style={styles.centerContent}>
-            <ActivityIndicator size="large" color="#c084fc" />
-          </View>
+      <GradientBackground variant="bgDarkPurple">
+        <SafeAreaView style={styles.flex}>
+          {renderHeader(true)}
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <LinkAccountIntroCard />
+            {renderLoadingBody()}
+          </ScrollView>
         </SafeAreaView>
-      </LinearGradient>
+      </GradientBackground>
     );
   }
 
   /* ── Render: native SDK path (no linked accounts yet) ───────── */
   if (nativeAvailable && linkToken && accounts.length === 0 && !showProviderSelection) {
-    return <NativePlaidFlow linkToken={linkToken} exchangeToken={exchangeToken} />;
+    return (
+      <NativePlaidFlow
+        linkToken={linkToken}
+        exchangeToken={exchangeToken}
+        renderHeader={() => renderHeader(false)}
+        renderTrustFooter={renderTrustFooter}
+      />
+    );
   }
 
-  /* ── Render: accounts list + add button ─────────────────────── */
+  /* ── Render: link-token / providers load error ──────────────── */
+  const hasLoadError = !!error && !linkToken;
+
+  /* ══════════════════════════════════════════════════════════════
+     Render: main screen
+     ══════════════════════════════════════════════════════════════ */
   return (
-    <LinearGradient
-      colors={['#0b1021', '#2b0f50', '#1b1039']}
-      style={styles.container}
-    >
-      <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#c084fc" />
-        </TouchableOpacity>
+    <GradientBackground variant="bgDarkPurple">
+      <SafeAreaView style={styles.flex}>
+        {renderHeader(refreshing)}
 
         <ScrollView
-          style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.heroWrap}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="link-outline" size={40} color="#c084fc" />
+          <LinkAccountIntroCard />
+
+          {hasLoadError ? (
+            <View style={styles.errorCard}>
+              <Ionicons name="alert-circle-outline" size={32} color={colors.error} />
+              <Text style={styles.errorTitle}>Couldn't start bank linking</Text>
+              <Text style={styles.errorBody}>
+                Check your connection and try again.
+              </Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={handleRetry}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Retry"
+              >
+                <Ionicons name="refresh" size={18} color={colors.primary2} />
+                <Text style={styles.retryText}>Retry</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.title}>
-              {accounts.length > 0 ? 'Linked Accounts' : 'Link your bank'}
-            </Text>
-            <Text style={styles.subtitle}>
-              {accounts.length > 0
-                ? 'Manage your connected bank accounts.'
-                : 'Securely connect your account to automatically sync transactions.'}
-            </Text>
-          </View>
-
-          {error && <Text style={styles.error}>{error}</Text>}
-
-          {/* ── Linked accounts list ── */}
-          {accounts.length > 0 &&
-            accounts.map((item) => (
-              <View key={item.id} style={styles.accountCard}>
-                <View style={styles.accountIcon}>
-                  <Ionicons name="business-outline" size={22} color="#c084fc" />
-                </View>
-                <View style={styles.accountInfo}>
-                  <View style={styles.accountNameRow}>
-                    <Text style={styles.accountName}>
-                      {item.institution_name || 'Bank Account'}
-                    </Text>
-                    {getProviderBadge(item.provider)}
-                  </View>
-                  <Text style={styles.accountMeta}>
-                    Linked {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.unlinkBtn}
-                  onPress={() => handleUnlink(item)}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                >
-                  <Ionicons name="trash-outline" size={18} color="#f87171" />
-                </TouchableOpacity>
-              </View>
-            ))}
-
-          {/* ── Sync button ── */}
-          {accounts.length > 0 && (
-            <TouchableOpacity
-              style={[styles.syncButton, syncing && styles.buttonDisabled]}
-              onPress={handleSync}
-              disabled={syncing}
-              activeOpacity={0.8}
-            >
-              {syncing ? (
-                <ActivityIndicator size="small" color="#c084fc" style={{ marginRight: 8 }} />
-              ) : (
-                <Ionicons name="sync-outline" size={18} color="#c084fc" style={{ marginRight: 8 }} />
-              )}
-              <Text style={styles.syncButtonText}>
-                {syncing ? 'Syncing...' : 'Sync Now'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* ── Provider selection or direct Plaid button ── */}
-          {showProviderSelection ? (
-            renderProviderSelection()
-          ) : loading || !linkToken ? (
-            <ActivityIndicator size="large" color="#c084fc" style={{ marginTop: 24 }} />
           ) : (
-            <TouchableOpacity
-              style={[styles.button, linking && styles.buttonDisabled]}
-              onPress={openPlaidBrowser}
-              disabled={linking}
-              activeOpacity={0.8}
-            >
-              {linking ? (
-                <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-              ) : (
-                <Ionicons
-                  name={accounts.length > 0 ? 'add-circle-outline' : 'shield-checkmark-outline'}
-                  size={20}
-                  color="#fff"
-                  style={{ marginRight: 8 }}
-                />
+            <>
+              {renderReconnectBanner()}
+
+              {accounts.length > 0 && (
+                <>
+                  <LinkAccountGroupLabel>
+                    LINKED ACCOUNTS · {accounts.length}
+                  </LinkAccountGroupLabel>
+                  <View style={styles.glassCard}>
+                    {accounts.map((item, i) => (
+                      <LinkAccountLinkedRow
+                        key={item.id}
+                        account={item}
+                        isLast={i === accounts.length - 1}
+                        onReconnect={handleReconnect}
+                        onUnlink={handleUnlink}
+                      />
+                    ))}
+                  </View>
+
+                  <LinkAccountConnectCTA
+                    variant="secondary"
+                    icon="sync-outline"
+                    busy={syncing}
+                    label={syncing ? 'Syncing…' : 'Sync Now'}
+                    onPress={handleSync}
+                  />
+                </>
               )}
-              <Text style={styles.buttonText}>
-                {linking
-                  ? 'Opening Plaid...'
-                  : accounts.length > 0
-                  ? 'Link Another Account'
-                  : 'Connect with Plaid'}
-              </Text>
-            </TouchableOpacity>
+
+              {renderConnectSection()}
+            </>
           )}
 
-          <View style={styles.trustRow}>
-            <Ionicons name="lock-closed-outline" size={14} color="#94a3b8" />
-            <Text style={styles.trustText}>
-              Bank-level encryption · Read-only access
-            </Text>
-          </View>
+          {renderTrustFooter()}
         </ScrollView>
       </SafeAreaView>
 
-      {/* ── Flinks WebView modal ── */}
-      {renderFlinksWebView()}
-    </LinearGradient>
+      {flinksModal}
+      {tellerModal}
+      {simplefinModal}
+    </GradientBackground>
   );
 }
 
@@ -685,11 +1260,14 @@ export default function LinkAccountScreen() {
 function NativePlaidFlow({
   linkToken,
   exchangeToken,
+  renderHeader,
+  renderTrustFooter,
 }: {
   linkToken: string;
   exchangeToken: (token: string, institution?: string) => Promise<void>;
+  renderHeader: () => React.ReactNode;
+  renderTrustFooter: () => React.ReactNode;
 }) {
-  const router = useRouter();
   const plaidModule: any = PlaidLink;
   const usePlaidLink =
     plaidModule?.usePlaidLink ?? plaidModule?.default?.usePlaidLink;
@@ -710,284 +1288,443 @@ function NativePlaidFlow({
   });
 
   return (
-    <LinearGradient
-      colors={['#0b1021', '#2b0f50', '#1b1039']}
-      style={styles.container}
-    >
-      <SafeAreaView style={styles.safeArea}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#c084fc" />
-        </TouchableOpacity>
-
-        <View style={styles.centerContent}>
-          <View style={styles.heroWrap}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="link-outline" size={40} color="#c084fc" />
-            </View>
-            <Text style={styles.title}>Link your bank</Text>
-            <Text style={styles.subtitle}>
-              Securely connect your account to automatically sync transactions.
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.button, !ready && styles.buttonDisabled]}
-            onPress={() => open()}
+    <GradientBackground variant="bgDarkPurple">
+      <SafeAreaView style={styles.flex}>
+        {renderHeader()}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <LinkAccountIntroCard />
+          <LinkAccountConnectCTA
+            variant="primary"
+            icon="shield-checkmark-outline"
             disabled={!ready}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="shield-checkmark-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
-            <Text style={styles.buttonText}>
-              {ready ? 'Connect with Plaid' : 'Preparing...'}
-            </Text>
-          </TouchableOpacity>
-
-          <View style={styles.trustRow}>
-            <Ionicons name="lock-closed-outline" size={14} color="#94a3b8" />
-            <Text style={styles.trustText}>
-              Bank-level encryption · Read-only access
-            </Text>
-          </View>
-        </View>
+            label={ready ? 'Connect with Plaid' : 'Preparing…'}
+            onPress={() => open()}
+          />
+          {renderTrustFooter()}
+        </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 /* ── Styles ──────────────────────────────────────────────────── */
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  safeArea: { flex: 1, paddingHorizontal: 24 },
-  scrollView: { flex: 1 },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingBottom: 40 },
-  backBtn: {
-    marginTop: 12,
+  flex: { flex: 1 },
+
+  /* Header */
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  headerTitle: {
+    ...typography.h3, fontWeight: '800',
+    color: colors.text,
+    flex: 1,
+    textAlign: 'center',
+  },
+  headerRight: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  centerContent: { flex: 1, justifyContent: 'center' },
-  heroWrap: { alignItems: 'center', marginBottom: 24 },
-  iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(192,132,252,0.15)',
+
+  /* Scroll */
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: 120,
+  },
+
+  /* Intro card (the ONE floating card) */
+  introCard: {
+    ...glassEffects.glassFloating,
+    padding: spacing.xl,
+    borderRadius: radius.xl,
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+  },
+  introIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.full,
+    backgroundColor: `${colors.primary2}1a`,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+    marginBottom: spacing.lg,
   },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#fff',
-    marginBottom: 8,
+  introTitle: {
+    ...typography.h3,
+    color: colors.text,
+    marginBottom: spacing.sm,
     textAlign: 'center',
   },
-  subtitle: {
-    color: '#94a3b8',
-    fontSize: 14,
+  introBody: {
+    ...typography.small,
+    color: colors.textMuted,
     textAlign: 'center',
-    lineHeight: 20,
-    paddingHorizontal: 24,
   },
-  list: {
-    maxHeight: 280,
-    marginBottom: 16,
-    marginHorizontal: 8,
+
+  /* Group label */
+  groupLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: spacing.sm,
+    marginTop: spacing.xs,
   },
-  accountCard: {
+
+  /* Glass card container for rows */
+  glassCard: {
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+
+  /* Shared list row */
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 10,
-    marginHorizontal: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(192,132,252,0.15)',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    minHeight: 44,
   },
-  accountIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(192,132,252,0.12)',
+  rowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  rowChip: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
   },
-  accountInfo: { flex: 1 },
-  accountNameRow: {
+  rowMiddle: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rowNameLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: spacing.sm,
   },
-  accountName: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+  rowName: {
+    ...typography.smallBold,
+    color: colors.text,
+    flexShrink: 1,
   },
-  accountMeta: {
-    color: '#94a3b8',
-    fontSize: 12,
+  rowSubtitle: {
+    ...typography.caption,
+    color: colors.textMuted,
     marginTop: 2,
   },
+  rowSubtitleWarning: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  rowTrailing: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+
+  /* Reconnect pill (in-row) */
+  reconnectPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: `${colors.warning}26`,
+    borderWidth: 1,
+    borderColor: `${colors.warning}66`,
+  },
+  reconnectPillText: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '700',
+  },
+
+  /* Unlink icon button */
   unlinkBtn: {
     width: 36,
     height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(248,113,113,0.1)',
+    borderRadius: radius.md,
+    backgroundColor: `${colors.error}1a`,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  button: {
-    flexDirection: 'row',
-    backgroundColor: '#7c3aed',
-    paddingVertical: 16,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 16,
-  },
-  buttonDisabled: { opacity: 0.5 },
-  buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  syncButton: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(192,132,252,0.12)',
-    paddingVertical: 12,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(192,132,252,0.25)',
-  },
-  syncButtonText: { color: '#c084fc', fontWeight: '600', fontSize: 15 },
-  error: { color: '#f87171', textAlign: 'center', marginBottom: 12 },
-  trustRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 20,
-    gap: 6,
-  },
-  trustText: { color: '#94a3b8', fontSize: 12 },
-
-  /* ── Provider selection styles ── */
-  providerSection: {
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  providerSectionTitle: {
-    color: '#94a3b8',
-    fontSize: 13,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 12,
-    marginLeft: 20,
-  },
-  providerCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-  },
-  providerCardSelected: {
-    borderColor: '#a855f7',
-    borderWidth: 2,
-    backgroundColor: 'rgba(168,85,247,0.06)',
-  },
-  providerCardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  providerIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-  },
-  providerCardText: {
-    flex: 1,
-  },
-  providerName: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  providerDesc: {
-    color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  providerCheck: {
-    marginLeft: 8,
-  },
-  featureRow: {
-    flexDirection: 'row',
-    marginTop: 12,
-    paddingLeft: 62,
-    gap: 16,
-  },
-  featureItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  featureText: {
-    color: '#94a3b8',
-    fontSize: 12,
   },
 
-  /* ── Provider badge styles ── */
-  providerBadge: {
-    paddingHorizontal: 8,
+  /* Provider badge */
+  badge: {
+    paddingHorizontal: spacing.sm,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: radius.sm,
+    flexShrink: 0,
   },
-  providerBadgeText: {
+  badgeText: {
     fontSize: 10,
     fontWeight: '700',
+    lineHeight: 14,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
 
-  /* ── Flinks WebView modal styles ── */
-  webViewSafeArea: {
-    flex: 1,
+  /* Provider radio row */
+  providerRow: {
+    paddingVertical: spacing.md,
+    minHeight: 44,
   },
-  webViewHeader: {
+  providerRowSelected: {
+    backgroundColor: `${colors.primary2}0f`,
+    marginHorizontal: -spacing.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  providerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.08)',
+    gap: spacing.md,
   },
-  webViewCloseBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+  featureRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+    paddingLeft: 40 + spacing.md,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  featureText: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+
+  /* CTA buttons */
+  ctaBase: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    minHeight: 48,
+  },
+  ctaPrimary: {
+    marginBottom: spacing.lg,
+  },
+  ctaSecondary: {
+    backgroundColor: `${colors.primary2}1f`,
+    borderWidth: 1,
+    borderColor: `${colors.primary2}40`,
+    marginBottom: spacing.lg,
+  },
+  ctaLeading: {
+    marginRight: spacing.sm,
+  },
+  ctaPrimaryText: {
+    ...typography.button,
+    color: colors.text,
+  },
+  ctaSecondaryText: {
+    ...typography.smallBold,
+    color: colors.primary2,
+  },
+
+  /* Dim states */
+  dimmed: { opacity: 0.5 },
+
+  // SimpleFIN setup-token sheet
+  sfinOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  sfinSheet: {
+    backgroundColor: colors.surface2,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.md,
+  },
+  sfinHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  sfinTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    flex: 1,
+  },
+  sfinStep: {
+    ...typography.small,
+    color: colors.textMuted,
+    lineHeight: 20,
+  },
+  sfinBold: {
+    color: colors.text,
+    fontWeight: '600',
+  },
+  sfinInput: {
+    ...glassEffects.glass,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    minHeight: 88,
+    color: colors.text,
+    fontSize: 13,
+    textAlignVertical: 'top',
+  } as TextStyle,
+  sfinSubmit: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  webViewTitle: {
-    color: '#fff',
-    fontSize: 17,
+  sfinSubmitText: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  dimmedGroup: { opacity: 0.5 },
+
+  /* Reconnect AttentionCard banner */
+  attentionCard: {
+    marginBottom: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: `${colors.warning}0d`,
+    borderWidth: 1,
+    borderColor: `${colors.warning}2e`,
+  },
+  attentionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  attentionHeaderText: {
+    ...typography.caption,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    color: colors.warning,
+    textTransform: 'uppercase',
+  },
+  attentionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  attentionIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attentionText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  attentionTitle: {
+    ...typography.small,
+    color: colors.text,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  attentionCta: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${colors.warning}66`,
+    backgroundColor: `${colors.warning}1f`,
+  },
+  attentionCtaText: {
+    ...typography.caption,
+    fontSize: 12,
     fontWeight: '700',
+    color: colors.warning,
+  },
+
+  /* Error card */
+  errorCard: {
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  errorTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  errorBody: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+  },
+  retryText: {
+    ...typography.smallBold,
+    color: colors.primary2,
+  },
+
+  /* Trust footer */
+  trustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.md,
+  },
+  trustText: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+
+  /* Skeleton helpers */
+  skelSub: { marginTop: spacing.xs },
+  skelLabel: { marginBottom: spacing.md, marginTop: spacing.xs },
+  skelCta: { marginBottom: spacing.lg },
+
+  /* WebView modal */
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
   },
   webView: {
     flex: 1,
@@ -1001,11 +1738,11 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0b1021',
+    backgroundColor: colors.surfaceDark,
   },
   webViewLoadingText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    marginTop: 12,
+    ...typography.small,
+    color: colors.textMuted,
+    marginTop: spacing.md,
   },
 });

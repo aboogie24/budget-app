@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/bankprovider"
 	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gofrs/uuid"
@@ -166,7 +167,7 @@ func SyncTransactions(client *models.Client) http.HandlerFunc {
 		if len(accounts) == 0 {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"synced": 0,
+				"synced":  0,
 				"message": "No linked accounts found",
 			})
 			return
@@ -224,32 +225,32 @@ func SyncTransactions(client *models.Client) http.HandlerFunc {
 					var resolvedCatID *string
 					var matchConfidence *string
 					var matchedRuleID *string
-					merchantName := tx.GetMerchantName()
-					if merchantName == "" {
-						merchantName = tx.GetName()
-					}
+					merchantNorm := categories.NormalizeMerchant(tx.GetName(), tx.GetMerchantName())
 					hhForResolver := ""
 					if effectiveHH != nil {
 						hhForResolver = *effectiveHH
 					}
-					catID, conf, ruleID, resolveErr := categories.ResolveCategory(dbClient.Conn, userID, hhForResolver, merchantName, plaidCats)
+					catID, conf, ruleID, resolveErr := categories.ResolveCategory(dbClient.Conn, userID, hhForResolver, merchantNorm, plaidCats)
 					if resolveErr != nil {
 						log.Printf("Category resolve error (non-fatal): %v", resolveErr)
 					}
 					if catID != "" {
 						resolvedCatID = &catID
 					}
-					if conf != "" && conf != "low" {
+					if conf != "" {
 						matchConfidence = &conf
 					}
 					if ruleID != nil {
 						matchedRuleID = ruleID
 					}
+					// Exact matches come from user-created/confirmed rules — trust
+					// them; lower-confidence matches stay unverified for review.
+					userVerified := conf == "exact"
 
 					source := "bank"
 					_, insertErr := dbClient.Exec(`
-						INSERT INTO transactions (id, user_id, household_id, type, amount, category_id, category_name, note, date, source, match_confidence, matched_rule_id)
-						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+						INSERT INTO transactions (id, user_id, household_id, type, amount, category_id, category_name, note, date, source, merchant_normalized, match_confidence, matched_rule_id, user_verified)
+						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 						ON CONFLICT DO NOTHING
 					`,
 						txID,
@@ -262,8 +263,10 @@ func SyncTransactions(client *models.Client) http.HandlerFunc {
 						tx.GetName(),
 						tx.GetDate(),
 						source,
+						nilIfEmpty(merchantNorm),
 						matchConfidence,
 						matchedRuleID,
+						userVerified,
 					)
 					if insertErr != nil {
 						log.Printf("Failed to insert Plaid transaction: %v", insertErr)
@@ -1045,6 +1048,16 @@ func SyncAccountBalances(client *models.Client) http.HandlerFunc {
 				totalSynced++
 			}
 		}
+
+		// Mirror fresh balances into any account-linked savings goals and debts.
+		bankprovider.SyncLinkedGoalBalances(dbClient.Conn, bankprovider.LinkedAccount{
+			UserID:      userID,
+			HouseholdID: hhID,
+		})
+		bankprovider.SyncLinkedDebtBalances(dbClient.Conn, bankprovider.LinkedAccount{
+			UserID:      userID,
+			HouseholdID: hhID,
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"synced": totalSynced})

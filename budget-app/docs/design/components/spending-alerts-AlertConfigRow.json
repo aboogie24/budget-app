@@ -1,0 +1,42 @@
+{
+  "componentName": "AlertConfigRow",
+  "description": "One configurable spending-alert row inside the shared Configure Alerts glass card: budget name + limit, a tappable threshold pill (opens ThresholdPickerSheet), and an enable/disable Switch. Rows are separated by hairline dividers.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "budgetName": { "type": "string", "required": true, "description": "Budget display name" },
+    "budgetAmount": { "type": "number", "required": true, "description": "Budget limit shown as 'Limit: $X'" },
+    "thresholdPercent": { "type": "number", "required": true, "description": "Current alert threshold %" },
+    "isEnabled": { "type": "boolean", "required": true, "description": "Whether the alert is on" },
+    "isUpdating": { "type": "boolean", "default": false, "description": "In-flight persist; disables controls, pill shows spinner" },
+    "showDivider": { "type": "boolean", "default": true, "description": "Draw a top hairline (all rows after the first)" },
+    "onPressThreshold": { "type": "function", "required": true, "description": "Open the threshold picker for this budget" },
+    "onToggle": { "type": "function", "required": true, "description": "Toggle enabled/disabled" }
+  },
+  "variants": ["enabled", "disabled", "updating"],
+  "states": ["default", "pressed-pill", "updating"],
+  "layout": {
+    "direction": "row",
+    "alignItems": "center",
+    "gap": "spacing.md",
+    "minHeight": 56,
+    "paddingVertical": "spacing.md",
+    "leftColumn": "name (bodyBold, numberOfLines 1) over 'Limit: {formatCurrency}' (caption/textMuted)",
+    "trailing": "threshold pill, then Switch",
+    "divider": "showDivider -> borderTopWidth 1 / colors.borderLight"
+  },
+  "tokens": {
+    "name": "typography.bodyBold / colors.text",
+    "limit": "typography.caption / colors.textMuted",
+    "pillBg": "${colors.primary2}26",
+    "pillBorder": "${colors.primary2}4d",
+    "pillText": "colors.primary2 / typography.smallBold",
+    "pillRadius": "radius.sm",
+    "switchTrack": { "false": "colors.border", "true": "${colors.primary2}40" },
+    "switchThumb": { "on": "colors.primary2", "off": "colors.textMuted" }
+  },
+  "accessibility": {
+    "thresholdPill": { "role": "button", "label": "Alert threshold for {budgetName}, currently {thresholdPercent}%", "minTarget": "44x44 (hitSlop)" },
+    "switch": { "role": "switch", "label": "Spending alert for {budgetName}", "state": "{ checked: isEnabled }" }
+  }
+}

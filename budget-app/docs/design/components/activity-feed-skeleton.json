@@ -1,0 +1,36 @@
+{
+  "componentName": "ActivityFeedSkeleton",
+  "description": "First-load placeholder for the activity feed. One skeleton group label plus N skeleton rows shaped like ActivityRow so layout does not jump when data arrives. Reuses components/Skeleton.tsx only.",
+  "platform": "react-native",
+  "sourceOfTruthTokens": "budget-app/utils/design-system.ts",
+  "reuses": ["components/Skeleton.tsx"],
+  "props": {
+    "rows": { "type": "number", "default": 5, "description": "Number of skeleton rows to render." }
+  },
+  "shownWhen": "loading && events.length === 0 (first load only). Header renders normally above it.",
+  "layout": {
+    "container": { "paddingHorizontal": "spacing.lg", "paddingTop": "spacing.sm", "gap": "spacing.md" },
+    "groupLabel": { "component": "Skeleton", "width": 60, "height": 12, "borderRadius": 6, "marginBottom": "spacing.sm" },
+    "row": {
+      "surface": "glassEffects.glass",
+      "borderRadius": "radius.lg",
+      "flexDirection": "row",
+      "alignItems": "center",
+      "gap": "spacing.md",
+      "paddingVertical": "spacing.md",
+      "paddingHorizontal": "spacing.lg",
+      "children": [
+        { "component": "Skeleton", "width": 36, "height": 36, "borderRadius": "radius.md", "note": "icon chip" },
+        { "component": "View", "style": { "flex": 1, "gap": "spacing.sm" }, "children": [
+          { "component": "Skeleton", "width": "60%", "height": 12 },
+          { "component": "Skeleton", "width": "40%", "height": 10 }
+        ] },
+        { "component": "Skeleton", "width": 56, "height": 14, "note": "amount" }
+      ]
+    }
+  },
+  "accessibility": {
+    "reducedMotion": "Under AccessibilityInfo.isReduceMotionEnabled(), render Skeleton blocks at static mid-opacity (no pulse loop).",
+    "announce": "Optional accessibilityLabel 'Loading activity' on the container; individual skeleton blocks are decorative (accessibilityElementsHidden)."
+  }
+}

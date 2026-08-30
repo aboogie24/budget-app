@@ -1,19 +1,30 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
   RefreshControl,
+  Animated,
+  Easing,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
+import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  commonStyles,
+} from '@/utils/design-system';
 
 /* ─── Types ─── */
 type Transaction = {
@@ -64,15 +75,77 @@ const fmt = (n: number) =>
     maximumFractionDigits: 2,
   });
 
+// Semantic tint helpers (12% / 20% opacity) — the one documented literal exception.
+const tint12 = (hex: string) => `${hex}1f`;
+const tint20 = (hex: string) => `${hex}33`;
+
+/* ─── Sub-components (screen-local, no new files needed) ─── */
+
+// A spinning refresh icon used ONLY in the header for background refresh.
+function HeaderRefresh({ spinning, onPress }: { spinning: boolean; onPress: () => void }) {
+  const spin = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (spinning) {
+      const loop = Animated.loop(
+        Animated.timing(spin, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      );
+      loop.start();
+      return () => {
+        loop.stop();
+        spin.setValue(0);
+      };
+    }
+    spin.setValue(0);
+  }, [spinning, spin]);
+
+  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={styles.refreshBtn}
+      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel="Refresh unbudgeted spending"
+    >
+      <Animated.View style={{ transform: [{ rotate }] }}>
+        <Ionicons name="refresh" size={20} color={colors.textMuted} />
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
+// "No budget" status pill — icon + word + color (never color-only).
+function NoBudgetPill() {
+  return (
+    <View style={styles.pill}>
+      <Ionicons name="alert-circle" size={12} color={colors.warning} />
+      <Text style={styles.pillText}>No budget</Text>
+    </View>
+  );
+}
+
 export default function UnbudgetedScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(false);
   const [groups, setGroups] = useState<UnbudgetedGroup[]>([]);
 
   const loadData = useCallback(async () => {
+    setError(false);
     const user = await getCurrentUser();
-    if (!user?.id) return;
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
 
     const now = new Date();
     const month = now.getMonth() + 1;
@@ -109,7 +182,7 @@ export default function UnbudgetedScreen() {
       for (const tx of unbudgeted) {
         const parentId = tx.parent_category_id || tx.category_id || 'unknown';
         const parentName = tx.parent_category_name || tx.category_name || 'Uncategorized';
-        const parentColor = tx.parent_category_color || tx.category_color || '#a855f7';
+        const parentColor = tx.parent_category_color || tx.category_color || colors.primary2;
 
         if (!parentMap.has(parentId)) {
           parentMap.set(parentId, {
@@ -142,6 +215,7 @@ export default function UnbudgetedScreen() {
       setGroups(sorted);
     } catch (err) {
       console.error('Failed to load unbudgeted data:', err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -157,244 +231,459 @@ export default function UnbudgetedScreen() {
     setRefreshing(false);
   }, [loadData]);
 
+  // Derived headline total.
+  const grandTotal = useMemo(
+    () => groups.reduce((s, g) => s + g.total, 0),
+    [groups],
+  );
+
+  const groupCount = groups.length;
+
   return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        {/* Header */}
+        {/* Header (fixed, outside ScrollView) */}
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => router.navigate('/(tabs)/budget' as any)}
-            style={styles.backBtn}
-          >
-            <Ionicons name="chevron-back" size={20} color="#e5e7eb" />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Unbudgeted Spending</Text>
-            <Text style={styles.headerSubtitle}>
-              These categories have spending but no budget
-            </Text>
-          </View>
+          <BackButton fallback="/(tabs)/budget" iconName="chevron-back" size={20} />
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            Unbudgeted Spending
+          </Text>
+          <HeaderRefresh spinning={refreshing} onPress={onRefresh} />
         </View>
 
         <ScrollView
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor="#a855f7"
-              colors={['#a855f7']}
+              tintColor={colors.primary2}
+              colors={[colors.primary2]}
             />
           }
         >
           {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#a855f7" />
-              <Text style={styles.loadingText}>Analyzing spending...</Text>
-            </View>
+            <LoadingState />
+          ) : error ? (
+            <ErrorCard onRetry={loadData} />
           ) : groups.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Ionicons name="checkmark-circle-outline" size={48} color="#34d399" />
-              <Text style={styles.emptyTitle}>All spending is budgeted</Text>
-              <Text style={styles.emptySubtitle}>
-                Every category with transactions has a budget assigned.
-              </Text>
-            </View>
+            <EmptyCard />
           ) : (
-            groups.map((group) => (
-              <View key={group.id} style={styles.groupCard}>
-                {/* Parent row */}
-                <View style={styles.parentRow}>
-                  <View style={[styles.iconCircle, { backgroundColor: `${group.color}22` }]}>
-                    <Ionicons name="pricetag-outline" size={18} color={group.color} />
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.parentName}>{group.name}</Text>
-                    <Text style={styles.parentSub}>
-                      {group.subcategories.reduce((s, c) => s + c.count, 0)} transaction
-                      {group.subcategories.reduce((s, c) => s + c.count, 0) !== 1 ? 's' : ''}
-                    </Text>
-                  </View>
-                  <Text style={styles.parentAmount}>{fmt(group.total)}</Text>
+            <>
+              {/* TIER 1 — Headline */}
+              <View
+                style={styles.headlineCard}
+                accessible
+                accessibilityLabel={`Unbudgeted this month, ${fmt(grandTotal)}. ${groupCount} categor${
+                  groupCount === 1 ? 'y' : 'ies'
+                } have spending but no budget.`}
+              >
+                <Text style={styles.heroTotal}>{fmt(grandTotal)}</Text>
+                <Text style={styles.heroCaption}>unbudgeted this month</Text>
+                <View style={styles.statusLine}>
+                  <Ionicons name="alert-circle" size={14} color={colors.warning} />
+                  <Text style={styles.statusText}>
+                    {groupCount} categor{groupCount === 1 ? 'y' : 'ies'} have spending but no budget
+                  </Text>
                 </View>
-
-                {/* Subcategory rows */}
-                {group.subcategories.length > 1 &&
-                  group.subcategories.map((sub, i) => {
-                    const isLast = i === group.subcategories.length - 1;
-                    return (
-                      <View key={sub.id} style={styles.subRow}>
-                        <Text style={styles.treeLine}>
-                          {isLast ? '\u2514\u2500' : '\u251C\u2500'}
-                        </Text>
-                        <View style={[styles.subDot, { backgroundColor: sub.color }]} />
-                        <Text style={styles.subName} numberOfLines={1}>
-                          {sub.name}
-                        </Text>
-                        <Text style={styles.subAmount}>{fmt(sub.total)}</Text>
-                      </View>
-                    );
-                  })}
-
-                {/* Create Budget button */}
-                <TouchableOpacity
-                  style={styles.createBtn}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/budget/add-budget',
-                      params: {
-                        prefill_category_id: group.id,
-                        prefill_name: group.name,
-                      },
-                    } as any)
-                  }
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="add-circle-outline" size={14} color="#a855f7" />
-                  <Text style={styles.createBtnText}>Create Budget</Text>
-                </TouchableOpacity>
               </View>
-            ))
+
+              {/* TIER 2 — Group label */}
+              <View style={styles.groupLabelRow}>
+                <Text style={styles.groupLabel}>BY CATEGORY</Text>
+                <Text style={styles.groupLabel}>
+                  {groupCount} group{groupCount === 1 ? '' : 's'}
+                </Text>
+              </View>
+
+              {/* TIER 2 — Group cards */}
+              {groups.map((group) => {
+                const count = group.subcategories.reduce((s, c) => s + c.count, 0);
+                const showSubs = group.subcategories.length > 1;
+                return (
+                  <View
+                    key={group.id}
+                    style={styles.groupCard}
+                    accessible
+                    accessibilityLabel={`${group.name}, ${fmt(group.total)}, ${count} transaction${
+                      count === 1 ? '' : 's'
+                    }, no budget.`}
+                  >
+                    {/* Header row */}
+                    <View style={styles.groupHeaderRow}>
+                      <View
+                        style={[styles.iconChip, { backgroundColor: tint12(group.color) }]}
+                      >
+                        <Ionicons name="pricetag" size={18} color={group.color} />
+                      </View>
+                      <View style={styles.groupNameCol}>
+                        <Text style={styles.groupName} numberOfLines={1}>
+                          {group.name}
+                        </Text>
+                        <View style={styles.metaRow}>
+                          <Text style={styles.metaText}>
+                            {count} transaction{count === 1 ? '' : 's'}
+                          </Text>
+                          <NoBudgetPill />
+                        </View>
+                      </View>
+                      <Text style={styles.groupAmount}>{fmt(group.total)}</Text>
+                    </View>
+
+                    {/* Sub-rows (only when > 1 subcategory) */}
+                    {showSubs && (
+                      <>
+                        <View style={commonStyles.divider} />
+                        {group.subcategories.map((sub) => (
+                          <View key={sub.id} style={styles.subRow}>
+                            <Text style={styles.subName} numberOfLines={1}>
+                              {sub.name}
+                            </Text>
+                            <View style={styles.subRight}>
+                              <Text style={styles.subCount}>{sub.count} ·</Text>
+                              <Text style={styles.subAmount}>{fmt(sub.total)}</Text>
+                            </View>
+                          </View>
+                        ))}
+                      </>
+                    )}
+
+                    {/* Create Budget CTA */}
+                    <TouchableOpacity
+                      style={styles.cta}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/budget/add-budget',
+                          params: {
+                            prefill_category_id: group.id,
+                            prefill_name: group.name,
+                          },
+                        } as any)
+                      }
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityHint={`Creates a budget for ${group.name}`}
+                    >
+                      <Ionicons name="add-circle" size={16} color={colors.primary2} />
+                      <Text style={styles.ctaText}>Create budget</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </>
           )}
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
+  );
+}
+
+/* ─── State renderers ─── */
+
+function LoadingState() {
+  return (
+    <>
+      {/* Headline shell */}
+      <View style={styles.headlineCard}>
+        <Skeleton width={140} height={28} borderRadius={radius.sm} />
+        <Skeleton width={180} height={12} borderRadius={radius.sm} style={{ marginTop: spacing.sm }} />
+        <Skeleton width={220} height={12} borderRadius={radius.sm} style={{ marginTop: spacing.sm }} />
+      </View>
+
+      {/* Group label skeleton */}
+      <View style={styles.groupLabelRow}>
+        <Skeleton width={90} height={12} borderRadius={radius.sm} />
+      </View>
+
+      {/* Card skeletons */}
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={styles.groupCard}>
+          <View style={styles.groupHeaderRow}>
+            <Skeleton width={40} height={40} borderRadius={radius.md} />
+            <View style={styles.groupNameCol}>
+              <Skeleton width={120} height={14} borderRadius={radius.sm} />
+              <Skeleton
+                width={80}
+                height={12}
+                borderRadius={radius.sm}
+                style={{ marginTop: spacing.xs }}
+              />
+            </View>
+            <Skeleton width={64} height={16} borderRadius={radius.sm} />
+          </View>
+          <Skeleton
+            width="100%"
+            height={40}
+            borderRadius={radius.md}
+            style={{ marginTop: spacing.md }}
+          />
+        </View>
+      ))}
+    </>
+  );
+}
+
+function EmptyCard() {
+  return (
+    <View style={styles.stateCard}>
+      <View style={[styles.stateIconChip, { backgroundColor: tint12(colors.success) }]}>
+        <Ionicons name="checkmark-circle" size={48} color={colors.success} />
+      </View>
+      <Text style={styles.stateTitle}>All spending is budgeted</Text>
+      <Text style={styles.stateBody}>
+        Every category with transactions this month has a budget assigned.
+      </Text>
+    </View>
+  );
+}
+
+function ErrorCard({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={styles.stateCard}>
+      <View style={[styles.stateIconChipSm, { backgroundColor: tint12(colors.error) }]}>
+        <Ionicons name="alert-circle-outline" size={40} color={colors.error} />
+      </View>
+      <Text style={styles.stateTitle}>Couldn&apos;t load unbudgeted spending</Text>
+      <Text style={styles.stateBody}>Check your connection and try again.</Text>
+      <TouchableOpacity
+        style={styles.retryBtn}
+        onPress={onRetry}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel="Try again"
+      >
+        <Text style={styles.retryText}>Try Again</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  /* Header */
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-    gap: 12,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: 'white',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.45)',
-    marginTop: 2,
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-    gap: 12,
-  },
-  loadingText: {
-    color: '#94a3b8',
-    fontSize: 14,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-    gap: 12,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: 'white',
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.45)',
-    textAlign: 'center',
-    paddingHorizontal: 40,
-  },
-  groupCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-  },
-  parentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  parentName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: 'white',
-  },
-  parentSub: {
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.4)',
-    marginTop: 2,
-  },
-  parentAmount: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: 'white',
-    flexShrink: 0,
-  },
-  subRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 5,
-    paddingLeft: 52,
-  },
-  treeLine: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.15)',
-    width: 20,
-  },
-  subDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  subName: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
+    ...typography.h3,
+    color: colors.text,
     flex: 1,
   },
-  subAmount: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.5)',
+  refreshBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  createBtn: {
+
+  /* Scroll */
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: 100,
+  },
+
+  /* TIER 1 — Headline */
+  headlineCard: {
+    ...glassEffects.glassFloating,
+    padding: spacing.xl,
+    borderRadius: radius.xl,
+    marginBottom: spacing.xl,
+  },
+  heroTotal: {
+    ...typography.h2,
+    color: colors.text,
+  },
+  heroCaption: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  statusLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.md,
+  },
+  statusText: {
+    ...typography.small,
+    color: colors.textMuted,
+    flexShrink: 1,
+  },
+
+  /* Group label */
+  groupLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  groupLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    fontWeight: '700',
+  },
+
+  /* TIER 2 — Group card */
+  groupCard: {
+    ...glassEffects.glass,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    marginBottom: spacing.md,
+  },
+  groupHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  iconChip: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupNameCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  groupName: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  metaText: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  groupAmount: {
+    ...typography.bodyBold,
+    color: colors.text,
+    flexShrink: 0,
+  },
+
+  /* No budget pill */
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    backgroundColor: tint12(colors.warning),
+  },
+  pillText: {
+    ...typography.caption,
+    color: colors.warning,
+  },
+
+  /* Sub-rows */
+  subRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  subName: {
+    ...typography.small,
+    color: colors.textMuted,
+    flex: 1,
+  },
+  subRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexShrink: 0,
+  },
+  subCount: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  subAmount: {
+    ...typography.smallBold,
+    color: colors.textMuted,
+  },
+
+  /* CTA */
+  cta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    marginTop: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: 'rgba(168,85,247,0.1)',
+    gap: spacing.sm,
+    minHeight: 44,
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: tint12(colors.primary2),
     borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.2)',
+    borderColor: tint20(colors.primary2),
   },
-  createBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#a855f7',
+  ctaText: {
+    ...typography.smallBold,
+    color: colors.primary2,
+  },
+
+  /* Empty / Error state cards */
+  stateCard: {
+    ...glassEffects.glass,
+    padding: spacing.xl,
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    marginTop: spacing.xl,
+  },
+  stateIconChip: {
+    width: 72,
+    height: 72,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  stateIconChipSm: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  stateTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  stateBody: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  retryBtn: {
+    minHeight: 44,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: tint12(colors.primary2),
+    borderWidth: 1,
+    borderColor: tint20(colors.primary2),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryText: {
+    ...typography.smallBold,
+    color: colors.primary2,
   },
 });

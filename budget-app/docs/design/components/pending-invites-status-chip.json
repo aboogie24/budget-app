@@ -1,0 +1,32 @@
+{
+  "componentName": "InviteStatusChip",
+  "description": "Compact non-interactive chip communicating an invite's expiry status by icon + word + color together (never color alone). Three cases: active countdown, urgent (<=1 day), and expired.",
+  "platform": "react-native",
+  "screen": "pending-invites",
+  "props": {
+    "expiresAt": { "type": "string", "required": true, "description": "ISO 8601 expiry timestamp used to derive the case and countdown label." }
+  },
+  "variants": ["active", "urgent", "expired"],
+  "states": ["default"],
+  "cases": {
+    "active": { "condition": "more than 1 day left", "icon": "time-outline", "word": "{n} days left", "color": "colors.warning", "fill": "${colors.warning}1f", "border": "${colors.warning}33" },
+    "urgent": { "condition": "<= 1 day left and not expired", "icon": "alarm-outline", "word": "1 day left / Today", "color": "colors.error", "fill": "${colors.error}1f", "border": "${colors.error}33" },
+    "expired": { "condition": "past expiresAt", "icon": "alert-circle-outline", "word": "Expired", "color": "colors.error", "fill": "${colors.error}1f", "border": "${colors.error}33" }
+  },
+  "layout": {
+    "flexDirection": "row",
+    "alignItems": "center",
+    "gap": "spacing.xs",
+    "paddingHorizontal": "spacing.sm",
+    "paddingVertical": "spacing.xs",
+    "radius": "radius.sm",
+    "iconSize": 12,
+    "text": "typography.caption (weight 600)",
+    "flexShrink": 0
+  },
+  "accessibility": {
+    "role": "text",
+    "label": "{word}",
+    "notes": "Status is encoded by icon + word + color so it is legible to color-blind users. Non-interactive; exempt from the 44pt target rule."
+  }
+}

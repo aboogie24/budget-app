@@ -1,0 +1,53 @@
+{
+  "componentName": "PayoffHeadlineCard",
+  "description": "Pinned centerpiece result of the payoff calculator: debt-free date (hero), 3 metric cells (time/interest/total cost), and a savings callout vs $0 extra. The only floating card and only h1 on the screen. Recomputes live as levers change.",
+  "platform": "react-native",
+  "sourceOfTruthTokens": "budget-app/utils/design-system.ts",
+  "props": {
+    "payoffDate": { "type": "string", "required": true, "description": "Formatted month+year, e.g. 'March 2029' (result.payoffDate)" },
+    "totalMonths": { "type": "number", "required": true, "description": "Months to payoff (result.totalMonths)" },
+    "totalInterest": { "type": "number", "required": true, "description": "Total interest paid (result.totalInterest)" },
+    "totalCost": { "type": "number", "required": true, "description": "totalBalance + totalInterest" },
+    "monthsSaved": { "type": "number", "required": false, "description": "Months saved vs $0 extra (base.totalMonths - result.totalMonths)" },
+    "interestSaved": { "type": "number", "required": false, "description": "Interest saved vs $0 extra" },
+    "extraPayment": { "type": "number", "required": true, "description": "Current extra monthly payment; callout renders only when > 0 and monthsSaved > 0" },
+    "state": { "type": "'default' | 'loading' | 'emptySelection' | 'neverPayable'", "default": "default", "description": "Drives which body renders" }
+  },
+  "states": ["default", "loading", "emptySelection", "neverPayable"],
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "topWash": "`${colors.primary}14`",
+    "heroCrossFade": "animation.medium (instant under reduce-motion)"
+  },
+  "tokens": {
+    "eyebrowIcon": "flag (Ionicons filled), colors.primary2",
+    "eyebrowLabel": "typography.caption uppercase, colors.textMuted",
+    "heroDate": "typography.h1, colors.text",
+    "subLine": "typography.caption, colors.textMuted",
+    "metricValue": "typography.bodyBold, colors.text",
+    "metricLabel": "typography.caption, colors.textMuted",
+    "metricDivider": "1px, colors.borderGlass",
+    "metricIcons": { "time": "time-outline colors.primary2", "interest": "trending-up-outline colors.error", "totalCost": "wallet-outline colors.text" },
+    "savingsCallout": "fill `${colors.success}14`, radius.md, text colors.success",
+    "neverPayableNudge": "alert-circle-outline colors.warning + word 'years' / 'barely cover interest'"
+  },
+  "content": {
+    "eyebrow": "DEBT-FREE BY",
+    "subLine": "{totalMonths} months from now",
+    "savingsCallout": "+${extraPayment}/mo saves you {monthsSaved} mo · ${interestSaved} interest",
+    "neverPayableHero": "Over 50 years",
+    "neverPayableSub": "at this rate",
+    "neverPayableNudge": "Minimum payments barely cover interest — try adding an extra payment.",
+    "emptySelection": "Pick at least one debt below to see your payoff."
+  },
+  "accessibility": {
+    "role": "summary",
+    "label": "Debt-free by {payoffDate}, {totalMonths} months from now. Time to pay {totalMonths} months. Interest {totalInterest}. Total cost {totalCost}. Adding {extraPayment} a month saves {monthsSaved} months and {interestSaved} in interest.",
+    "colorIndependence": "interest cost pairs '+' prefix and alert-circle-outline with red; never-payable pairs icon+word with color",
+    "reducedMotion": "hero cross-fade becomes instant value swap"
+  },
+  "reuse": ["GradientBackground (screen bg)", "Skeleton (loading variant)"],
+  "notes": "Compute base = computePayoff(focusedDebts, 0, strategy) memoized on [focusedDebts, strategy] to derive monthsSaved/interestSaved without recomputing on every keystroke."
+}

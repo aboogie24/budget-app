@@ -1,0 +1,33 @@
+{
+  "componentName": "RulesSummaryHero",
+  "description": "Elevated headline card for the Category Rules screen. Leads with the total rule count and a three-source breakdown (auto / manual / system).",
+  "platform": "react-native",
+  "screen": "settings/category-rules",
+  "props": {
+    "total": { "type": "number", "required": true, "description": "Total rule count" },
+    "autoCount": { "type": "number", "required": true, "description": "Rules where auto_created is true" },
+    "manualCount": { "type": "number", "required": true, "description": "User-created, non-system rules" },
+    "systemCount": { "type": "number", "required": true, "description": "System/default rules (isSystemRule true)" },
+    "loading": { "type": "boolean", "default": false, "description": "Render Skeleton shell instead of values" }
+  },
+  "variants": ["default", "loading"],
+  "states": ["default", "loading", "zero"],
+  "tokens": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.lg",
+    "overline": { "type": "typography.caption", "color": "colors.textMuted", "transform": "uppercase" },
+    "total": { "type": "typography.h2", "color": "colors.text" },
+    "caption": { "type": "typography.small", "color": "colors.textMuted" },
+    "chips": {
+      "auto": { "icon": "flash-outline", "color": "colors.warning", "tintBg": "colors.warning @12%" },
+      "manual": { "icon": "person-outline", "color": "colors.info", "tintBg": "colors.info @12%" },
+      "system": { "icon": "lock-closed-outline", "color": "colors.textMuted", "tintBg": "colors.textMuted @12%" }
+    }
+  },
+  "layout": { "chipGap": "spacing.sm", "chipRadius": "radius.sm", "chipPaddingH": "spacing.sm", "chipPaddingV": "spacing.xs" },
+  "accessibility": {
+    "label": "{total} rules. {autoCount} auto, {manualCount} manual, {systemCount} system.",
+    "reducedMotion": "Skeleton shell renders static (no pulse) when reduce-motion is on"
+  }
+}

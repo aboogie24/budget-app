@@ -1,0 +1,30 @@
+{
+  "componentName": "IntroErrorBanner",
+  "description": "Dismissible inline banner shown above the action stack when an auth attempt fails (network/OAuth/5xx). Never blanks the screen; brand + CTAs stay intact. Renders null when there is no error.",
+  "platform": "react-native",
+  "props": {
+    "title": { "type": "string", "required": false, "default": "Couldn't sign in", "description": "Short color-independent error headline" },
+    "message": { "type": "string", "required": false, "default": "Check your connection and try again.", "description": "Supporting body; swap to offline copy when detectable" },
+    "onRetry": { "type": "function", "required": false, "description": "Optional; re-invokes the failed auth method" },
+    "onDismiss": { "type": "function", "required": true, "description": "Hides the banner (✕)" }
+  },
+  "variants": ["error", "offline"],
+  "states": ["visible", "hidden"],
+  "tokens": {
+    "surface": "glassEffects.glass",
+    "borderColor": "`${colors.error}55`",
+    "icon": "warning",
+    "iconColor": "colors.error",
+    "titleType": "typography.smallBold",
+    "titleColor": "colors.text",
+    "bodyType": "typography.caption",
+    "bodyColor": "colors.textMuted",
+    "radius": "radius.lg",
+    "padding": "spacing.md"
+  },
+  "accessibility": {
+    "liveRegion": "polite",
+    "colorIndependent": "icon (warning) + word ('Couldn't sign in') carry meaning, not color alone",
+    "dismissTarget": "44x44 hit-slop on ✕"
+  }
+}

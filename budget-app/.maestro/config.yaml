@@ -1,0 +1,9 @@
+# Maestro workspace config — flows run in numeric order via `maestro test .maestro/`
+flows:
+  - "flows/*.yaml"
+executionOrder:
+  continueOnFailure: false
+  flowsOrder:
+    - 01-login
+    - 02-add-transaction
+    - 03-bills-add

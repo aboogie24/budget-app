@@ -11,6 +11,16 @@ type SavingsGoal struct {
 	TargetDate    string  `json:"target_date"`
 	Priority      int     `json:"priority"`
 	IsShared      bool    `json:"is_shared"`
+	// LinkedBalanceID designates a real bank account (account_balances row) as
+	// this goal's fund — current_amount then mirrors the account balance on
+	// every sync and manual progress edits are disabled.
+	LinkedBalanceID *string `json:"linked_balance_id,omitempty"`
+	// LinkedAccountName is the display name of the linked account (read-only,
+	// resolved on list).
+	LinkedAccountName string `json:"linked_account_name,omitempty"`
+	// EffectiveMonthly is the $/month allocated to this goal across active plans
+	// (computed on read; not stored). Single source of truth for contributions.
+	EffectiveMonthly float64 `json:"effective_monthly"`
 }
 
 // DebtAccount represents a debt to pay down.
@@ -20,26 +30,31 @@ type DebtAccount struct {
 	HouseholdID      string  `json:"household_id,omitempty"`
 	Name             string  `json:"name"`
 	Balance          float64 `json:"balance"`
+	OriginalBalance  float64 `json:"original_balance"` // opening balance; drives real "% paid"
 	APR              float64 `json:"apr"`
 	MinPayment       float64 `json:"min_payment"`
 	DueDay           *int    `json:"due_day,omitempty"`
 	Strategy         string  `json:"strategy"`
 	IsShared         bool    `json:"is_shared"`
 	Source           string  `json:"source,omitempty"`
-	DebtCategory     string  `json:"debt_category"`      // "attack" or "structured"
-	LiabilityType    string  `json:"liability_type"`      // credit, auto, mortgage, student, personal, medical, other
+	DebtCategory     string  `json:"debt_category"`  // "attack" or "structured"
+	LiabilityType    string  `json:"liability_type"` // credit, auto, mortgage, student, personal, medical, other
 	AssetDepreciates *bool   `json:"asset_depreciates,omitempty"`
+	// When set, this debt's balance mirrors the linked bank account's balance
+	// on every sync (e.g. a synced credit card).
+	LinkedBalanceID   *string `json:"linked_balance_id,omitempty"`
+	LinkedAccountName string  `json:"linked_account_name,omitempty"`
 }
 
 // FinancialPriority captures a ranked priority item for the couple.
 type FinancialPriority struct {
-	ID       string `json:"id"`
-	UserID   string `json:"user_id"`
+	ID          string `json:"id"`
+	UserID      string `json:"user_id"`
 	HouseholdID string `json:"household_id,omitempty"`
-	Title    string `json:"title"`
-	Rank     int    `json:"rank"`
-	Notes    string `json:"notes"`
-	IsShared bool   `json:"is_shared"`
+	Title       string `json:"title"`
+	Rank        int    `json:"rank"`
+	Notes       string `json:"notes"`
+	IsShared    bool   `json:"is_shared"`
 }
 
 // Trip represents a shared/personal travel budget.
@@ -57,12 +72,12 @@ type Trip struct {
 
 // TripExpense captures a budget item/spend inside a trip.
 type TripExpense struct {
-	ID       string  `json:"id"`
-	TripID   string  `json:"trip_id"`
-	UserID   string  `json:"user_id"`
-	HouseholdID string `json:"household_id,omitempty"`
-	Category string  `json:"category"`
-	Amount   float64 `json:"amount"`
-	Note     string  `json:"note"`
-	Date     string  `json:"date"`
+	ID          string  `json:"id"`
+	TripID      string  `json:"trip_id"`
+	UserID      string  `json:"user_id"`
+	HouseholdID string  `json:"household_id,omitempty"`
+	Category    string  `json:"category"`
+	Amount      float64 `json:"amount"`
+	Note        string  `json:"note"`
+	Date        string  `json:"date"`
 }

@@ -1,0 +1,41 @@
+{
+  "componentName": "ThresholdPickerSheet",
+  "description": "Bottom-sheet picker for choosing a spending-alert threshold percentage. Slides up over a scrim on a glass surface; tapping an option persists immediately and dismisses. Replaces the bespoke inline Modal.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "visible": { "type": "boolean", "required": true, "description": "Sheet visibility" },
+    "budgetName": { "type": "string", "required": false, "description": "Named in the title: 'Alert threshold — {budgetName}'" },
+    "current": { "type": "number", "required": false, "description": "Currently selected threshold (renders filled)" },
+    "options": { "type": "number[]", "required": true, "description": "Threshold choices, e.g. [50,60,70,80,90]" },
+    "onSelect": { "type": "function", "required": true, "description": "Called with the chosen threshold; persists + auto-dismisses" },
+    "onClose": { "type": "function", "required": true, "description": "Dismiss without change (close btn / Done / Android back)" }
+  },
+  "variants": ["default"],
+  "states": ["hidden", "visible"],
+  "presentation": {
+    "modal": "animationType slide, transparent, onRequestClose -> onClose",
+    "scrim": "rgba(0,0,0,0.5)",
+    "sheetSurface": "glassEffects.glassStrong over colors.surface2 (opaque)",
+    "topRadius": "radius.xxl",
+    "paddingHorizontal": "spacing.lg",
+    "paddingTop": "spacing.md",
+    "paddingBottom": "spacing.xxl (safe-area)",
+    "grabHandle": "36x4, radius.full, colors.borderGlass, centered"
+  },
+  "layout": {
+    "titleRow": "'Alert threshold — {budgetName}' (bodyBold/colors.text, numberOfLines 1) + close btn (close icon 24, colors.textMuted, 44pt)",
+    "subtitle": "'Alert me when spending reaches:' (typography.small / colors.textMuted)",
+    "optionGrid": "wrap row, gap spacing.md, chip minWidth 30%, paddingVertical spacing.lg, radius.md",
+    "doneCta": "full-width gradients.primaryGradient, radius.md, paddingVertical spacing.md, white typography.button"
+  },
+  "tokens": {
+    "optionDefault": { "bg": "colors.glassLight", "border": "colors.borderGlass", "text": "colors.textMuted / typography.bodyBold" },
+    "optionSelected": { "bg": "${colors.primary2}33", "border": "colors.primary2", "text": "colors.primary2" }
+  },
+  "accessibility": {
+    "option": { "role": "button", "label": "{n} percent", "state": "{ selected: n === current }", "minTarget": "44x44" },
+    "closeButton": { "role": "button", "label": "Close", "minTarget": "44x44" },
+    "reducedMotion": "present without slide (fade/immediate) when reduce-motion enabled"
+  }
+}

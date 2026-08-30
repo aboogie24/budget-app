@@ -1,0 +1,39 @@
+{
+  "componentName": "InvestmentsAllocationStrip",
+  "description": "Tier-2 condensed glass card: a stacked composition bar by security type + a wrapping color-dot legend, answering 'where is the money' without scrolling.",
+  "platform": "react-native",
+  "props": {
+    "buckets": { "type": "{ label: string; value: number; color: string }[]", "required": true, "description": "Grouped-by-type totals, pre-sorted by share descending" },
+    "total": { "type": "number", "required": true, "description": "Portfolio total used to size each segment's share" },
+    "loading": { "type": "boolean", "default": false, "description": "Renders a single bar skeleton" }
+  },
+  "variants": ["multi-bucket", "single-bucket"],
+  "states": ["default", "loading", "hidden"],
+  "layout": {
+    "surface": "glassEffects.glass",
+    "radius": "radius.lg",
+    "padding": "spacing.lg",
+    "barHeight": "spacing.sm",
+    "barRadius": "radius.full",
+    "barTrack": "colors.glassLight"
+  },
+  "bucketPalette": {
+    "Stocks": "colors.primary",
+    "ETF/Fund": "colors.primary2",
+    "Crypto": "colors.accent",
+    "Cash": "colors.info",
+    "Other": "colors.textMuted"
+  },
+  "legend": {
+    "chip": "● {label} {pct}%",
+    "dot": "segment color",
+    "label": "typography.caption / colors.textMuted",
+    "pct": "typography.caption / colors.text",
+    "wrap": "wraps to second line at >=5 buckets; '+N more' beyond 6"
+  },
+  "colorIndependence": "Each colored segment is paired with a legend dot + text label + percentage.",
+  "accessibility": {
+    "role": "image",
+    "label": "Allocation: {label} {pct} percent, ... for each bucket"
+  }
+}

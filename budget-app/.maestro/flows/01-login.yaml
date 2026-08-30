@@ -1,0 +1,21 @@
+appId: com.github.aboogie.budgetapp
+name: 01-login
+env:
+  E2E_EMAIL: e2e-maestro@test.local
+  E2E_PASSWORD: supersecret123
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Log In"
+    timeout: 15000
+- tapOn: "Email"
+- inputText: ${E2E_EMAIL}
+- tapOn: "Password"
+- inputText: ${E2E_PASSWORD}
+- hideKeyboard
+- tapOn: "Log In"
+# Landing on the dashboard proves auth + boot worked end to end.
+- extendedWaitUntil:
+    visible: "This Week"
+    timeout: 20000

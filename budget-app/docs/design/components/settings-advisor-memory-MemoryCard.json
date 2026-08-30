@@ -1,0 +1,36 @@
+{
+  "componentName": "MemoryCard",
+  "description": "A single advisor-memory fact rendered as a flat glass card with a destructive delete affordance. Replaces the local memoryCard in app/settings/advisor-memory.tsx.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-advisor-memory-redesign.md",
+  "props": {
+    "fact": { "type": "string", "required": true, "description": "The remembered fact text. Rendered in full with no line clamp so the user can read it to decide whether to forget it." },
+    "onDelete": { "type": "function", "required": true, "description": "Called on delete tap; opens the 'Forget this?' destructive confirm Alert, then deleteAdvisorMemory(id) + optimistic removal." },
+    "deleting": { "type": "boolean", "required": false, "default": false, "description": "When true, dims the card to 0.5 opacity and disables interaction during the in-flight delete." }
+  },
+  "variants": ["default"],
+  "states": ["default", "pressed", "deleting", "longFact"],
+  "layout": {
+    "card": { "surface": "glassEffects.glass", "borderRadius": "radius.md", "padding": "spacing.md", "marginBottom": "spacing.sm", "direction": "row", "alignItems": "flex-start", "gap": "spacing.md" },
+    "factText": { "flex": 1, "typography": "typography.small", "color": "colors.text", "numberOfLines": "none" },
+    "deleteButton": { "width": 32, "height": 32, "borderRadius": "radius.sm", "backgroundColor": "`${colors.error}14`", "icon": "trash-outline", "iconSize": 16, "iconColor": "colors.error", "hitSlop": 8, "flexShrink": 0, "alignSelf": "flex-start" }
+  },
+  "tokens": {
+    "colors": ["colors.text", "colors.error", "colors.glassLight", "colors.borderGlass"],
+    "glass": ["glassEffects.glass"],
+    "radius": ["radius.md", "radius.sm"],
+    "spacing": ["spacing.md", "spacing.sm"],
+    "typography": ["typography.small"]
+  },
+  "accessibility": {
+    "cardRole": "none",
+    "deleteButton": {
+      "role": "button",
+      "label": "Forget: {fact}",
+      "hint": "Removes this from what your advisor remembers",
+      "target": "44x44 via hitSlop 8 on a 32x32 visual"
+    },
+    "reducedMotion": "No motion of its own; any press/opacity transition uses animation.fast and honors reduce-motion."
+  },
+  "notes": "AdvisorMemory type is { id, scope, fact } with no timestamp — do not add a date subtitle. Long facts grow the card vertically; the delete button stays flexShrink:0 and top-aligned."
+}

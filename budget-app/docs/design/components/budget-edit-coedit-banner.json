@@ -1,0 +1,29 @@
+{
+  "componentName": "CoEditBanner",
+  "description": "Glass banner surfacing that the partner last edited this budget. Promotes the current tiny header caption into a first-class, color-independent co-edit context row. Renders only when updated_by exists and !== currentUserId.",
+  "platform": "react-native",
+  "props": {
+    "editorName": { "type": "string", "required": false, "description": "budgetData.updated_by_name; falls back to 'partner'" },
+    "updatedAt": { "type": "string", "required": false, "description": "ISO 8601; rendered as relative time. Omit the time half if absent." },
+    "partner": { "type": "'A' | 'B' | 'unknown'", "required": false, "default": "unknown", "description": "Which household partner, for glyph + tint" }
+  },
+  "variants": ["partnerA", "partnerB", "partnerUnknown"],
+  "states": ["hidden", "partnerA", "partnerB", "partnerUnknown"],
+  "layout": {
+    "row": { "glass": "glassEffects.glass", "radius": "radius.md", "paddingHorizontal": "spacing.md", "paddingVertical": "spacing.sm", "direction": "row", "align": "center", "gap": "spacing.sm", "marginBottom": "spacing.md" },
+    "glyph": { "size": 14 },
+    "text": { "type": "typography.caption", "numberOfLines": 1 }
+  },
+  "tokens": {
+    "partnerA": { "glyph": "◑", "color": "colors.primary2" },
+    "partnerB": { "glyph": "◐", "color": "colors.info" },
+    "partnerUnknown": { "glyph": "●", "color": "colors.textMuted" },
+    "text": "colors.textMuted"
+  },
+  "behavior": "Render condition: budgetData.updated_by && budgetData.updated_by !== currentUserId. Text = 'Last edited by {editorName || \"partner\"}' + ' · {relativeTime(updatedAt)}' (time half omitted if updatedAt missing).",
+  "accessibility": {
+    "role": "text",
+    "label": "Last edited by {editorName}, {relative time}",
+    "colorIndependent": "Meaning carried by glyph shape + the words 'Last edited by {name}', not tint; partner A vs B differ by glyph shape as well as color"
+  }
+}

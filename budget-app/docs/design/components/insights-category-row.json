@@ -1,0 +1,45 @@
+{
+  "componentName": "InsightsCategoryRow",
+  "description": "A single ranked spend-by-category row in the Insights 'By Category' card: color dot, name, amount, percent, and a proportional progress bar.",
+  "platform": "react-native",
+  "screen": "insights",
+  "props": {
+    "name": { "type": "string", "required": true, "description": "Category display name." },
+    "amount": { "type": "number", "required": true, "description": "Total spent in this category for the month." },
+    "percent": { "type": "number", "required": true, "description": "Share of total spending, 0-100. Drives progress bar width." },
+    "color": { "type": "string", "required": false, "description": "API-supplied category color. When absent, fall back to the palette-derived list by rank index." },
+    "rankIndex": { "type": "number", "required": true, "description": "0-based rank; used to index the fallback palette when color is absent." },
+    "isOverflowRow": { "type": "boolean", "default": false, "description": "True for the trailing '+N more' aggregate row (summed amount/percent of the remaining categories)." },
+    "onPress": { "type": "function", "required": false, "description": "Only set on the overflow row to expand the full list (progressive disclosure)." }
+  },
+  "fallbackPalette": [
+    "colors.primary2", "colors.info", "colors.success", "colors.warning", "colors.accent", "colors.error", "colors.primary"
+  ],
+  "variants": ["default", "overflow"],
+  "states": ["default", "pressed (overflow row only)"],
+  "layout": {
+    "dotSize": 10,
+    "dotRadius": "radius.full",
+    "dotMarginTop": "spacing.xs",
+    "rowGap": "spacing.md",
+    "rowMarginBottom": "spacing.md",
+    "trackHeight": 6,
+    "trackRadius": "radius.full",
+    "trackColor": "colors.borderGlass",
+    "trackMarginTop": "spacing.sm",
+    "fillColor": "resolved category color (props.color or fallbackPalette[rankIndex % 7])"
+  },
+  "typography": {
+    "name": "typography.smallBold (colors.text, numberOfLines=1)",
+    "amount": "typography.smallBold (colors.text, flexShrink:0)",
+    "percent": "typography.caption (colors.textMuted, flexShrink:0)"
+  },
+  "accessibility": {
+    "role": "text (or button on overflow row)",
+    "label": "{name}, {amount}, {percent} percent of spending",
+    "minTouchTarget": "44pt tall only when onPress is set (overflow row)",
+    "colorIndependent": true,
+    "note": "identity is the labeled name+amount; the dot is decorative reinforcement only"
+  },
+  "tokensUsed": ["colors.text", "colors.textMuted", "colors.borderGlass", "colors.primary", "colors.primary2", "colors.info", "colors.success", "colors.warning", "colors.accent", "colors.error", "radius.full", "spacing.xs", "spacing.sm", "spacing.md", "typography.smallBold", "typography.caption"]
+}

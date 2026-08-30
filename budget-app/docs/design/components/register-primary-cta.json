@@ -1,0 +1,34 @@
+{
+  "componentName": "RegisterPrimaryCTA",
+  "description": "Primary gradient 'Create account' button. Always tappable when idle (runs validation and surfaces inline errors on press); disabled with spinner while submitting.",
+  "platform": "react-native",
+  "props": {
+    "onPress": { "type": "function", "required": true, "description": "handleRegister" },
+    "submitting": { "type": "boolean", "required": true, "description": "When true, shows ActivityIndicator + 'Creating your account…' and disables" }
+  },
+  "variants": ["default"],
+  "states": ["idle", "ready", "submitting", "pressed"],
+  "tokens": {
+    "gradient": "gradients.primaryGradient",
+    "radius": "radius.lg",
+    "paddingVertical": "spacing.lg",
+    "gap": "spacing.sm",
+    "textType": "typography.button",
+    "textColor": "colors.text",
+    "trailingIcon": "arrow-forward",
+    "spinnerColor": "colors.text",
+    "submittingOpacity": 0.6,
+    "pressAnimation": "animation.fast"
+  },
+  "labels": {
+    "idle": "Create account",
+    "submitting": "Creating your account…"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "Create account",
+    "hint": "Double tap to create your account. Missing or invalid fields are shown inline.",
+    "notHardDisabled": "Idle state stays tappable so validation can teach the user what's missing.",
+    "reducedMotion": "Skip press-scale when reduce motion is enabled."
+  }
+}

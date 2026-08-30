@@ -1,0 +1,22 @@
+{
+  "componentName": "GoalsSkeleton",
+  "description": "Loading state for the Finances (goals tab) screen. Layout-matched skeleton built entirely from components/Skeleton.tsx — replaces the current full-screen ActivityIndicator. Header + quick-access chips render immediately; only the content tiers are skeletonized.",
+  "platform": "react-native",
+  "reuses": ["components/Skeleton.tsx", "components/Skeleton.tsx#SkeletonStack"],
+  "structure": [
+    { "tier": 1, "block": "hero", "surface": "glassFloating skeleton", "children": ["Skeleton label line ~120x12", "Skeleton hero bar ~200x32", "Skeleton delta ~140x12", "2-column split: two Skeleton value blocks ~110x16"] },
+    { "tier": 2, "block": "allocation", "surface": "glass skeleton", "children": ["Skeleton circle 120x120 borderRadius full (donut)", "3x SkeletonStack legend lines"] },
+    { "tier": 3, "block": "cashflow", "surface": "glass skeleton", "children": ["6x Skeleton vertical bars ~12 wide, varied height", "row divider", "3x Skeleton summary columns ~80x14"] },
+    { "tier": 4, "block": "accounts", "surface": "glass skeleton", "children": ["3x account-row skeleton: Skeleton chip 38x38 radius.md + 2 lines (60% / 40%) + right value 70x14"] }
+  ],
+  "tokens": {
+    "gap": "spacing.lg between tiers, spacing.md within",
+    "rowShape": "matches GoalsAccountRow: chip radius.md, lines height 12/10"
+  },
+  "accessibility": {
+    "role": "progressbar",
+    "label": "Loading finances",
+    "reducedMotion": "Skeleton pulse is the only animation; no bespoke motion added."
+  },
+  "developerNotes": "Keep the same widths/heights/radii as the real content so the layout doesn't jump when data arrives (Skeleton's core contract)."
+}

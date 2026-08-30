@@ -1,0 +1,35 @@
+{
+  "componentName": "CategoryCountCard",
+  "description": "The single elevated headline card for the Categories screen. Leads with the count of categories for the active type, then a custom-vs-system breakdown so the user understands what is editable, plus the tap/long-press affordance hint. Absorbs the old sectionLabel + hint lines.",
+  "platform": "react-native",
+  "props": {
+    "type": { "type": "'expense' | 'income'", "required": true },
+    "total": { "type": "number", "required": true, "description": "count of parent categories for the active type" },
+    "customCount": { "type": "number", "required": true, "description": "user-owned (editable) categories" },
+    "systemCount": { "type": "number", "required": true, "description": "system (locked) categories" }
+  },
+  "layout": {
+    "card": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.lg",
+    "marginBottom": "spacing.lg",
+    "gap": "spacing.sm"
+  },
+  "content": {
+    "count": { "type": "typography.h2", "color": "colors.text", "text": "{total}" },
+    "countLabel": { "type": "typography.small", "color": "colors.textMuted", "text": "{type} categor{y|ies}" },
+    "breakdown": {
+      "custom": { "icon": "create-outline", "iconColor": "colors.accent", "text": "{customCount} custom", "textColor": "colors.text", "type": "typography.caption" },
+      "separator": "· (colors.textMuted)",
+      "system": { "icon": "lock-closed", "iconColor": "colors.textMuted", "text": "{systemCount} system", "textColor": "colors.textMuted", "type": "typography.caption" }
+    },
+    "hint": { "type": "typography.caption", "color": "colors.textMuted", "text": "Tap a category to expand · long-press to edit" }
+  },
+  "states": ["default", "skeleton", "zero (total=0 → screen shows EmptyState instead)"],
+  "accessibility": {
+    "role": "summary",
+    "label": "{total} {type} categories. {customCount} custom, {systemCount} system.",
+    "note": "Custom/system split is conveyed by icon + word, not color alone."
+  },
+  "developerNotes": "Only elevated (glassFloating) card on the screen; every list row is flat glass. Pluralize label off total."
+}

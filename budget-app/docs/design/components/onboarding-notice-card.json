@@ -1,0 +1,31 @@
+{
+  "componentName": "OnboardingNoticeCard",
+  "description": "Inline, non-blocking recoverable-error card for the onboarding flow (invite failed, link failed, complete failed). Same noticeCard pattern the calendar/dashboard error states use. Never blocks the user from proceeding.",
+  "platform": "react-native",
+  "props": {
+    "message": { "type": "string", "required": true, "description": "Recoverable, reassuring copy (e.g. \"Couldn't send the invite — you can add your partner later in Settings.\")" },
+    "onRetry": { "type": "function", "required": false, "description": "Optional retry handler" },
+    "retryLabel": { "type": "string", "required": false, "default": "Retry", "description": "'Retry' | 'Try again'" },
+    "tone": { "type": "string", "required": false, "default": "warning", "description": "'warning' (recoverable) | 'error' (fatal — rare)" }
+  },
+  "variants": ["warning", "error"],
+  "states": ["default"],
+  "layout": {
+    "surface": "glassEffects.glass",
+    "padding": "spacing.lg",
+    "flexDirection": "row",
+    "gap": "spacing.md",
+    "marginBottom": "spacing.md"
+  },
+  "tokens": {
+    "icon": "alert-circle-outline / colors.warning (or colors.error if tone=error)",
+    "message": "typography.small / colors.text",
+    "retry": "typography.smallBold / colors.primary2"
+  },
+  "accessibility": {
+    "role": "alert",
+    "liveRegion": "polite",
+    "note": "icon + word + color; retry is a labeled button with >=44pt target",
+    "retryTarget": "44pt"
+  }
+}

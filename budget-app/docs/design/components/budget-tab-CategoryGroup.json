@@ -1,0 +1,49 @@
+{
+  "componentName": "CategoryGroup",
+  "description": "Expandable parent-category card in the budget list. Collapsed: shows icon, name, sub-count, an aggregate progress bar and total. Expanded: reveals editable CategoryBudgetRow children (or the parent as its own row when it has no subs) plus a dashed Add Subcategory button. Tokenized re-skin of the existing categoryGroupCard.",
+  "platform": "react-native",
+  "props": {
+    "category": { "type": "CategoryData", "required": true, "description": "id, name, color, icon, budget_amount, spent, unverified_count, subcategories[]" },
+    "onSetBudget": { "type": "(categoryId: string, budgetId: string | null | undefined, amount: number) => void", "required": true },
+    "onAddSub": { "type": "(parentId: string) => void", "required": true }
+  },
+  "layout": {
+    "card": "glassEffects.glass",
+    "radius": "radius.lg",
+    "marginBottom": "spacing.sm",
+    "overflow": "hidden",
+    "headerPadding": "spacing.md",
+    "gap": "spacing.md",
+    "iconChip": { "size": 36, "radius": "radius.md", "bg": "${category.color}22", "glyph": "category.color" }
+  },
+  "regions": {
+    "name": "typography.smallBold colors.text (numberOfLines 1)",
+    "subCounter": "'{n} subs' typography.caption colors.textDark",
+    "aggregateProgress": {
+      "show": "when group has any budget",
+      "barHeight": 3,
+      "barColor": "budgetStatus(aggregateSpent, aggregateBudgeted) -> success|warning|error",
+      "labels": "'{spent} spent' / '{budgeted} budgeted' typography.caption colors.textMuted"
+    },
+    "trailingTotal": "aggregate budget in typography.smallBold colors.text, or em-dash in colors.textDark when unbudgeted",
+    "chevron": "chevron-up|chevron-down colors.textMuted"
+  },
+  "expandedBody": {
+    "topBorder": "colors.borderGlass",
+    "noSubs": "render parent as its own CategoryBudgetRow",
+    "subRows": "CategoryBudgetRow per subcategory (isSubcategory=true)",
+    "addSubButton": {
+      "style": "dashed border ${colors.primary2}40, fill ${colors.primary2}0f, radius.md",
+      "content": "add glyph + 'Add Subcategory' colors.primary2 typography.caption",
+      "minTouch": 44
+    }
+  },
+  "states": ["collapsed", "expanded", "collapsed-unbudgeted", "pressed", "loading-skeleton"],
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {n} subcategories, {budgeted} budgeted, {expanded|collapsed}",
+    "hint": "Double tap to expand",
+    "note": "category.color is data-driven and preserved for the icon chip; all chrome uses tokens."
+  },
+  "developerNotes": "Preserve existing expand state + aggregate math. Only presentation changes."
+}

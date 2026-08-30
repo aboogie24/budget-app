@@ -72,31 +72,49 @@ func (f *FlinksProvider) SyncTransactions(conn *sql.DB, account LinkedAccount) (
 				}
 			}
 
-			// Resolve category using mapping rules
+			// Resolve category using mapping rules. Flinks gives only a raw
+			// description, so normalization does the cleaning.
 			var resolvedCatID *string
 			var matchConfidence *string
 			var matchedRuleID *string
-			merchantName := tx.Description
+			merchantNorm := categories.NormalizeMerchant(tx.Description, "")
 			plaidCats := []string{} // Flinks doesn't provide Plaid-style categories
-			catID, conf, ruleID, resolveErr := categories.ResolveCategory(conn, account.UserID, account.HouseholdID, merchantName, plaidCats)
+			catID, conf, ruleID, resolveErr := categories.ResolveCategory(conn, account.UserID, account.HouseholdID, merchantNorm, plaidCats)
 			if resolveErr != nil {
 				log.Printf("flinks: category resolve error (non-fatal): %v", resolveErr)
 			}
 			if catID != "" {
 				resolvedCatID = &catID
 			}
-			if conf != "" && conf != "low" {
+			if conf != "" {
 				matchConfidence = &conf
 			}
 			if ruleID != nil {
 				matchedRuleID = ruleID
 			}
+			// Exact matches come from user-created/confirmed rules — trust them;
+			// lower-confidence matches stay unverified for the review queue.
+			userVerified := conf == "exact"
 
 			source := "flinks"
+			// Upsert on (user_id, source, external_id) so a re-sync updates an
+			// existing transaction in place instead of duplicating it.
 			_, err := conn.Exec(`
-				INSERT INTO transactions (id, user_id, household_id, type, amount, category_id, note, date, source, match_confidence, matched_rule_id, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-				ON CONFLICT DO NOTHING
+				INSERT INTO transactions
+					(id, user_id, household_id, type, amount, category_id, note, date,
+					 source, external_id, merchant_normalized, match_confidence, matched_rule_id, user_verified, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+				ON CONFLICT (user_id, source, external_id) WHERE external_id IS NOT NULL
+				DO UPDATE SET
+					type = CASE
+						WHEN transactions.transfer_pair_id IS NOT NULL THEN transactions.type
+						ELSE EXCLUDED.type
+					END,
+					amount = EXCLUDED.amount,
+					note = EXCLUDED.note,
+					date = EXCLUDED.date,
+					merchant_normalized = EXCLUDED.merchant_normalized,
+					updated_at = NOW()
 			`,
 				txID,
 				account.UserID,
@@ -107,8 +125,11 @@ func (f *FlinksProvider) SyncTransactions(conn *sql.DB, account LinkedAccount) (
 				tx.Description,
 				txDate,
 				source,
+				nilIfEmpty(tx.Id),
+				nilIfEmpty(merchantNorm),
 				matchConfidence,
 				matchedRuleID,
+				userVerified,
 			)
 			if err != nil {
 				log.Printf("flinks: failed to insert transaction: %v", err)
@@ -208,6 +229,8 @@ func (f *FlinksProvider) SyncBalances(conn *sql.DB, account LinkedAccount) (int,
 	}
 
 	log.Printf("flinks: synced %d account balances for account %s", updated, account.ID)
+	SyncLinkedGoalBalances(conn, account)
+	SyncLinkedDebtBalances(conn, account)
 	return updated, nil
 }
 

@@ -3,15 +3,19 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/categories"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 func CreateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +80,15 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		tx.ID, tx.UserID, tx.HouseholdID, tx.BudgetID, tx.CategoryID, tx.Type, tx.Amount, tx.Currency, tx.Category, tx.Note, tx.Date, tx.Frequency, tx.DueDay, tx.Source)
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			// Unique-violation from the manual-dedupe index: a near-simultaneous
+			// retry of the same entry. Treat as success — the original insert won.
+			log.Printf("CreateTransaction dedupe skip: user=%s amount=%.2f note=%q", tx.UserID, tx.Amount, tx.Note)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"status": "duplicate"})
+			return
+		}
 		log.Printf("CreateTransaction insert error: %v", err)
 		http.Error(w, "Failed to insert transaction", http.StatusInternalServerError)
 		return
@@ -109,109 +122,34 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-func GetTransactions(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	fmt.Print("Getting Transactions for User: {userID}")
+// transactionSelectCols is shared by the list query; the scan in
+// scanTransactions must match this column order exactly.
+const transactionSelectCols = `
+	t.id,          -- 1
+	t.user_id,     -- 2
+	t.household_id,
+	t.budget_id,   -- 4
+	t.category_id, -- 5
+	t.type,        -- 6
+	t.amount,      -- 7
+	t.currency,    -- 8
+	t.note,        -- 9
+	t.date,        -- 10
+	t.frequency,   -- 11
+	t.due_day,     -- 12
+	COALESCE(c.name, t.category_name), -- 13
+	c.color,       -- 14
+	t.source,      -- 15
+	t.match_confidence, -- 16
+	t.matched_rule_id,  -- 17
+	COALESCE(t.user_verified, false) -- 18`
 
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
-		return
-	}
-
-	dbClient, err := db.New()
-	if err != nil {
-		http.Error(w, "DB connection error", http.StatusInternalServerError)
-		return
-	}
-	defer dbClient.Close()
-
-	// rows, err := dbClient.Query(`
-	// 	SELECT id, user_id, type, amount, category, note, date, frequency, due_day
-	// 	FROM transactions WHERE user_id = $1
-	// `, userID)
-	log.Printf("User_ID: %v", userID)
-	hh := db.ResolveHouseholdID(dbClient.Conn, userID)
-
-	var rows *sql.Rows
-	if hh == "" {
-		rows, err = dbClient.Query(`
-			SELECT
-				t.id,          -- 1
-				t.user_id,     -- 2
-				t.household_id,
-				t.budget_id,   -- 4
-				t.category_id, -- 5
-				t.type,        -- 6
-				t.amount,      -- 7
-				t.currency,    -- 8
-				t.note,        -- 9
-				t.date,        -- 10
-				t.frequency,   -- 11
-				t.due_day,     -- 12
-				COALESCE(c.name, t.category_name), -- 13
-				c.color,       -- 14
-				t.source,      -- 15
-				t.match_confidence, -- 16
-				t.matched_rule_id,  -- 17
-				COALESCE(t.user_verified, false) -- 18
-			FROM transactions t
-			LEFT JOIN categories c ON t.category_id = c.id
-			WHERE t.household_id IS NULL AND t.user_id = $1
-		`, userID)
-	} else {
-		rows, err = dbClient.Query(`
-			SELECT
-				t.id,          -- 1
-				t.user_id,     -- 2
-				t.household_id,
-				t.budget_id,   -- 4
-				t.category_id, -- 5
-				t.type,        -- 6
-				t.amount,      -- 7
-				t.currency,    -- 8
-				t.note,        -- 9
-				t.date,        -- 10
-				t.frequency,   -- 11
-				t.due_day,     -- 12
-				COALESCE(c.name, t.category_name), -- 13
-				c.color,       -- 14
-				t.source,      -- 15
-				t.match_confidence, -- 16
-				t.matched_rule_id,  -- 17
-				COALESCE(t.user_verified, false) -- 18
-			FROM transactions t
-			LEFT JOIN categories c ON t.category_id = c.id
-			WHERE t.user_id = $2
-			   OR t.household_id::text = $1
-			   OR (t.household_id IS NOT NULL AND t.user_id IN (
-			       SELECT hm.user_id FROM household_members hm
-			       LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
-			           AND (sp.household_id::text = $1 OR sp.household_id IS NULL)
-			       WHERE hm.household_id::text = $1
-			         AND hm.user_id != $2
-			         AND COALESCE(sp.share_transactions, true) = true
-			   ))
-		`, hh, userID)
-	}
-
-	if err != nil {
-		http.Error(w, "Database query error", http.StatusInternalServerError)
-		log.Print(`Database query error`)
-		return
-	}
-	defer rows.Close()
-
+func scanTransactions(rows *sql.Rows) ([]models.Transaction, error) {
 	var transactions []models.Transaction
-	log.Print("Updating transaction model from database")
-	columns, _ := rows.Columns()
-	log.Printf("Columes returned: %v", columns)
-	rowCount := 0
 	for rows.Next() {
 		var t models.Transaction
 		var hh, freq, note sql.NullString
-		rowCount++
-		log.Print("Scanning")
-		err := rows.Scan(
+		if err := rows.Scan(
 			&t.ID,              // 1
 			&t.UserID,          // 2
 			&hh,                // 3 household_id
@@ -226,29 +164,182 @@ func GetTransactions(w http.ResponseWriter, r *http.Request) {
 			&t.DueDay,          // 12
 			&t.Category,        // 13
 			&t.Color,           // 14
-			&t.Source,           // 15
+			&t.Source,          // 15
 			&t.MatchConfidence, // 16
 			&t.MatchedRuleID,   // 17
 			&t.UserVerified,    // 18
-		)
+		); err != nil {
+			return nil, err
+		}
 		if hh.Valid {
 			val := hh.String
 			t.HouseholdID = &val
 		}
 		t.Frequency = freq.String
 		t.Note = note.String
-
-		if err != nil {
-			http.Error(w, "Failed to scan row", http.StatusInternalServerError)
-			log.Printf("Failed to scan: %v", err)
-			return
-		}
-		log.Print("Scan worked")
 		transactions = append(transactions, t)
 	}
-	log.Printf("Total rows processed: %d", rowCount)
+	return transactions, rows.Err()
+}
 
-	json.NewEncoder(w).Encode(transactions)
+// GetTransactions lists transactions for a user (household-scoped when the
+// user belongs to one). Optional query params:
+//   - q:             case-insensitive search over note, category name, source, amount
+//   - type:          income | expense | transfer
+//   - category_id:   exact category filter
+//   - uncategorized: "1"/"true" — only rows with no category
+//   - date:          YYYY-MM-DD calendar-day filter (matches the stored date part)
+//   - limit/offset: when limit is present the response is a paginated envelope
+//     {transactions, total, limit, offset, has_more}; without it the legacy
+//     bare array is returned so existing consumers keep working.
+func GetTransactions(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+	userID := params.Get("user_id")
+	if userID == "" {
+		http.Error(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	hh := db.ResolveHouseholdID(dbClient.Conn, userID)
+
+	// Build WHERE incrementally; arg() registers a value and returns its
+	// placeholder so filter order can change without renumbering.
+	args := []interface{}{}
+	arg := func(v interface{}) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	var where string
+	if hh == "" {
+		where = fmt.Sprintf("t.household_id IS NULL AND t.user_id = %s", arg(userID))
+	} else {
+		hhP := arg(hh)
+		userP := arg(userID)
+		where = fmt.Sprintf(`(t.user_id = %s
+			OR t.household_id::text = %s
+			OR (t.household_id IS NOT NULL AND t.user_id IN (
+			    SELECT hm.user_id FROM household_members hm
+			    LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id
+			        AND (sp.household_id::text = %s OR sp.household_id IS NULL)
+			    WHERE hm.household_id::text = %s
+			      AND hm.user_id != %s
+			      AND COALESCE(sp.share_transactions, true) = true
+			)))`, userP, hhP, hhP, hhP, userP)
+	}
+
+	if q := strings.TrimSpace(params.Get("q")); q != "" {
+		p := arg("%" + q + "%")
+		where += fmt.Sprintf(` AND (t.note ILIKE %s
+			OR COALESCE(c.name, t.category_name) ILIKE %s
+			OR t.source ILIKE %s
+			OR t.amount::text LIKE %s)`, p, p, p, p)
+	}
+	if txType := params.Get("type"); txType == "income" || txType == "expense" || txType == "transfer" {
+		where += " AND t.type = " + arg(txType)
+	}
+	if catID := params.Get("category_id"); catID != "" {
+		where += " AND t.category_id::text = " + arg(catID)
+	}
+	if u := params.Get("uncategorized"); u == "1" || u == "true" {
+		where += " AND t.category_id IS NULL"
+	}
+	if day := params.Get("date"); day != "" {
+		// Dates are stored at UTC midnight, so the UTC date part IS the
+		// calendar day the transaction belongs to.
+		where += " AND (t.date AT TIME ZONE 'UTC')::date = " + arg(day) + "::date"
+	}
+
+	fromWhere := `
+		FROM transactions t
+		LEFT JOIN categories c ON t.category_id = c.id
+		WHERE ` + where
+
+	// Stable ordering — required for pagination, harmless for the legacy path.
+	listQuery := "SELECT " + transactionSelectCols + fromWhere + " ORDER BY t.date DESC, t.id DESC"
+
+	limitStr := params.Get("limit")
+	if limitStr == "" {
+		// Legacy path: full array, no envelope.
+		rows, err := dbClient.Query(listQuery, args...)
+		if err != nil {
+			log.Printf("GetTransactions query error: %v", err)
+			http.Error(w, "Database query error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		transactions, err := scanTransactions(rows)
+		if err != nil {
+			log.Printf("GetTransactions scan error: %v", err)
+			http.Error(w, "Failed to scan row", http.StatusInternalServerError)
+			return
+		}
+		if transactions == nil {
+			transactions = []models.Transaction{}
+		}
+		json.NewEncoder(w).Encode(transactions)
+		return
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset, _ := strconv.Atoi(params.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Count + income/expense sums over the FULL filtered set — the client only
+	// holds the loaded pages, so it can't derive these itself.
+	var total int
+	var sumIncome, sumExpense float64
+	if err := dbClient.QueryRow(`SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount END), 0),
+		COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount END), 0)`+fromWhere, args...).
+		Scan(&total, &sumIncome, &sumExpense); err != nil {
+		log.Printf("GetTransactions count error: %v", err)
+		http.Error(w, "Database query error", http.StatusInternalServerError)
+		return
+	}
+
+	rows, err := dbClient.Query(fmt.Sprintf("%s LIMIT %d OFFSET %d", listQuery, limit, offset), args...)
+	if err != nil {
+		log.Printf("GetTransactions query error: %v", err)
+		http.Error(w, "Database query error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	transactions, err := scanTransactions(rows)
+	if err != nil {
+		log.Printf("GetTransactions scan error: %v", err)
+		http.Error(w, "Failed to scan row", http.StatusInternalServerError)
+		return
+	}
+	if transactions == nil {
+		transactions = []models.Transaction{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"transactions":  transactions,
+		"total":         total,
+		"total_income":  sumIncome,
+		"total_expense": sumExpense,
+		"limit":         limit,
+		"offset":        offset,
+		"has_more":      offset+len(transactions) < total,
+	})
 }
 
 func UpdateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -583,5 +674,328 @@ func checkBudgetThresholdAfterTransaction(dbClient db.DBTX, budgetID, householdI
 	SendHouseholdNotification(householdID, "", title, body, map[string]string{
 		"screen":    "/(tabs)/budget",
 		"budget_id": budgetID,
+	})
+}
+
+// setTransactionCategoryRequest is the body for PATCH /auth/transactions/{id}/category.
+type setTransactionCategoryRequest struct {
+	UserID     string `json:"user_id"`
+	CategoryID string `json:"category_id"`
+}
+
+// SetTransactionCategory assigns a category to a single transaction and marks
+// it verified. It is a lightweight alternative to UpdateTransaction (which
+// requires the full transaction body) for the common "pick a category" action.
+// PATCH /auth/transactions/{id}/category
+func SetTransactionCategory(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "Missing transaction ID", http.StatusBadRequest)
+		return
+	}
+
+	var req setTransactionCategoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+	if req.CategoryID == "" {
+		validationError(w, "Category ID is required")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "transactions", id, req.UserID) {
+		return
+	}
+
+	// Assign the category and mark verified — same semantics as
+	// UpdateTransaction when a category is set. The join to categories both
+	// resolves the name and validates the category exists. RETURNING also
+	// yields the normalized merchant, which drives the learning step below.
+	var categoryName string
+	var merchantNorm sql.NullString
+	err = dbClient.QueryRow(`
+		UPDATE transactions t
+		SET category_id = $1,
+		    category_name = c.name,
+		    user_verified = true,
+		    match_confidence = 'exact',
+		    updated_at = NOW()
+		FROM categories c
+		WHERE t.id = $2 AND c.id = $1
+		RETURNING c.name, t.merchant_normalized
+	`, req.CategoryID, id).Scan(&categoryName, &merchantNorm)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Transaction or category not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("SetTransactionCategory update error: %v", err)
+		http.Error(w, "Failed to update transaction category", http.StatusInternalServerError)
+		return
+	}
+
+	// Learn from the edit: turn this choice into a merchant rule (shared with
+	// the household), then re-apply it to the user's other unverified
+	// transactions from the same merchant. Verified transactions are left
+	// untouched — the user already decided those.
+	learned := false
+	retroCount := 0
+	if merchantNorm.Valid && merchantNorm.String != "" {
+		var householdID *string
+		if hh := db.ResolveHouseholdID(dbClient.Conn, req.UserID); hh != "" {
+			householdID = &hh
+		}
+		upsertMerchantRule(dbClient, req.UserID, householdID, merchantNorm.String, req.CategoryID, false)
+		learned = true
+
+		res, rerr := dbClient.Exec(`
+			UPDATE transactions
+			SET category_id = $1, category_name = $2, match_confidence = 'exact',
+			    user_verified = true, updated_at = NOW()
+			WHERE user_id = $3 AND merchant_normalized = $4
+			  AND COALESCE(user_verified, false) = false
+		`, req.CategoryID, categoryName, req.UserID, merchantNorm.String)
+		if rerr != nil {
+			log.Printf("SetTransactionCategory retroactive update: %v", rerr)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			retroCount = int(n)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                id,
+		"category_id":       req.CategoryID,
+		"category_name":     categoryName,
+		"user_verified":     true,
+		"learned":           learned,
+		"retroactive_count": retroCount,
+	})
+}
+
+// RecategorizeTransactions re-runs merchant normalization and the category
+// resolver over the caller's existing bank-synced transactions. It is the
+// one-time backfill for the categorization rework: merchant_normalized is
+// (re)written for every bank transaction, and the category is re-resolved only
+// for transactions the user has not verified — user choices are never
+// overwritten.
+// POST /auth/transactions/recategorize
+func RecategorizeTransactions(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID, _ = getUserIDFromRequest(r)
+	}
+	if userID == "" {
+		http.Error(w, "Missing user ID", http.StatusUnauthorized)
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	hhID := db.ResolveHouseholdID(dbClient.Conn, userID)
+
+	rows, err := dbClient.Query(`
+		SELECT id, COALESCE(note, ''), COALESCE(user_verified, false)
+		FROM transactions
+		WHERE user_id = $1 AND source IN `+bankSourcesSQL+`
+	`, userID)
+	if err != nil {
+		log.Printf("recategorize: query error: %v", err)
+		http.Error(w, "Failed to load transactions", http.StatusInternalServerError)
+		return
+	}
+
+	type txRow struct {
+		id       string
+		note     string
+		verified bool
+	}
+	var txs []txRow
+	for rows.Next() {
+		var t txRow
+		if err := rows.Scan(&t.id, &t.note, &t.verified); err == nil {
+			txs = append(txs, t)
+		}
+	}
+	rows.Close()
+
+	normalized, recategorized := 0, 0
+	for _, t := range txs {
+		merchant := categories.NormalizeMerchant(t.note, "")
+
+		var merchantArg interface{}
+		if merchant != "" {
+			merchantArg = merchant
+		}
+		if _, err := dbClient.Exec(
+			`UPDATE transactions SET merchant_normalized = $1 WHERE id = $2`,
+			merchantArg, t.id); err != nil {
+			log.Printf("recategorize: set merchant for %s: %v", t.id, err)
+			continue
+		}
+		normalized++
+
+		// Never overwrite a category the user verified.
+		if t.verified || merchant == "" {
+			continue
+		}
+		catID, conf, ruleID, resolveErr := categories.ResolveCategory(dbClient.Conn, userID, hhID, merchant, nil)
+		if resolveErr != nil || catID == "" {
+			continue
+		}
+		var confArg, ruleArg interface{}
+		if conf != "" {
+			confArg = conf
+		}
+		if ruleID != nil {
+			ruleArg = *ruleID
+		}
+		// An exact match is a user-created/confirmed rule — mark it verified.
+		verified := conf == "exact"
+		if _, err := dbClient.Exec(`
+			UPDATE transactions
+			SET category_id = $1, match_confidence = $2, matched_rule_id = $3,
+			    user_verified = $4, updated_at = NOW()
+			WHERE id = $5 AND COALESCE(user_verified, false) = false
+		`, catID, confArg, ruleArg, verified, t.id); err != nil {
+			log.Printf("recategorize: update category for %s: %v", t.id, err)
+			continue
+		}
+		recategorized++
+	}
+
+	log.Printf("recategorize: user=%s normalized=%d recategorized=%d", userID, normalized, recategorized)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{
+		"normalized":    normalized,
+		"recategorized": recategorized,
+	})
+}
+
+// verifyTransactionRequest is the body for PATCH /auth/transactions/{id}/verify.
+type verifyTransactionRequest struct {
+	UserID string `json:"user_id"`
+}
+
+// VerifyTransaction marks a transaction's category as user-confirmed. It backs
+// the review screen's confirm / confirm-all actions — a lightweight alternative
+// to UpdateTransaction, which requires the full transaction body.
+// PATCH /auth/transactions/{id}/verify
+func VerifyTransaction(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "Missing transaction ID", http.StatusBadRequest)
+		return
+	}
+
+	var req verifyTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	if !ownershipCheck(w, dbClient.Conn, "transactions", id, req.UserID) {
+		return
+	}
+
+	res, err := dbClient.Exec(`
+		UPDATE transactions SET user_verified = true, updated_at = NOW()
+		WHERE id = $1 AND category_id IS NOT NULL
+	`, id)
+	if err != nil {
+		log.Printf("VerifyTransaction error: %v", err)
+		http.Error(w, "Failed to verify transaction", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Row exists (ownership already checked) — it must be uncategorized.
+		http.Error(w, "Assign a category before confirming this transaction", http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "user_verified": true})
+}
+
+// VerifyTransactionsBatch marks many transactions verified in ONE request —
+// "Confirm all" used to fire a request per transaction and trip the rate
+// limiter on large review queues. Only rows owned by the calling user are
+// touched (ownership enforced in the UPDATE's WHERE, not per-id round trips).
+// PATCH /auth/transactions/verify-batch  {"user_id": "...", "transaction_ids": ["..."]}
+func VerifyTransactionsBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID         string   `json:"user_id"`
+		TransactionIDs []string `json:"transaction_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserID == "" {
+		validationError(w, "User ID is required")
+		return
+	}
+	if len(req.TransactionIDs) == 0 {
+		validationError(w, "transaction_ids is required")
+		return
+	}
+	if len(req.TransactionIDs) > 2000 {
+		validationError(w, "too many transaction_ids (max 2000)")
+		return
+	}
+
+	dbClient, err := db.New()
+	if err != nil {
+		http.Error(w, "DB connection error", http.StatusInternalServerError)
+		return
+	}
+	defer dbClient.Close()
+
+	// Uncategorized rows are skipped: "verified" asserts the categorization is
+	// correct, which is meaningless without one — and blanket-confirming them
+	// permanently hides them from AI categorization.
+	res, err := dbClient.Exec(`
+		UPDATE transactions SET user_verified = true, updated_at = NOW()
+		WHERE user_id = $1 AND id = ANY($2) AND category_id IS NOT NULL
+	`, req.UserID, pq.Array(req.TransactionIDs))
+	if err != nil {
+		log.Printf("VerifyTransactionsBatch error: %v", err)
+		http.Error(w, "Failed to verify transactions", http.StatusInternalServerError)
+		return
+	}
+	verified, _ := res.RowsAffected()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"requested": len(req.TransactionIDs),
+		"verified":  verified,
 	})
 }

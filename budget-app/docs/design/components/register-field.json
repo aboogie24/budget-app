@@ -1,0 +1,43 @@
+{
+  "componentName": "RegisterField",
+  "description": "A single glassmorphic form input row for the register screen: leading icon + bare TextInput + optional eye toggle + optional inline error marker. Reused for all four fields (name, email, password, confirm).",
+  "platform": "react-native",
+  "props": {
+    "icon": { "type": "string", "required": true, "description": "Ionicons name for the leading glyph (person-outline, mail-outline, lock-closed-outline)" },
+    "value": { "type": "string", "required": true, "description": "Controlled input value" },
+    "onChangeText": { "type": "function", "required": true, "description": "Change handler" },
+    "placeholder": { "type": "string", "required": true, "description": "Placeholder shown in colors.textDark" },
+    "accessibilityLabel": { "type": "string", "required": true, "description": "Explicit SR label (placeholder alone is insufficient)" },
+    "secure": { "type": "boolean", "default": false, "description": "When true, masks input and renders an eye visibility toggle" },
+    "error": { "type": "string", "default": null, "description": "When set, renders trailing alert-circle, error border tint, and helper text below" },
+    "disabled": { "type": "boolean", "default": false, "description": "Dims to 0.5 and blocks input during submit" }
+  },
+  "variants": ["text", "email", "secure"],
+  "states": ["default", "focused", "error", "disabled"],
+  "tokens": {
+    "surface": "glassEffects.glass",
+    "border": "colors.borderGlass",
+    "borderFocused": "colors.primary2 @40%",
+    "borderError": "colors.error",
+    "radius": "radius.md",
+    "padding": "spacing.md",
+    "iconGap": "spacing.sm",
+    "marginBottom": "spacing.md",
+    "leadingIcon": "colors.textMuted",
+    "inputText": "colors.text + typography.body",
+    "placeholder": "colors.textDark",
+    "eyeIcon": "colors.textMuted",
+    "eyeIconActive": "colors.primary2"
+  },
+  "layout": {
+    "flexDirection": "row",
+    "alignItems": "center",
+    "eyeToggleTouchTarget": 44
+  },
+  "accessibility": {
+    "role": "none",
+    "label": "{accessibilityLabel}",
+    "eyeToggleLabel": "Show password | Hide password",
+    "errorAnnouncement": "conveyed via helper word + alert-circle icon, not color alone"
+  }
+}

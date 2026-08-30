@@ -2,14 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   Alert,
   ScrollView,
-  Modal,
   ActivityIndicator,
-  Switch,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,7 +15,27 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../utils/apiClient';
 import GradientBackground from '@/components/GradientBackground';
 import { ErrorState } from '@/components/ErrorState';
-import { colors, spacing, glassEffects, typography, gradients } from '@/utils/design-system';
+import { Skeleton } from '@/components/Skeleton';
+import {
+  colors,
+  spacing,
+  radius,
+  glassEffects,
+  typography,
+  gradients,
+  commonStyles,
+  getValueColor,
+} from '@/utils/design-system';
+import { BackButton } from '@/components/BackButton';
+import {
+  FormSheet,
+  FormField,
+  FormInput,
+  AmountInput,
+  FormSwitchRow,
+  FormButton,
+} from '@/components/form';
+import { successHaptic, errorHaptic } from '@/utils/haptics';
 
 type Property = {
   id: string;
@@ -45,11 +62,28 @@ type Debt = {
   balance: number;
 };
 
+// Tinted chip fills derived from tokens (≈12% / ≈16% / ≈8%).
+const tint = {
+  primary12: `${colors.primary2}1f`,
+  primary16: `${colors.primary2}29`,
+  primary8: `${colors.primary2}14`,
+  primary70: `${colors.primary2}b3`,
+  primary40: `${colors.primary2}66`,
+  primary29: `${colors.primary2}29`,
+  error12: `${colors.error}1f`,
+  error66: `${colors.error}66`,
+  info12: `${colors.info}1f`,
+  info8: `${colors.info}14`,
+  info29: `${colors.info}29`,
+};
+
 export default function PropertiesScreen() {
   const router = useRouter();
   const [properties, setProperties] = useState<Property[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Property | null>(null);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -64,9 +98,18 @@ export default function PropertiesScreen() {
   const [debtAccountId, setDebtAccountId] = useState<string | null>(null);
   const [isShared, setIsShared] = useState(true);
 
+  // Inline validation state
+  const [addressTouched, setAddressTouched] = useState(false);
+  const [cityTouched, setCityTouched] = useState(false);
+  const [stateTouched, setStateTouched] = useState(false);
+  const [zipTouched, setZipTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const loadData = useCallback(async () => {
     try {
       setError(null);
+      setRefreshing(true);
       const userId = await api.getUserId();
       if (!userId) return;
       const [propsData, debtsData] = await Promise.all([
@@ -80,6 +123,8 @@ export default function PropertiesScreen() {
       setError('Failed to load properties');
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
+      setRefreshing(false);
     }
   }, []);
 
@@ -96,6 +141,11 @@ export default function PropertiesScreen() {
     setDebtAccountId(null);
     setIsShared(true);
     setEditing(null);
+    setAddressTouched(false);
+    setCityTouched(false);
+    setStateTouched(false);
+    setZipTouched(false);
+    setSaveError(null);
   };
 
   const openEdit = (p: Property) => {
@@ -110,17 +160,35 @@ export default function PropertiesScreen() {
     setShowForm(true);
   };
 
+  const openAdd = () => {
+    resetForm();
+    setShowForm(true);
+  };
+
+  // Derived validity — the save CTA gates on this.
+  const addressValid = streetAddress.trim().length > 0;
+  const cityValid = city.trim().length > 0;
+  const stateValid = state.trim().length > 0;
+  const zipValid = zipCode.trim().length > 0;
+  const isPropertyFormValid = addressValid && cityValid && stateValid && zipValid;
+
   const handleSave = async () => {
-    if (!streetAddress.trim() || !city.trim() || !state.trim() || !zipCode.trim()) {
-      Alert.alert('Validation', 'Address, city, state, and zip are required.');
+    if (!isPropertyFormValid || saving) {
+      setAddressTouched(true);
+      setCityTouched(true);
+      setStateTouched(true);
+      setZipTouched(true);
       return;
     }
 
     const userId = await api.getUserId();
     if (!userId) {
-      Alert.alert('Error', 'No user session found.');
+      setSaveError('No user session found.');
       return;
     }
+
+    setSaving(true);
+    setSaveError(null);
 
     const payload = {
       user_id: userId,
@@ -139,12 +207,16 @@ export default function PropertiesScreen() {
       } else {
         await api.post('/auth/properties', payload);
       }
+      successHaptic();
       setShowForm(false);
       resetForm();
       loadData();
     } catch (e) {
       console.error('Save property error:', e);
-      Alert.alert('Error', 'Failed to save property.');
+      errorHaptic();
+      setSaveError('Failed to save property. Try again.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -158,9 +230,16 @@ export default function PropertiesScreen() {
           try {
             const userId = await api.getUserId();
             await api.delete(`/auth/properties/${p.id}?user_id=${userId}`);
+            successHaptic();
+            // Deleting the property that's open in the editor closes the sheet.
+            if (editing?.id === p.id) {
+              setShowForm(false);
+              resetForm();
+            }
             loadData();
           } catch (e) {
             console.error('Delete error:', e);
+            errorHaptic();
             Alert.alert('Error', 'Failed to delete property.');
           }
         },
@@ -192,6 +271,11 @@ export default function PropertiesScreen() {
     const mortgage = p.debt_balance || 0;
     return sum + (val - mortgage);
   }, 0);
+  const equityPercent = totalValue > 0 ? Math.round((totalEquity / totalValue) * 100) : null;
+  const mortgageTotal = Math.max(0, totalValue - totalEquity);
+  // Equity share of value (0..1) for the ownership bar; guard divide-by-zero.
+  const equityShare =
+    totalValue > 0 ? Math.max(0, Math.min(1, totalEquity / totalValue)) : 1;
 
   const timeAgo = (dateStr?: string | null) => {
     if (!dateStr) return '';
@@ -203,359 +287,631 @@ export default function PropertiesScreen() {
     return `${days}d ago`;
   };
 
+  const showSkeleton = loading && !loadedOnce;
+
+  // ── Portfolio headline (the ONE floating block) ──
+  const renderHeadline = () => {
+    if (properties.length === 0) return null;
+    const equityLabel =
+      equityPercent != null
+        ? `Total equity ${fmt(totalEquity)}, ${equityPercent} percent owned`
+        : `Total equity ${fmt(totalEquity)}`;
+    return (
+      <View
+        style={styles.headline}
+        accessible
+        accessibilityLabel={`Portfolio: ${properties.length} ${
+          properties.length === 1 ? 'home' : 'homes'
+        }. Total value ${fmt(totalValue)}. ${equityLabel}.`}
+      >
+        <View style={styles.headlineLabelRow}>
+          <Text style={styles.sectionLabel}>Portfolio</Text>
+          <View style={styles.countPill}>
+            <Text style={styles.countPillText}>
+              {properties.length} {properties.length === 1 ? 'home' : 'homes'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.headlineValues}>
+          <View style={styles.headlineCol}>
+            <Text style={styles.valueColLabel}>Total value</Text>
+            <Text style={styles.heroValue}>{fmt(totalValue)}</Text>
+          </View>
+          <View style={[styles.headlineCol, { alignItems: 'flex-end' }]}>
+            <Text style={styles.valueColLabel}>Total equity</Text>
+            <Text style={[styles.heroValue, { color: colors.primary2 }]}>{fmt(totalEquity)}</Text>
+            {equityPercent != null && (
+              <Text style={styles.equityShareText}>{equityPercent}% owned</Text>
+            )}
+          </View>
+        </View>
+
+        {equityPercent != null && (
+          <>
+            <View style={styles.ownershipBar}>
+              <View
+                style={[
+                  styles.ownershipEquity,
+                  { flex: Math.max(equityShare, 0.001) },
+                ]}
+              />
+              {mortgageTotal > 0 && (
+                <View
+                  style={[
+                    styles.ownershipMortgage,
+                    { flex: Math.max(1 - equityShare, 0.001) },
+                  ]}
+                />
+              )}
+            </View>
+            <View style={styles.legendRow}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendSwatch, { backgroundColor: colors.primary2 }]} />
+                <Text style={styles.legendText}>equity</Text>
+              </View>
+              {mortgageTotal > 0 && (
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendSwatch, { backgroundColor: tint.error66 }]} />
+                  <Text style={styles.legendText}>mortgage</Text>
+                </View>
+              )}
+            </View>
+          </>
+        )}
+      </View>
+    );
+  };
+
+  // ── Property card (the list row) ──
+  const renderPropertyCard = (p: Property) => {
+    const val = effectiveValue(p);
+    const mortgage = p.debt_balance || 0;
+    const hasMortgage = !!p.debt_name;
+    const equity = val - mortgage;
+    const isZestimate = !p.manual_value && !!p.zestimate;
+    const zAge = timeAgo(p.last_fetched_at);
+
+    const a11y =
+      `${p.street_address}, ${p.city} ${p.state}. Value ${fmt(val)}, ${
+        isZestimate ? 'Zestimate' : 'Manual'
+      }.` +
+      (hasMortgage ? ` Mortgage ${p.debt_name} ${fmt(mortgage)}.` : '') +
+      ` Equity ${equity < 0 ? '-' : ''}${fmt(Math.abs(equity))}.` +
+      (p.is_shared ? ' Shared with partner.' : '');
+
+    return (
+      <TouchableOpacity
+        key={p.id}
+        style={styles.card}
+        onPress={() => openEdit(p)}
+        activeOpacity={0.7}
+        accessibilityLabel={a11y}
+        accessibilityHint="Double tap to edit."
+      >
+        {/* Header row */}
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={styles.homeIcon}>
+              <Ionicons name="home" size={18} color={colors.primary2} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {p.street_address}
+              </Text>
+              <Text style={styles.cardAddress} numberOfLines={1}>
+                {p.city}, {p.state} {p.zip_code}
+              </Text>
+            </View>
+          </View>
+          {p.is_shared && (
+            <View style={styles.sharedChip}>
+              <Ionicons name="contrast-outline" size={11} color={colors.primary2} />
+              <Text style={styles.sharedChipText}>Shared</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Value section */}
+        <View style={styles.valueSection}>
+          <View style={styles.valueRow}>
+            <Text style={styles.valueLabel}>Value</Text>
+            <View style={styles.valueRight}>
+              <Text style={styles.valueAmount}>{fmt(val)}</Text>
+              {isZestimate ? (
+                <View style={[styles.provChip, { backgroundColor: tint.info12 }]}>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={12}
+                    color={colors.textMuted}
+                  />
+                  <Text style={styles.provChipText}>
+                    Zestimate{zAge ? ` · ${zAge}` : ''}
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.provChip, { backgroundColor: colors.glassLight }]}>
+                  <Ionicons name="create-outline" size={12} color={colors.textMuted} />
+                  <Text style={styles.provChipText}>Manual</Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          {hasMortgage && (
+            <View style={styles.valueRow}>
+              <Text style={styles.valueLabel} numberOfLines={1}>
+                Mortgage ({p.debt_name})
+              </Text>
+              <Text style={[styles.valueAmount, styles.noShrink, { color: colors.error }]}>
+                -{fmt(mortgage)}
+              </Text>
+            </View>
+          )}
+
+          {hasMortgage && <View style={commonStyles.divider} />}
+
+          <View style={styles.valueRow}>
+            <Text style={styles.equityLabel}>Equity</Text>
+            <Text style={[styles.equityValue, styles.noShrink, { color: getValueColor(equity) }]}>
+              {equity < 0 ? '-' : ''}
+              {fmt(Math.abs(equity))}
+            </Text>
+          </View>
+        </View>
+
+        {/* Actions */}
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            style={[styles.actionPill, { backgroundColor: tint.primary12 }]}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handleRefresh(p);
+            }}
+            disabled={refreshingId === p.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Refresh value for ${p.street_address}`}
+          >
+            {refreshingId === p.id ? (
+              <ActivityIndicator size="small" color={colors.primary2} />
+            ) : (
+              <>
+                <Ionicons name="refresh-outline" size={16} color={colors.primary2} />
+                <Text style={[styles.actionText, { color: colors.primary2 }]}>Refresh</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionPill, { backgroundColor: tint.error12 }]}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handleDelete(p);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${p.street_address}`}
+          >
+            <Ionicons name="trash-outline" size={16} color={colors.error} />
+            <Text style={[styles.actionText, { color: colors.error }]}>Delete</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderEmpty = () => (
+    <View style={styles.emptyState}>
+      <Ionicons name="home-outline" size={48} color={colors.textDark} />
+      <Text style={styles.emptyText}>No properties tracked yet</Text>
+      <Text style={styles.emptySubtext}>
+        Add your first home to track its value and equity
+      </Text>
+      <TouchableOpacity style={styles.emptyCta} onPress={openAdd} accessibilityRole="button">
+        <LinearGradient
+          colors={[...gradients.primaryGradient]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.emptyCtaInner}
+        >
+          <Text style={styles.emptyCtaText}>Add a property</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderLoadingSkeleton = () => (
+    <View style={{ gap: spacing.lg }}>
+      <Skeleton height={132} borderRadius={radius.xl} />
+      <Skeleton width={120} height={12} borderRadius={radius.sm} />
+      <View style={{ gap: spacing.md }}>
+        <Skeleton height={168} borderRadius={radius.lg} />
+        <Skeleton height={168} borderRadius={radius.lg} />
+      </View>
+    </View>
+  );
+
   return (
     <GradientBackground variant="bgDarkPurple">
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => router.navigate('/(tabs)/goals' as any)} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color={colors.text} />
-            </TouchableOpacity>
+        {/* Header */}
+        <View style={styles.header}>
+          <BackButton fallback="/(tabs)/goals" color={colors.text} />
+          <View style={styles.titleWrap}>
             <Text style={styles.headerTitle}>Properties</Text>
+          </View>
+          <View style={styles.headerRight}>
+            {loadedOnce && refreshing && (
+              <ActivityIndicator color={colors.primary2} size="small" />
+            )}
             <TouchableOpacity
-              onPress={() => {
-                resetForm();
-                setShowForm(true);
-              }}
+              style={styles.iconBtn}
+              onPress={openAdd}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Add property"
             >
-              <Ionicons name="add-circle" size={28} color={colors.primary2} />
+              <Ionicons name="add" size={22} color={colors.primary2} />
             </TouchableOpacity>
           </View>
+        </View>
 
-          {/* Error state */}
-          {error && (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {error ? (
             <ErrorState
-              title="Error"
+              title="Couldn't load your properties"
               message={error}
+              retryLabel="Retry"
               onRetry={loadData}
               onDismiss={() => setError(null)}
             />
+          ) : showSkeleton ? (
+            renderLoadingSkeleton()
+          ) : properties.length === 0 ? (
+            renderEmpty()
+          ) : (
+            <>
+              {renderHeadline()}
+              <Text style={[styles.sectionLabel, styles.listLabel]}>Your properties</Text>
+              {properties.map(renderPropertyCard)}
+            </>
           )}
-
-          {/* Summary card */}
-          {!error && properties.length > 0 && (
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <View>
-                  <Text style={styles.summaryLabel}>Total Value</Text>
-                  <Text style={styles.summaryValue}>{fmt(totalValue)}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.summaryLabel}>Total Equity</Text>
-                  <Text style={[styles.summaryValue, { color: colors.primary2 }]}>{fmt(totalEquity)}</Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          {!error && loading ? (
-            <ActivityIndicator color={colors.primary2} style={{ marginTop: 40 }} />
-          ) : !error && properties.length === 0 && !loading ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="home-outline" size={48} color={colors.textDark} />
-              <Text style={styles.emptyText}>No properties tracked yet</Text>
-              <Text style={styles.emptySubtext}>Tap + to add your first property</Text>
-            </View>
-          ) : !error ? (
-            properties.map((p) => {
-              const val = effectiveValue(p);
-              const mortgage = p.debt_balance || 0;
-              const equity = val - mortgage;
-              const isZestimate = !p.manual_value && p.zestimate;
-
-              return (
-                <TouchableOpacity key={p.id} style={styles.card} onPress={() => openEdit(p)}>
-                  <View style={styles.cardHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                      <View style={styles.homeIcon}>
-                        <Ionicons name="home" size={18} color={colors.primary2} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.cardTitle} numberOfLines={1}>{p.street_address}</Text>
-                        <Text style={styles.cardAddress}>{p.city}, {p.state} {p.zip_code}</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.valueSection}>
-                    <View style={styles.valueRow}>
-                      <Text style={styles.valueLabel}>Value</Text>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={styles.valueAmount}>{fmt(val)}</Text>
-                        {isZestimate && (
-                          <Text style={styles.valueSource}>Zestimate {timeAgo(p.last_fetched_at) ? `· ${timeAgo(p.last_fetched_at)}` : ''}</Text>
-                        )}
-                        {p.manual_value != null && p.manual_value > 0 && (
-                          <Text style={styles.valueSource}>Manual</Text>
-                        )}
-                      </View>
-                    </View>
-
-                    {p.debt_name && (
-                      <View style={styles.valueRow}>
-                        <Text style={styles.valueLabel}>Mortgage ({p.debt_name})</Text>
-                        <Text style={[styles.valueAmount, { color: colors.error }]}>-{fmt(mortgage)}</Text>
-                      </View>
-                    )}
-
-                    {p.debt_name && (
-                      <>
-                        <View style={styles.equityDivider} />
-                        <View style={styles.valueRow}>
-                          <Text style={styles.equityLabel}>Equity</Text>
-                          <Text style={[styles.equityValue, { color: equity >= 0 ? colors.success : colors.error }]}>
-                            {equity < 0 ? '-' : ''}{fmt(Math.abs(equity))}
-                          </Text>
-                        </View>
-                      </>
-                    )}
-                  </View>
-
-                  <View style={styles.cardActions}>
-                    <TouchableOpacity
-                      style={styles.refreshBtn}
-                      onPress={(e) => {
-                        e.stopPropagation?.();
-                        handleRefresh(p);
-                      }}
-                      disabled={refreshingId === p.id}
-                    >
-                      {refreshingId === p.id ? (
-                        <ActivityIndicator size="small" color={colors.primary2} />
-                      ) : (
-                        <>
-                          <Ionicons name="refresh-outline" size={14} color={colors.primary2} />
-                          <Text style={styles.refreshBtnText}>Refresh</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={(e) => {
-                        e.stopPropagation?.();
-                        handleDelete(p);
-                      }}
-                    >
-                      <Ionicons name="trash-outline" size={14} color={colors.error} />
-                      <Text style={styles.deleteBtnText}>Delete</Text>
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
-              );
-            })
-          ) : null}
         </ScrollView>
 
-        {/* Add/Edit Modal */}
-        <Modal visible={showForm} animationType="slide" transparent>
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalContent}>
-              <ScrollView>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    {editing ? 'Edit Property' : 'Add Property'}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowForm(false);
-                      resetForm();
-                    }}
-                  >
-                    <Ionicons name="close" size={24} color={colors.textMuted} />
-                  </TouchableOpacity>
+        {/* Add/Edit Property Sheet */}
+        <FormSheet
+          visible={showForm}
+          title={editing ? 'Edit Property' : 'Add Property'}
+          onClose={() => {
+            setShowForm(false);
+            resetForm();
+          }}
+          footer={
+            <>
+              {saveError ? (
+                <View style={styles.formErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Text style={styles.formErrorText}>{saveError}</Text>
                 </View>
-
-                <Text style={styles.label}>Street Address</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="123 Main Street"
-                  placeholderTextColor={colors.textMuted}
-                  value={streetAddress}
-                  onChangeText={setStreetAddress}
+              ) : null}
+              <FormButton
+                label={editing ? 'Update Property' : 'Add Property'}
+                onPress={handleSave}
+                disabled={!isPropertyFormValid}
+                loading={saving}
+              />
+              {editing ? (
+                <FormButton
+                  label="Delete Property"
+                  variant="destructive"
+                  onPress={() => handleDelete(editing)}
                 />
+              ) : null}
+            </>
+          }
+        >
+          <FormField
+            label="Street Address"
+            error={addressTouched && !addressValid ? 'Street address is required' : null}
+          >
+            <FormInput
+              icon="home-outline"
+              placeholder="123 Main Street"
+              value={streetAddress}
+              onChangeText={setStreetAddress}
+              onBlur={() => setAddressTouched(true)}
+              error={addressTouched && !addressValid}
+              accessibilityLabel="Street Address"
+            />
+          </FormField>
 
-                <Text style={styles.label}>City</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Brooklyn"
-                  placeholderTextColor={colors.textMuted}
-                  value={city}
-                  onChangeText={setCity}
+          <FormField label="City" error={cityTouched && !cityValid ? 'City is required' : null}>
+            <FormInput
+              icon="business-outline"
+              placeholder="Brooklyn"
+              value={city}
+              onChangeText={setCity}
+              onBlur={() => setCityTouched(true)}
+              error={cityTouched && !cityValid}
+              accessibilityLabel="City"
+            />
+          </FormField>
+
+          <View style={{ flexDirection: 'row', gap: spacing.md }}>
+            <View style={{ flex: 1 }}>
+              <FormField
+                label="State"
+                error={stateTouched && !stateValid ? 'Required' : null}
+              >
+                <FormInput
+                  placeholder="NY"
+                  value={state}
+                  onChangeText={setState}
+                  onBlur={() => setStateTouched(true)}
+                  error={stateTouched && !stateValid}
+                  maxLength={2}
+                  autoCapitalize="characters"
+                  accessibilityLabel="State"
                 />
-
-                <View style={{ flexDirection: 'row', gap: 12 }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.label}>State</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="NY"
-                      placeholderTextColor={colors.textMuted}
-                      value={state}
-                      onChangeText={setState}
-                      maxLength={2}
-                      autoCapitalize="characters"
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.label}>ZIP Code</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="11201"
-                      placeholderTextColor={colors.textMuted}
-                      value={zipCode}
-                      onChangeText={setZipCode}
-                      keyboardType="numeric"
-                      maxLength={5}
-                    />
-                  </View>
-                </View>
-
-                <Text style={styles.label}>Manual Value (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Override Zestimate"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  value={manualValue}
-                  onChangeText={setManualValue}
+              </FormField>
+            </View>
+            <View style={{ flex: 1 }}>
+              <FormField label="ZIP Code" error={zipTouched && !zipValid ? 'Required' : null}>
+                <FormInput
+                  placeholder="11201"
+                  value={zipCode}
+                  onChangeText={setZipCode}
+                  onBlur={() => setZipTouched(true)}
+                  error={zipTouched && !zipValid}
+                  keyboardType="number-pad"
+                  maxLength={5}
+                  accessibilityLabel="ZIP Code"
                 />
-
-                <Text style={styles.label}>Link Mortgage</Text>
-                <View style={styles.mortgagePicker}>
-                  <TouchableOpacity
-                    style={[styles.mortgageOption, !debtAccountId && styles.mortgageOptionActive]}
-                    onPress={() => setDebtAccountId(null)}
-                  >
-                    <Text style={[styles.mortgageText, !debtAccountId && styles.mortgageTextActive]}>None</Text>
-                  </TouchableOpacity>
-                  {debts.map((d) => (
-                    <TouchableOpacity
-                      key={d.id}
-                      style={[styles.mortgageOption, debtAccountId === d.id && styles.mortgageOptionActive]}
-                      onPress={() => setDebtAccountId(d.id)}
-                    >
-                      <Text style={[styles.mortgageText, debtAccountId === d.id && styles.mortgageTextActive]} numberOfLines={1}>
-                        {d.name} ({fmt(d.balance)})
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <View style={styles.sharedToggle}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.sharedLabel}>Share with partner</Text>
-                    <Text style={styles.sharedDesc}>Visible to your household partner</Text>
-                  </View>
-                  <Switch
-                    value={isShared}
-                    onValueChange={setIsShared}
-                    trackColor={{ false: colors.glassLight, true: 'rgba(168,85,247,0.4)' }}
-                    thumbColor={isShared ? colors.accent : colors.textDark}
-                  />
-                </View>
-
-                {!editing && (
-                  <View style={styles.infoCard}>
-                    <Ionicons name="information-circle-outline" size={16} color={colors.primary2} />
-                    <Text style={styles.infoText}>
-                      We'll automatically look up the Zestimate from Zillow when you save.
-                    </Text>
-                  </View>
-                )}
-
-                <TouchableOpacity onPress={handleSave} style={styles.saveBtn}>
-                  <LinearGradient
-                    colors={[...gradients.primaryGradient]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.saveBtnInner}
-                  >
-                    <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Property'}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </ScrollView>
+              </FormField>
             </View>
           </View>
-        </Modal>
+
+          <FormField label="Manual Value" optional>
+            <AmountInput
+              compact
+              value={manualValue}
+              onChangeText={setManualValue}
+              placeholder="Override Zestimate"
+              accessibilityLabel="Manual Value"
+            />
+          </FormField>
+
+          <FormField label="Link Mortgage" optional>
+            <View style={styles.mortgagePicker}>
+              <TouchableOpacity
+                style={[styles.mortgageOption, !debtAccountId && styles.mortgageOptionActive]}
+                onPress={() => setDebtAccountId(null)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: !debtAccountId }}
+              >
+                <Text style={[styles.mortgageText, !debtAccountId && styles.mortgageTextActive]}>
+                  None
+                </Text>
+              </TouchableOpacity>
+              {debts.map((d) => (
+                <TouchableOpacity
+                  key={d.id}
+                  style={[
+                    styles.mortgageOption,
+                    debtAccountId === d.id && styles.mortgageOptionActive,
+                  ]}
+                  onPress={() => setDebtAccountId(d.id)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: debtAccountId === d.id }}
+                >
+                  <Text
+                    style={[
+                      styles.mortgageText,
+                      debtAccountId === d.id && styles.mortgageTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {d.name} ({fmt(d.balance)})
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </FormField>
+
+          <FormSwitchRow
+            label="Share with partner"
+            sublabel="Visible to your household partner"
+            value={isShared}
+            onValueChange={setIsShared}
+          />
+
+          {!editing && (
+            <View style={styles.infoCard}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.primary2} />
+              <Text style={styles.infoText}>
+                We'll automatically look up the Zestimate from Zillow when you save.
+              </Text>
+            </View>
+          )}
+        </FormSheet>
       </SafeAreaView>
     </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContent: {
-    padding: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: 120,
-  },
-  headerRow: {
+  // ── Header ──
+  header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  titleWrap: {
+    flex: 1,
+    alignItems: 'center',
   },
   headerTitle: {
     color: colors.text,
-    fontSize: 20,
-    fontWeight: '800',
+    ...typography.h3,
   },
-  iconButton: {
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  iconBtn: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassLight,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
   },
-  summaryCard: {
-    ...glassEffects.glass,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
+
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xxxl + spacing.xxl,
   },
-  summaryRow: {
+
+  // ── Section labels ──
+  sectionLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  listLabel: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+
+  // ── Portfolio headline ──
+  headline: {
+    ...glassEffects.glassFloating,
+    padding: spacing.xl,
+    borderRadius: radius.xl,
+  },
+  headlineLabelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  summaryLabel: {
+  countPill: {
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  countPillText: {
     color: colors.textMuted,
     ...typography.caption,
   },
-  summaryValue: {
+  headlineValues: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+  },
+  headlineCol: {
+    flex: 1,
+  },
+  valueColLabel: {
+    color: colors.textMuted,
+    ...typography.caption,
+    marginBottom: spacing.xs,
+  },
+  heroValue: {
     color: colors.text,
-    fontSize: 18,
-    fontWeight: '800',
+    ...typography.h2,
+  },
+  equityShareText: {
+    color: colors.success,
+    ...typography.caption,
     marginTop: spacing.xs,
   },
+  ownershipBar: {
+    flexDirection: 'row',
+    height: 8,
+    borderRadius: radius.full,
+    overflow: 'hidden',
+    marginTop: spacing.lg,
+    backgroundColor: colors.glassLight,
+  },
+  ownershipEquity: {
+    backgroundColor: colors.primary2,
+  },
+  ownershipMortgage: {
+    backgroundColor: tint.error66,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  legendSwatch: {
+    width: 8,
+    height: 8,
+    borderRadius: radius.full,
+  },
+  legendText: {
+    color: colors.textMuted,
+    ...typography.caption,
+  },
+
+  // ── Property card ──
   card: {
-    ...glassEffects.glass,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
+    ...commonStyles.card,
+    borderRadius: radius.lg,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  cardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    flex: 1,
+  },
   homeIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(167,139,250,0.15)',
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: tint.primary12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cardTitle: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 15,
+    ...typography.smallBold,
   },
   cardAddress: {
     color: colors.textMuted,
     ...typography.caption,
     marginTop: 2,
+  },
+  sharedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: tint.primary12,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginLeft: spacing.sm,
+  },
+  sharedChipText: {
+    color: colors.primary2,
+    ...typography.caption,
   },
   valueSection: { marginTop: spacing.md },
   valueRow: {
@@ -563,68 +919,64 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: spacing.xs,
+    gap: spacing.sm,
   },
   valueLabel: {
     color: colors.textMuted,
-    fontSize: 13,
+    ...typography.small,
+    flexShrink: 1,
+  },
+  valueRight: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
   },
   valueAmount: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 15,
+    ...typography.smallBold,
   },
-  valueSource: {
-    color: colors.textDark,
-    fontSize: 11,
-    marginTop: 1,
+  noShrink: {
+    flexShrink: 0,
   },
-  equityDivider: {
-    height: 1,
-    backgroundColor: colors.borderLight,
-    marginVertical: 6,
+  provChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  provChipText: {
+    color: colors.textMuted,
+    ...typography.caption,
   },
   equityLabel: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 13,
+    ...typography.smallBold,
   },
   equityValue: {
-    fontWeight: '800',
-    fontSize: 16,
+    ...typography.bodyBold,
   },
   cardActions: {
     flexDirection: 'row',
     gap: spacing.sm,
     marginTop: spacing.md,
   },
-  refreshBtn: {
+  actionPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(167,139,250,0.12)',
-    borderRadius: 10,
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    minHeight: 44,
+    minWidth: 104,
   },
-  refreshBtnText: {
-    color: colors.primary2,
-    fontWeight: '700',
-    fontSize: 13,
+  actionText: {
+    ...typography.smallBold,
   },
-  deleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(248,113,113,0.12)',
-    borderRadius: 10,
-  },
-  deleteBtnText: {
-    color: colors.error,
-    fontWeight: '700',
-    fontSize: 13,
-  },
+
+  // ── Empty state ──
   emptyState: {
     alignItems: 'center',
     marginTop: 60,
@@ -632,52 +984,40 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     color: colors.text,
-    fontWeight: '700',
-    fontSize: 16,
+    ...typography.bodyBold,
   },
   emptySubtext: {
     color: colors.textMuted,
-    fontSize: 13,
+    ...typography.small,
+    textAlign: 'center',
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
+  emptyCta: {
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    marginTop: spacing.lg,
   },
-  modalContent: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: '85%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  emptyCtaInner: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    justifyContent: 'center',
   },
-  modalTitle: {
+  emptyCtaText: {
     color: colors.text,
-    fontSize: 18,
-    fontWeight: '800',
+    ...typography.button,
   },
-  label: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 6,
-    marginTop: spacing.md,
+
+  // ── Form sheet extras ──
+  formErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingBottom: spacing.xs,
   },
-  input: {
-    backgroundColor: colors.glassLight,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    fontSize: 15,
+  formErrorText: {
+    flex: 1,
+    ...typography.caption,
+    color: colors.error,
   },
   mortgagePicker: {
     flexDirection: 'row',
@@ -687,45 +1027,26 @@ const styles = StyleSheet.create({
   },
   mortgageOption: {
     paddingVertical: spacing.sm,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
     backgroundColor: colors.glassLight,
     borderWidth: 1,
     borderColor: colors.borderGlass,
     maxWidth: '100%',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   mortgageOptionActive: {
-    backgroundColor: 'rgba(168,85,247,0.18)',
-    borderColor: 'rgba(168,85,247,0.7)',
+    backgroundColor: tint.primary16,
+    borderColor: tint.primary70,
   },
   mortgageText: {
     color: colors.text,
-    fontSize: 13,
+    ...typography.small,
   },
   mortgageTextActive: {
     color: colors.text,
-    fontWeight: '700',
-  },
-  sharedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    backgroundColor: 'rgba(96,165,250,0.06)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.15)',
-  },
-  sharedLabel: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  sharedDesc: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 2,
+    ...typography.smallBold,
   },
   infoCard: {
     flexDirection: 'row',
@@ -733,31 +1054,14 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginTop: spacing.lg,
     padding: spacing.md,
-    backgroundColor: 'rgba(167,139,250,0.08)',
-    borderRadius: 12,
+    backgroundColor: tint.primary8,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: 'rgba(167,139,250,0.15)',
+    borderColor: tint.primary29,
   },
   infoText: {
     color: colors.textMuted,
     ...typography.caption,
     flex: 1,
-  },
-  saveBtn: {
-    borderRadius: 14,
-    overflow: 'hidden',
-    marginTop: 20,
-    marginBottom: 20,
-  },
-  saveBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.lg,
-  },
-  saveBtnText: {
-    color: colors.text,
-    fontWeight: '800',
-    fontSize: 16,
   },
 });

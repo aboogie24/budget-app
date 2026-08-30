@@ -1,0 +1,44 @@
+{
+  "componentName": "SharingMasterRow",
+  "description": "Top summary/master control for the Sharing Preferences screen. Reads the derived all-on/custom state and offers a single bulk toggle-all action. Replaces the bespoke quickToggle. Tokenized against design-system.ts; visually consistent with SettingsRow.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/sharing-preferences-redesign.md#5.1",
+  "props": {
+    "allOn": { "type": "boolean", "required": true, "description": "Object.values(prefs).every(Boolean)" },
+    "partnerName": { "type": "string", "required": false, "description": "Partner first name, used in the all-on subtitle" },
+    "onToggleAll": { "type": "function", "required": true, "description": "(on: boolean) => void — calls existing toggleAll(!allOn)" },
+    "loading": { "type": "boolean", "default": false, "description": "Renders the master-row skeleton" }
+  },
+  "variants": ["allOn", "custom", "loading"],
+  "states": ["default", "pressed", "loading"],
+  "layout": {
+    "card": { "surface": "glassEffects.glass", "radius": "radius.lg", "padding": "spacing.lg", "marginBottom": "spacing.md", "flexDirection": "row", "alignItems": "center" },
+    "iconChip": { "size": 34, "radius": "radius.md", "fill": "${colors.primary2}1a", "iconColor": "colors.primary2", "iconSize": 18, "iconAllOn": "people-circle-outline", "iconCustom": "options-outline" },
+    "leftGap": "spacing.md",
+    "actionButton": { "paddingHorizontal": "spacing.md", "paddingVertical": "spacing.sm", "radius": "radius.md", "minTarget": 44, "flexShrink": 0 }
+  },
+  "content": {
+    "title": { "type": "typography.smallBold", "color": "colors.text", "text": "allOn ? 'Sharing everything' : 'Custom sharing'" },
+    "subtitle": { "type": "typography.caption", "color": "colors.textMuted", "text": "allOn ? '{partnerName} sees all shared categories' : \"You've hidden some categories\"" }
+  },
+  "actionVariants": {
+    "allOn": { "label": "Turn off", "fill": "colors.glassMedium", "textColor": "colors.textMuted", "type": "typography.caption" },
+    "custom": { "label": "Turn all on", "fill": "${colors.primary2}26", "border": "${colors.primary2}40", "textColor": "colors.primary2", "type": "typography.caption" }
+  },
+  "skeleton": {
+    "component": "components/Skeleton.tsx",
+    "recipe": "Skeleton 34x34 radius.md (chip) + flex1 line (60%) + Skeleton 72x32 radius.md (action pill)"
+  },
+  "tokens": {
+    "colors": ["primary2", "text", "textMuted", "glassMedium", "borderGlass"],
+    "typography": ["smallBold", "caption"],
+    "spacing": ["lg", "md", "sm"],
+    "radius": ["lg", "md"]
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{title}, {actionLabel}",
+    "target": "action button >= 44pt via hitSlop",
+    "colorIndependence": "state is stated in words ('Sharing everything' / 'Custom sharing'), not color-only"
+  }
+}

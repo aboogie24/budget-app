@@ -1,0 +1,43 @@
+{
+  "componentName": "LinkAccountProviderRow",
+  "description": "A selectable provider option (Plaid / Flinks / Teller) inside the 'Choose a provider' glass card. Behaves as a radio option; replaces the three bespoke providerCard blocks.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "provider": { "type": "'plaid' | 'flinks' | 'teller'", "required": true, "description": "Provider slug; drives icon + color" },
+    "title": { "type": "string", "required": true, "description": "Display name, e.g. 'Plaid'" },
+    "description": { "type": "string", "required": true, "description": "Coverage line, e.g. '12,000+ US institutions'" },
+    "features": { "type": "string[]", "required": false, "description": "Up to 2 short feature bullets" },
+    "selected": { "type": "boolean", "default": false, "description": "Whether this is the chosen provider" },
+    "disabled": { "type": "boolean", "default": false, "description": "Non-interactive while a connection is in flight" },
+    "onPress": { "type": "function", "required": true, "description": "Select this provider" }
+  },
+  "variants": ["plaid", "flinks", "teller"],
+  "states": ["default", "selected", "disabled"],
+  "layout": {
+    "minHeight": 44,
+    "paddingVertical": "spacing.md",
+    "gap": "spacing.md",
+    "iconChip": { "size": 40, "radius": "radius.md" },
+    "radio": { "size": 24 },
+    "divider": "colors.borderLight (1px between rows)"
+  },
+  "tokens": {
+    "container": "inside one glassEffects.glass card labeled 'CHOOSE A PROVIDER'",
+    "selectedRowTint": "${colors.primary2}0f",
+    "iconChipFill": "${providerColor}1f",
+    "providerColor": { "plaid": "colors.info", "flinks": "colors.success", "teller": "colors.warning" },
+    "providerIcon": { "plaid": "shield-checkmark-outline", "flinks": "globe-outline", "teller": "business-outline" },
+    "title": "typography.smallBold + colors.text",
+    "description": "typography.caption + colors.textMuted",
+    "radioSelected": "checkmark-circle (colors.primary2)",
+    "radioUnselected": "ellipse-outline (colors.textMuted)",
+    "feature": "checkmark (14, colors.textMuted) + typography.caption colors.textMuted"
+  },
+  "accessibility": {
+    "role": "radio",
+    "state": { "selected": "{selected}", "disabled": "{disabled}" },
+    "label": "{title}, {description}",
+    "touchTarget": "minHeight 44"
+  }
+}

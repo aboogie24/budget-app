@@ -1,0 +1,43 @@
+{
+  "componentName": "HouseholdHeadlineCard",
+  "description": "Tier-1 centerpiece for the Partner Dashboard: household name + member count and the combined net cash flow as one hero number. The only card that floats and the only card using typography.h1.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "householdName": { "type": "string", "required": true, "description": "Household display name; numberOfLines=1 + ellipsis" },
+    "memberCount": { "type": "number", "required": true, "description": "Household member count; shown in the member badge" },
+    "netCashFlow": { "type": "number", "required": true, "description": "Combined net cash flow (total_income - total_expenses); the hero number" },
+    "totalIncome": { "type": "number", "required": true, "description": "Combined income; drives the 'in' half of the sub-caption" },
+    "totalExpenses": { "type": "number", "required": true, "description": "Combined expenses; drives the 'out' half of the sub-caption" },
+    "members": { "type": "array", "required": false, "description": "Up to 2 members for partner chips: [{ name, slot: 'A'|'B' }]; omitted -> chips hidden" },
+    "mode": { "type": "string", "required": false, "default": "populated", "description": "populated | empty (onboarding/new-household voice with CTA instead of hero)" },
+    "onLinkAccount": { "type": "function", "required": false, "description": "CTA handler used only in empty mode" }
+  },
+  "variants": ["populated", "empty", "solo"],
+  "states": ["default", "loading", "overflow"],
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "heroMinHeightReserve": true
+  },
+  "tokens": {
+    "title": "typography.h3 / colors.text",
+    "contextLabel": "typography.caption / colors.textMuted",
+    "hero": "typography.h1 / getValueColor(netCashFlow), prefix +/-",
+    "subCaption": "typography.caption / colors.textMuted",
+    "memberBadgeFill": "`${colors.primary2}1a`",
+    "memberBadgeIcon": "colors.primary2 (people)",
+    "partnerChipA": "colors.primary2 (glyph ◑)",
+    "partnerChipB": "colors.info (glyph ◐)",
+    "emptyChip": "colors.info + information-circle icon, word SET UP",
+    "cta": "gradients.primaryGradient / radius.lg"
+  },
+  "accessibility": {
+    "role": "summary",
+    "label": "{householdName}, {memberCount} members. Together this month, combined cash flow {sign} {amount}. {income} in, {expenses} out.",
+    "touchTargets": "member badge and CTA >= 44x44pt",
+    "colorIndependent": "hero uses +/- prefix; empty uses icon + word SET UP (never color alone)",
+    "reducedMotion": "no essential motion; any draw-in uses animation.fast, instant under reduce-motion"
+  }
+}

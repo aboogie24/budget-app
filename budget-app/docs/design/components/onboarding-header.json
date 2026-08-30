@@ -1,0 +1,31 @@
+{
+  "componentName": "OnboardingHeader",
+  "description": "Standard header for onboarding steps 1-3 (step 0 has none): step-internal BackButton, centered title, optional Skip. Replaces the bespoke bottom chevron nav + 'Step N of 4' counter.",
+  "platform": "react-native",
+  "props": {
+    "title": { "type": "string", "required": true, "description": "Short step title (e.g. 'Invite Partner', 'Link a Bank', 'Your CoupleFlow Journey')" },
+    "showBack": { "type": "boolean", "required": true, "description": "Render the BackButton (false on the finish step if desired; absent entirely on step 0)" },
+    "onBack": { "type": "function", "required": true, "description": "Decrements currentStep — passed to BackButton's onPress so it drives the step machine, NOT router navigation" },
+    "onSkip": { "type": "function", "required": false, "description": "When present, renders a right-aligned Skip text button (steps 1 & 2)" }
+  },
+  "variants": ["with-skip", "no-skip"],
+  "states": ["default"],
+  "layout": {
+    "flexDirection": "row",
+    "justify": "space-between",
+    "align": "center",
+    "paddingHorizontal": "spacing.lg",
+    "marginBottom": "spacing.lg",
+    "spacerWidth": "match BackButton width (40) when no skip, to keep title centered"
+  },
+  "tokens": {
+    "backButton": "shared components/BackButton.tsx (pass onPress=onBack)",
+    "title": "typography.bodyBold / colors.text",
+    "skip": "typography.smallBold / colors.primary2"
+  },
+  "accessibility": {
+    "backTarget": "40pt + hitSlop",
+    "skipTarget": "44pt + hitSlop",
+    "title": "numberOfLines=1"
+  }
+}

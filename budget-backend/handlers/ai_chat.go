@@ -12,6 +12,7 @@ import (
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/ai"
 	"github.com/aboogie/budget-backend/models"
+	"github.com/gofrs/uuid"
 	"github.com/gorilla/mux"
 )
 
@@ -371,18 +372,40 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 		&ctxData.BudgetCount,
 	)
 
-	systemPrompt := ai.SystemPrompt
+	// Static blocks first (persona, then the app manual) so the prompt prefix
+	// stays byte-identical across requests and prompt caching keeps working;
+	// dynamic context and memories append after.
+	systemPrompt := ai.SystemPrompt + "\n\n" + ai.AppGuide
 	contextBlock := ai.BuildContextBlock(ctxData)
 	if contextBlock != "" {
 		systemPrompt += "\n\n" + contextBlock
 	}
 
-	// Build Claude request
+	// Inject what the advisor remembers about this couple (shared facts + the
+	// current user's private facts — never the partner's private facts).
+	if mems, memErr := ai.LoadAdvisorMemories(conn.Raw(), userID, householdID); memErr != nil {
+		log.Printf("load advisor memories error: %v", memErr)
+	} else if memBlock := ai.BuildMemoryBlock(mems); memBlock != "" {
+		systemPrompt += "\n\n" + memBlock
+	}
+
+	// Approval outcomes happen outside chat turns — tell the model what the
+	// user approved/declined so it doesn't re-queue or misreport actions.
+	if outcomes := ai.BuildActionOutcomesBlock(conn.Raw(), userID, convoID); outcomes != "" {
+		systemPrompt += "\n\n" + outcomes
+	}
+
+	// Build Claude request. Model defaults to ai.ChatModel (Opus 4.8) in the
+	// client. Adaptive thinking + high effort buys the deeper, couple-aware
+	// reasoning the advisor is for; "summarized" display keeps the raw chain of
+	// thought private while still letting us surface progress later.
 	claudeReq := models.ClaudeRequest{
-		MaxTokens: 4096,
-		System:    systemPrompt,
-		Messages:  messages,
-		Tools:     ai.GetToolDefinitions(),
+		MaxTokens:    4096,
+		System:       systemPrompt,
+		Messages:     messages,
+		Tools:        ai.GetToolDefinitions(),
+		Thinking:     &models.ClaudeThinking{Type: "adaptive", Display: "summarized"},
+		OutputConfig: &models.ClaudeOutputConfig{Effort: "high"},
 	}
 
 	// Set up SSE streaming
@@ -441,13 +464,43 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		// Execute each tool and build the tool_result message
+		// Execute each tool and build the tool_result message. Mutating tools
+		// are NOT executed here: they're queued as pending actions the user
+		// approves or declines via a card in the chat UI — conversational
+		// consent alone is not an audit trail. The card is pushed to the
+		// client immediately over the same SSE stream.
 		var toolResults []map[string]interface{}
 		for _, tc := range result.ToolCalls {
-			toolResult, toolErr := ai.ExecuteTool(conn.Raw(), userID, householdID, tc.Name, tc.Input)
-			if toolErr != nil {
-				log.Printf("tool %s error: %v", tc.Name, toolErr)
-				toolResult = fmt.Sprintf(`{"error": "%s"}`, toolErr.Error())
+			var toolResult string
+			if ai.MutatingTools[tc.Name] {
+				actionID := uuid.Must(uuid.NewV4()).String()
+				summary := ai.SummarizeAction(tc.Name, tc.Input)
+				if _, aerr := conn.Exec(`
+					INSERT INTO ai_pending_actions (id, user_id, conversation_id, tool_name, tool_input, summary)
+					VALUES ($1, $2, $3, $4, $5, $6)
+				`, actionID, userID, convoID, tc.Name, string(tc.Input), summary); aerr != nil {
+					log.Printf("queue pending action %s: %v", tc.Name, aerr)
+					toolResult = `{"error": "could not queue the action for approval"}`
+				} else {
+					pendingMsg, _ := json.Marshal(map[string]string{
+						"type":      "pending_action",
+						"action_id": actionID,
+						"tool_name": tc.Name,
+						"summary":   summary,
+					})
+					fmt.Fprintf(w, "data: %s\n\n", pendingMsg)
+					flusher.Flush()
+					toolResult = fmt.Sprintf(
+						`{"status": "pending_approval", "action_id": "%s", "summary": %q, "note": "An approval card was shown to the user. Tell them what it will do and that nothing happens until they tap Approve. Do NOT claim the action is done."}`,
+						actionID, summary)
+				}
+			} else {
+				var toolErr error
+				toolResult, toolErr = ai.ExecuteTool(conn.Raw(), userID, householdID, tc.Name, tc.Input)
+				if toolErr != nil {
+					log.Printf("tool %s error: %v", tc.Name, toolErr)
+					toolResult = fmt.Sprintf(`{"error": "%s"}`, toolErr.Error())
+				}
 			}
 			toolResults = append(toolResults, map[string]interface{}{
 				"type":       "tool_result",

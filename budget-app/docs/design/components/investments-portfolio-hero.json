@@ -1,0 +1,33 @@
+{
+  "componentName": "InvestmentsPortfolioHero",
+  "description": "Tier-1 centerpiece card: total portfolio value + gain/loss + return %, plus invested/last-synced footer. The only card on the screen that floats and uses h1.",
+  "platform": "react-native",
+  "props": {
+    "totalValue": { "type": "number", "required": true, "description": "Sum of institution_value across holdings" },
+    "totalGain": { "type": "number", "required": true, "description": "totalValue - totalCostBasis" },
+    "gainPercent": { "type": "number|null", "required": true, "description": "All-time return %; null when totalCostBasis <= 0" },
+    "totalCostBasis": { "type": "number", "required": true, "description": "Sum of cost_basis; drives the 'Invested' footer + return-omission guard" },
+    "lastSyncedLabel": { "type": "string", "required": false, "description": "Relative time from max price_as_of, e.g. '2h ago'; omit footer segment if absent" },
+    "estimated": { "type": "boolean", "default": false, "description": "True when some holdings lack cost basis, so return % is partial; renders an 'est.' marker" },
+    "loading": { "type": "boolean", "default": false, "description": "Renders self-contained skeleton (value bar + delta + divider + caption)" }
+  },
+  "variants": ["gain", "loss", "no-cost-basis"],
+  "states": ["default", "loading"],
+  "layout": {
+    "surface": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "divider": "commonStyles.divider"
+  },
+  "tokens": {
+    "label": "typography.caption / colors.textMuted",
+    "heroNumber": "typography.h1 / colors.text",
+    "gainLine": "typography.smallBold / getValueColor(totalGain)",
+    "footer": "typography.caption / colors.textMuted"
+  },
+  "colorIndependence": "Gain/loss encoded by arrow (up/down) + sign (+/-) + color; never color alone.",
+  "accessibility": {
+    "role": "summary",
+    "label": "Total portfolio value {totalValue}, {up|down} {totalGain}, {up|down} {gainPercent} percent all time. Invested {totalCostBasis}. Synced {lastSyncedLabel}."
+  }
+}

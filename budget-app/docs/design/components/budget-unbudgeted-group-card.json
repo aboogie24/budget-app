@@ -1,0 +1,73 @@
+{
+  "componentName": "UnbudgetedGroupCard",
+  "description": "A flat glass card for one parent category with unbudgeted spending. Shows the category icon+name, transaction count, a 'No budget' status pill, the group total, an optional aligned subcategory breakdown, and a full-width Create Budget CTA.",
+  "platform": "react-native",
+  "screen": "budget/unbudgeted",
+  "surface": "glassEffects.glass",
+  "props": {
+    "id": { "type": "string", "required": true, "description": "Parent category id (used as prefill_category_id)." },
+    "name": { "type": "string", "required": true, "description": "Parent category display name." },
+    "color": { "type": "string", "required": true, "description": "Data-driven category hex color. DOCUMENTED EXCEPTION to the no-hex rule (like AttentionCard item.color). Used at 12% for the icon chip fill and full for the icon." },
+    "total": { "type": "number", "required": true, "description": "Sum of all unbudgeted spend in this group, dollars." },
+    "transactionCount": { "type": "number", "required": true, "description": "Total transactions across subcategories." },
+    "subcategories": { "type": "array", "required": true, "description": "{ id, name, total, count }[]. Sub-rows render only when length > 1." },
+    "onCreateBudget": { "type": "function", "required": true, "description": "router.push('/budget/add-budget', { prefill_category_id: id, prefill_name: name })." }
+  },
+  "variants": ["multiSubcategory", "singleSubcategory"],
+  "variantNotes": {
+    "multiSubcategory": "subcategories.length > 1: render divider + aligned sub-rows between header and CTA.",
+    "singleSubcategory": "subcategories.length <= 1: header row goes straight to CTA, no divider/sub-rows (compact)."
+  },
+  "states": ["default", "pressed", "loading"],
+  "stateNotes": {
+    "pressed": "Only the CTA reacts (activeOpacity / scale animation.fast); card body is not tappable.",
+    "loading": "Skeleton variant: 40x40 chip + 120x14 + 80x12 + 64x16 amount + full-width 40h CTA bar (see spec 3.2)."
+  },
+  "layout": {
+    "padding": "spacing.lg",
+    "borderRadius": "radius.lg",
+    "marginBottom": "spacing.md",
+    "iconChip": { "size": 40, "borderRadius": "radius.md", "fillOpacity": "12% of color" },
+    "headerGap": "spacing.md",
+    "subRowPaddingVertical": "spacing.sm",
+    "cta": { "marginTop": "spacing.md", "paddingVertical": "spacing.md", "borderRadius": "radius.md", "minHeight": 44 }
+  },
+  "elements": {
+    "iconChip": { "icon": { "name": "pricetag", "size": 18, "color": "color" }, "fill": "`${color}1f`" },
+    "name": { "typography": "bodyBold", "color": "colors.text", "numberOfLines": 1 },
+    "meta": { "text": "{transactionCount} transactions", "typography": "caption", "color": "colors.textMuted" },
+    "noBudgetPill": {
+      "icon": { "name": "alert-circle", "size": 12, "color": "colors.warning" },
+      "text": "No budget",
+      "typography": "caption",
+      "color": "colors.warning",
+      "fill": "`${colors.warning}1f`",
+      "borderRadius": "radius.full",
+      "paddingHorizontal": "spacing.sm"
+    },
+    "amount": { "text": "formatCurrency(total)", "typography": "bodyBold", "color": "colors.text", "flexShrink": 0 },
+    "divider": { "style": "commonStyles.divider", "color": "colors.borderLight", "onlyIf": "subcategories.length > 1" },
+    "subRow": {
+      "name": { "typography": "small", "color": "colors.textMuted", "numberOfLines": 1, "flex": 1 },
+      "countAmount": { "text": "{count} · {formatCurrency(total)}", "countStyle": { "typography": "caption", "color": "colors.textDark" }, "amountStyle": { "typography": "smallBold", "color": "colors.textMuted" }, "flexShrink": 0 }
+    },
+    "cta": {
+      "icon": { "name": "add-circle", "size": 16, "color": "colors.primary2" },
+      "text": "Create budget",
+      "typography": "smallBold",
+      "textColor": "colors.primary2",
+      "fill": "`${colors.primary2}1f`",
+      "border": "`${colors.primary2}33`"
+    }
+  },
+  "tokensUsed": ["glassEffects.glass", "commonStyles.divider", "spacing.lg", "spacing.md", "spacing.sm", "radius.lg", "radius.md", "radius.full", "typography.bodyBold", "typography.small", "typography.smallBold", "typography.caption", "colors.text", "colors.textMuted", "colors.textDark", "colors.warning", "colors.primary2", "colors.borderLight"],
+  "removedFromOriginal": ["ASCII tree glyphs ├─/└─ (decorative, SR noise)", "6px subDot color dot (redundant with parent chip)"],
+  "accessibility": {
+    "role": "group",
+    "label": "{name}, {formatCurrency(total)}, {transactionCount} transactions, no budget.",
+    "ctaRole": "button",
+    "ctaHint": "Creates a budget for {name}",
+    "target": "CTA >= 44x44pt",
+    "colorIndependent": "'No budget' pill = alert-circle icon + word + warning color together."
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "componentName": "PayoffLeversCard",
+  "description": "The inputs group ('YOUR LEVERS') for the payoff calculator: a strategy segmented picker, an extra-monthly-payment input with preset chips, and a selectable debt list. Flat glass (subordinate to the floating headline). Every change re-derives the headline live.",
+  "platform": "react-native",
+  "sourceOfTruthTokens": "budget-app/utils/design-system.ts",
+  "props": {
+    "strategy": { "type": "'avalanche' | 'snowball' | 'custom'", "required": true, "description": "Current strategy" },
+    "onStrategyChange": { "type": "function", "required": true, "description": "(Strategy) => void" },
+    "extraPayment": { "type": "number", "required": true, "description": "Extra monthly payment, clamped >= 0" },
+    "onExtraPaymentChange": { "type": "function", "required": true, "description": "(number) => void" },
+    "presets": { "type": "number[]", "required": true, "description": "EXTRA_PRESETS = [0,100,250,500,1000,2000]" },
+    "debts": { "type": "Debt[]", "required": true, "description": "Active debts (balance > 0)" },
+    "selectedIds": { "type": "Set<string>", "required": true, "description": "Currently included debt ids" },
+    "onToggleDebt": { "type": "function", "required": true, "description": "(id: string) => void" },
+    "onToggleAll": { "type": "function", "required": true, "description": "Select-all / deselect-all" },
+    "allSelected": { "type": "boolean", "required": true, "description": "Drives the All/None button label" }
+  },
+  "states": ["default", "loading", "zeroSelectedWarning"],
+  "layout": {
+    "surface": "glassEffects.glass",
+    "radius": "radius.lg",
+    "padding": "spacing.lg",
+    "groupDivider": "commonStyles.divider",
+    "groupOrder": ["Strategy", "Extra monthly payment", "Debts included"]
+  },
+  "subcomponents": {
+    "strategySegment": {
+      "role": "radiogroup",
+      "layout": "3 equal segments, gap spacing.sm, radius.md, minHeight 56 (>=44 target)",
+      "active": "fill colors.primary; label typography.smallBold colors.text; desc typography.caption colors.text@85; checkmark glyph",
+      "inactive": "glassEffects.glass fill; label colors.textMuted; desc colors.textDark",
+      "options": [
+        { "key": "avalanche", "label": "Avalanche", "desc": "Highest APR" },
+        { "key": "snowball", "label": "Snowball", "desc": "Lowest bal" },
+        { "key": "custom", "label": "Custom", "desc": "Your order" }
+      ],
+      "pressScale": "animation.fast (instant under reduce-motion)"
+    },
+    "extraPaymentInput": {
+      "input": "typography.h2 colors.primary2, centered, '$' affix colors.textMuted, keyboardType numeric, placeholder '$0' colors.textMuted, clamp >=0",
+      "presetChip": {
+        "layout": "wrap row, gap spacing.sm, radius.full, padding spacing.sm x spacing.md, >=44 target (hit-slop)",
+        "selected": "fill colors.primary, text typography.smallBold colors.text, checkmark glyph",
+        "unselected": "glassEffects.glass, text colors.textMuted"
+      }
+    },
+    "debtRow": {
+      "role": "checkbox",
+      "layout": "full-width tappable >=44, gap spacing.md, radius.md, border colors.borderGlass",
+      "control": "checkbox (selected colors.primary2) / checkbox-outline (unselected colors.textDark)",
+      "name": "typography.smallBold, selected colors.text / unselected colors.textMuted, numberOfLines 1",
+      "meta": "typography.caption colors.textMuted: '{fmt(balance)} · {apr}% APR', flexShrink 0",
+      "selectedTint": "`${colors.primary}0f`",
+      "header": "label 'Debts included' typography.smallBold + '{selected} of {total}' caption + All/None text button colors.primary2 >=44",
+      "zeroSelectedWarning": "alert-circle-outline colors.warning + 'Select at least one debt to calculate.'"
+    }
+  },
+  "accessibility": {
+    "strategy": "radiogroup; each radio selected state; announces '{label} selected, {desc} first.'",
+    "presetChip": "role button, label 'Extra payment ${val}{, selected}'",
+    "debtRow": "role checkbox, checked state, label '{name}, {balance}, {apr} percent APR{, included}.', hint 'Double tap to include or exclude from payoff.'",
+    "colorIndependence": "all selected states use fill + checkmark/checkbox glyph, not color alone",
+    "contrast": "unselected debt names use colors.textMuted at full opacity (not colors.text dimmed) to clear 4.5:1"
+  },
+  "reuse": ["Skeleton (loading: 3 segment blocks + input block + 3 chips + 3 rows)"],
+  "notes": "Recompute chain unchanged: strategy/extraPayment/selectedIds feed the existing useMemo(computePayoff, [focusedDebts, extraPayment, strategy]). Typing a custom amount naturally deselects all preset chips (none match)."
+}

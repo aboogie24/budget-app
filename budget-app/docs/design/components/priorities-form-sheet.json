@@ -1,0 +1,68 @@
+{
+  "componentName": "PriorityFormSheet",
+  "description": "Bottom-sheet modal for creating or editing a financial priority. Title field (required) + optional multiline Notes field + a primary-gradient CTA. Re-skinned to match the app's standard form-field + CTA treatment (add-transaction / bills forms).",
+  "platform": "react-native",
+  "predicate": "isEdit = editing != null",
+  "props": {
+    "visible": { "type": "boolean", "required": true },
+    "editing": { "type": "Priority | null", "required": true, "description": "when set, sheet is in edit mode and fields prefill" },
+    "title": { "type": "string", "required": true, "description": "controlled title field value" },
+    "notes": { "type": "string", "required": true, "description": "controlled notes field value" },
+    "saving": { "type": "boolean", "default": false, "description": "PUT/POST in flight → CTA disabled + spinner" },
+    "onChangeTitle": { "type": "function", "required": true },
+    "onChangeNotes": { "type": "function", "required": true },
+    "onSave": { "type": "function", "required": true, "description": "validates title required, then POST (create) or PUT (edit)" },
+    "onClose": { "type": "function", "required": true }
+  },
+  "presentation": {
+    "modal": "animationType 'slide', transparent",
+    "backdrop": "rgba(0,0,0,0.6) (standard scrim)",
+    "container": "colors.surface2, borderTopLeftRadius/Right radius.xl, padding spacing.lg",
+    "keyboardAvoidance": "wrap in KeyboardAvoidingView so CTA + notes stay visible while typing"
+  },
+  "header": {
+    "title": { "text": "New Priority | Edit Priority", "typography": "typography.h3", "color": "colors.text" },
+    "close": { "icon": "close", "size": 24, "color": "colors.textMuted", "tapTarget": 44 }
+  },
+  "fields": {
+    "title": {
+      "label": "Title",
+      "placeholder": "e.g. Pay off student loans",
+      "required": true,
+      "field": "glassEffects.glass fill, radius.md, colors.borderGlass border, text colors.text, placeholder colors.textMuted, padding {horizontal spacing.md, vertical spacing.md}"
+    },
+    "notes": {
+      "label": "Notes (optional)",
+      "placeholder": "Why is this important?",
+      "multiline": true,
+      "minHeight": 80,
+      "textAlignVertical": "top",
+      "field": "same as title field"
+    },
+    "labelStyle": "typography.smallBold, colors.textMuted, marginBottom spacing.xs"
+  },
+  "cta": {
+    "label": "Add Priority | Update",
+    "gradient": "gradients.primaryGradient",
+    "start": { "x": 0, "y": 0 },
+    "end": { "x": 1, "y": 1 },
+    "borderRadius": "radius.lg",
+    "paddingVertical": "spacing.lg",
+    "typography": "typography.button",
+    "color": "colors.text",
+    "disabledWhenSaving": true
+  },
+  "validation": {
+    "rule": "title.trim() required",
+    "onFail": "Alert('Validation', 'Title is required.')"
+  },
+  "states": ["create", "edit", "default", "focused-field", "validation-error", "saving"],
+  "accessibility": {
+    "closeLabel": "Close",
+    "titleFieldLabel": "Priority title, required",
+    "notesFieldLabel": "Notes, optional",
+    "ctaLabel": "Add Priority | Update priority",
+    "note": "Sheet focuses the Title field on open; the required field is announced. CTA disabled state is exposed via accessibilityState while saving."
+  },
+  "developerNotes": "Behavior unchanged from current handleSave (POST for create, PUT for edit, rank preserved on edit / length+1 on create, is_shared:false). Replaces bespoke #1a1a2e sheet + #a855f7/#7c3aed CTA with colors.surface2 + gradients.primaryGradient so it matches every other form sheet. Keep the title-required Alert."
+}

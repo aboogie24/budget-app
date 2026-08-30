@@ -1,0 +1,24 @@
+appId: com.github.aboogie.budgetapp
+name: 03-bills-add
+---
+- launchApp
+# Bills lives in the Home hamburger menu.
+- tapOn:
+    id: "menu"
+    optional: true
+- tapOn: "Bills"
+- tapOn: "Add Bill"
+- tapOn: "e.g. Rent, Netflix, Car Payment"
+- inputText: "Maestro Internet"
+- tapOn:
+    text: "0.00"
+    index: 0
+- inputText: "79.99"
+- tapOn: "15"
+- inputText: "12"
+- hideKeyboard
+- tapOn: "Add Bill"
+# The new bill renders in the list and the sheet is gone.
+- extendedWaitUntil:
+    visible: "Maestro Internet"
+    timeout: 15000

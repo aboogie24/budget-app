@@ -1,0 +1,18 @@
+{
+  "componentName": "RuleRowSkeleton",
+  "description": "Loading placeholder matching the RuleRow footprint so the layout doesn't jump when rules load. Built from the shared Skeleton component.",
+  "platform": "react-native",
+  "screen": "settings/category-rules",
+  "reuses": "components/Skeleton.tsx",
+  "props": {},
+  "states": ["loading"],
+  "tokens": {
+    "shell": { "surface": "glassEffects.glass", "radius": "radius.lg", "padding": "spacing.md" },
+    "lineTop": { "component": "Skeleton", "width": "55%", "height": 16 },
+    "lineBottom": { "component": "Skeleton", "width": "35%", "height": 12 },
+    "badgeShell": { "component": "Skeleton", "width": 56, "height": 20, "borderRadius": "radius.sm" },
+    "rowGapVertical": "spacing.xs"
+  },
+  "usage": "Render 3 per skeleton group; render 2 skeleton groups on first load. Do not use ActivityIndicator for screen load.",
+  "accessibility": { "reducedMotion": "Static block (no pulse) when reduce-motion is on" }
+}

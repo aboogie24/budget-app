@@ -1,0 +1,57 @@
+{
+  "componentName": "BillsSummaryHero",
+  "description": "Top-of-screen headline card for the Bills screen. Combines a paid-progress ring with the committed-vs-upcoming money split (Paid solid / Due dashed) and an optional overdue line. Earns elevation (glassFloating), matching the calendar summary header.",
+  "platform": "react-native",
+  "props": {
+    "paidCount": { "type": "number", "required": true },
+    "totalCount": { "type": "number", "required": true },
+    "paidPct": { "type": "number", "required": true, "description": "0-100 for the ring" },
+    "totalDue": { "type": "number", "required": true, "description": "sum of all amount_due /mo" },
+    "paidAmount": { "type": "number", "required": true },
+    "unpaidAmount": { "type": "number", "required": true },
+    "overdueCount": { "type": "number", "required": true },
+    "overdueAmount": { "type": "number", "required": true }
+  },
+  "container": {
+    "style": "glassEffects.glassFloating",
+    "padding": "spacing.xl",
+    "borderRadius": "radius.lg",
+    "marginBottom": "spacing.lg"
+  },
+  "sections": {
+    "ring": {
+      "component": "reuse components/ProgressRing.tsx",
+      "percent": "paidPct",
+      "color": "colors.success",
+      "size": 64,
+      "center": "{paidCount} (typography.bodyBold) over 'of {totalCount}' (typography.caption, colors.textMuted)"
+    },
+    "totalDue": {
+      "label": "TOTAL DUE (typography.caption, colors.textMuted, uppercase, letterSpacing 0.5)",
+      "value": "fmt(totalDue) (typography.h2, colors.text)",
+      "suffix": "/mo (typography.caption, colors.textMuted)"
+    },
+    "split": {
+      "paid": { "swatch": "solid ▆", "value": "fmt(paidAmount)", "color": "colors.success", "label": "Paid" },
+      "due": { "swatch": "dashed ▢", "value": "fmt(unpaidAmount)", "color": "colors.warning", "label": "Due" },
+      "note": "Solid swatch = committed/actual, dashed swatch = upcoming/projection. Same metaphor as calendar."
+    },
+    "overdueLine": {
+      "show": "overdueCount > 0",
+      "icon": "warning-outline, colors.error",
+      "text": "{overdueCount} overdue · {fmt(overdueAmount)}",
+      "color": "colors.error",
+      "note": "icon + word + color — never color-only"
+    }
+  },
+  "states": ["default", "loading-skeleton", "hidden (totalCount === 0 → EmptyState takes over)"],
+  "loadingSkeleton": {
+    "ring": "Skeleton circle 64x64 borderRadius radius.full",
+    "text": "SkeletonStack count 2"
+  },
+  "accessibility": {
+    "role": "summary",
+    "label": "{paidCount} of {totalCount} bills paid. Total due {totalDue} per month. Paid {paidAmount}. Due {unpaidAmount}.{ overdueCount > 0: ' {overdueCount} overdue, {overdueAmount}.'}"
+  },
+  "developerNotes": "Keep paidAmount and unpaidAmount as separate fields end-to-end — never sum before display (guards the committed/projected split). Reuse ProgressRing and Skeleton; do not reimplement."
+}

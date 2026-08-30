@@ -1,0 +1,31 @@
+{
+  "componentName": "PlansSummaryHero",
+  "description": "The plans-list headline card. Leads with total monthly commitment (active plans), then a plan-mix legend + segmented proportion bar, then status counts. The one floating card on the list view.",
+  "platform": "react-native",
+  "props": {
+    "monthlyTotal": { "type": "number", "required": true, "description": "Sum of active plans' monthly_contribution" },
+    "typeTotals": { "type": "Record<'savings'|'debt_payoff'|'combined', number>", "required": true, "description": "Active contribution grouped by plan type — legend + proportion bar" },
+    "activeCount": { "type": "number", "required": true },
+    "draftCount": { "type": "number", "required": true },
+    "completedCount": { "type": "number", "required": true },
+    "partnerGlyphs": { "type": "PartnerGlyph[]", "required": false, "description": "Optional ◑/◐ household glyphs; omit for solo" },
+    "loading": { "type": "boolean", "default": false }
+  },
+  "states": ["default", "loading", "single-type", "empty-hidden"],
+  "tokens": {
+    "container": "glassEffects.glassFloating",
+    "radius": "radius.xl",
+    "padding": "spacing.xl",
+    "groupLabel": "typography.caption / uppercase / letterSpacing 0.6 / colors.textMuted / fontWeight 700",
+    "heroValue": "typography.h2 / colors.text",
+    "legendLabel": "typography.caption",
+    "proportionTrack": "colors.glassMedium / height 6 / radius.full",
+    "proportionSegments": "type color fills (colors.success / colors.error / colors.primary2)",
+    "statusCounts": "typography.caption / colors.textMuted (draft word in colors.warning)"
+  },
+  "notes": "Not rendered in the list empty state. Skip the proportion bar when only one plan type is present (single solid fill). Legend dot color = type token.",
+  "accessibility": {
+    "role": "summary",
+    "label": "Monthly commitment {monthlyTotal}. {activeCount} active, {draftCount} draft, {completedCount} completed."
+  }
+}

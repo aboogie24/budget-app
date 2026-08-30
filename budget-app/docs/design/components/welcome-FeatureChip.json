@@ -1,0 +1,30 @@
+{
+  "componentName": "WelcomeFeatureChip",
+  "description": "A single feature/value pill in the welcome screen's horizontally-scrollable chip row. Preserves the original four chips (Couples-first, Shared goals, Smart insights, Invite-only households) on a glass surface instead of the old low-contrast lavender pill.",
+  "platform": "react-native",
+  "designSystem": {
+    "surface": "glassEffects.glass",
+    "radius": "radius.full",
+    "padding": { "horizontal": "spacing.md", "vertical": "spacing.sm" },
+    "gap": "spacing.sm (between chips)",
+    "label": { "typography": "typography.smallBold", "color": "colors.text" },
+    "microIcon": { "optional": true, "color": "colors.primary2", "note": "leading dot/Ionicon for brand tint without low-contrast text" }
+  },
+  "props": {
+    "label": { "type": "string", "required": true, "description": "Chip text, e.g. 'Couples-first'" },
+    "icon": { "type": "string", "required": false, "description": "Optional leading Ionicons name" }
+  },
+  "list": {
+    "container": "FlatList horizontal, showsHorizontalScrollIndicator false, contentContainerStyle gap spacing.sm",
+    "data": ["Couples-first", "Shared goals", "Smart insights", "Invite-only households"]
+  },
+  "states": ["default", "loading"],
+  "stateTreatments": {
+    "loading": "3 Skeleton pills (radius.full) in place of the row; reuse components/Skeleton.tsx"
+  },
+  "accessibility": {
+    "grouping": "Announce the chip row as one group 'Features: Couples-first, Shared goals, ...' — not four separate SR stops",
+    "touchTarget": "≥44 tall; add hitSlop if visual height is smaller",
+    "overflow": "numberOfLines 1; row scrolls"
+  }
+}

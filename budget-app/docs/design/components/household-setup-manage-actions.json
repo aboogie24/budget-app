@@ -1,0 +1,34 @@
+{
+  "componentName": "ManageActions",
+  "description": "Manage section for an existing household: navigation action rows plus a destructive Leave Household button.",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "props": {
+    "onSharingPreferences": { "type": "function", "required": true, "description": "Navigate to /sharing-preferences" },
+    "onPendingInvites": { "type": "function", "required": true, "description": "Navigate to /pending-invites" },
+    "onLeave": { "type": "function", "required": true, "description": "Leave household (confirm dialog -> Coming soon placeholder)" }
+  },
+  "variants": ["default"],
+  "states": ["default"],
+  "layout": {
+    "card": "glassEffects.glass",
+    "actionRow": { "minHeight": 44, "direction": "row", "align": "center", "gap": "spacing.md", "chevron": { "name": "chevron-forward", "size": 14, "color": "colors.textMuted" } },
+    "rows": [
+      { "label": "Sharing Preferences", "icon": "share-social-outline", "iconColor": "colors.primary2" },
+      { "label": "Your Pending Invites", "icon": "mail-unread-outline", "iconColor": "colors.info" }
+    ],
+    "divider": "commonStyles.divider",
+    "leaveButton": { "icon": "exit-outline", "iconSize": 16, "color": "colors.error", "fill": "${colors.error}1a", "border": "${colors.error}26", "radius": "radius.md", "paddingV": "spacing.md", "minHeight": 44 }
+  },
+  "typography": {
+    "actionLabel": { "style": "typography.smallBold", "color": "colors.text" },
+    "leaveText": { "style": "typography.smallBold", "weight": "700", "color": "colors.error" }
+  },
+  "accessibility": {
+    "actionRole": "button",
+    "leaveRole": "button",
+    "leaveLabel": "Leave household",
+    "note": "Leave keeps its destructive confirmation dialog",
+    "touchTarget": "each row >=44pt tall"
+  }
+}

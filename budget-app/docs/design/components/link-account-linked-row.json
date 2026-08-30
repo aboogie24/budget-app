@@ -1,0 +1,47 @@
+{
+  "componentName": "LinkAccountLinkedRow",
+  "description": "A single linked bank account row in the 'Linked Accounts' glass card: institution, provider badge, linked date OR reconnect-needed status, and unlink / reconnect actions. Implements the shared RecentActivity/AccountRow list-row contract.",
+  "platform": "react-native",
+  "sourceOfTruth": "budget-app/utils/design-system.ts",
+  "props": {
+    "institutionName": { "type": "string", "required": true, "description": "Bank display name" },
+    "provider": { "type": "'plaid' | 'flinks' | 'teller'", "required": true, "description": "Provider slug; drives badge color" },
+    "createdAt": { "type": "string", "required": true, "description": "ISO timestamp; rendered via toLocaleDateString" },
+    "itemStatus": { "type": "'login_required' | null", "required": false, "description": "Reauth state" },
+    "canReconnect": { "type": "boolean", "default": false, "description": "True when reauth + provider is teller" },
+    "onReconnect": { "type": "function", "required": false, "description": "Open Teller connect with this enrollment" },
+    "onUnlink": { "type": "function", "required": true, "description": "Confirm + delete linked account" }
+  },
+  "variants": ["default", "reauth"],
+  "states": ["default", "reauth", "pressed"],
+  "layout": {
+    "minHeight": 44,
+    "paddingVertical": "spacing.md",
+    "gap": "spacing.md",
+    "iconChip": { "size": 40, "radius": "radius.md" },
+    "unlinkBtn": { "size": 36, "hitSlop": "to 44" },
+    "divider": "colors.borderLight (1px between rows)"
+  },
+  "tokens": {
+    "container": "inside one glassEffects.glass card labeled 'LINKED ACCOUNTS · {count}'",
+    "iconChipDefault": "${colors.primary2}1f fill + business-outline (colors.primary2)",
+    "iconChipReauth": "${colors.warning}1f fill + warning-outline (colors.warning)",
+    "name": "typography.smallBold + colors.text (numberOfLines 1)",
+    "subtitleDefault": "typography.caption + colors.textMuted ('Linked {date}')",
+    "subtitleReauth": "typography.caption fontWeight 700 + colors.warning ('Reconnect needed — login expired')",
+    "providerBadge": {
+      "fill": "${providerColor}1f",
+      "radius": "radius.sm",
+      "text": "uppercase typography.caption (10/700, ls 0.5) in providerColor",
+      "providerColor": { "plaid": "colors.info", "flinks": "colors.success", "teller": "colors.warning" }
+    },
+    "reconnectPill": "${colors.warning}1f fill + ${colors.warning}66 border + colors.warning text, radius.md",
+    "unlinkBtn": "${colors.error}1a fill + trash-outline (colors.error)"
+  },
+  "accessibility": {
+    "unlink": { "role": "button", "label": "Unlink {institutionName}" },
+    "reconnect": { "role": "button", "label": "Reconnect {institutionName}" },
+    "statusColorIndependent": "reauth conveyed by warning-outline icon + word 'Reconnect needed' + amber color",
+    "touchTarget": "row minHeight 44; icon buttons 36 + hitSlop to 44"
+  }
+}

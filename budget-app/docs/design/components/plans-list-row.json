@@ -1,0 +1,45 @@
+{
+  "componentName": "PlanListRow",
+  "description": "A single financial plan in the plans list — type chip, status chip, name, contribution, and a milestone/approval progress hint. Draft plans render ghosted (dashed border, ~ amount, DRAFT word) per the committed-vs-tentative metaphor.",
+  "platform": "react-native",
+  "props": {
+    "plan": { "type": "Plan", "required": true, "description": "The plan (id, name, plan_type, status, monthly_contribution, projected_end_date)" },
+    "reachedCount": { "type": "number", "required": false, "description": "Milestones reached (for footer hint)" },
+    "totalMilestones": { "type": "number", "required": false, "description": "Total milestones (for footer hint)" },
+    "awaitingApproval": { "type": "boolean", "default": false, "description": "Draft is waiting on partner approval — drives subtitle + footer copy" },
+    "onPress": { "type": "function", "required": true, "description": "Open plan detail (loadPlanDetail(plan.id))" }
+  },
+  "variants": ["savings", "debt_payoff", "combined"],
+  "states": ["active", "draft", "paused", "completed", "pressed"],
+  "tokens": {
+    "container": "glassEffects.glass",
+    "containerDraft": "borderStyle dashed, colors.borderGlass",
+    "radius": "radius.lg",
+    "padding": "spacing.lg",
+    "marginBottom": "spacing.md",
+    "divider": "colors.borderLight",
+    "title": "typography.bodyBold / colors.text",
+    "subtitle": "typography.caption / colors.textMuted",
+    "amount": "typography.smallBold / colors.text (draft: 0.7 opacity + '~' prefix)",
+    "footerHint": "typography.caption / colors.textMuted",
+    "chevron": "colors.textDark"
+  },
+  "statusChip": {
+    "active": { "token": "colors.success", "icon": "checkmark-circle", "word": "Active" },
+    "draft": { "token": "colors.textMuted", "icon": "time-outline", "word": "Draft" },
+    "paused": { "token": "colors.warning", "icon": "pause-circle", "word": "Paused" },
+    "completed": { "token": "colors.info", "icon": "ribbon-outline", "word": "Completed" }
+  },
+  "typeChip": {
+    "savings": { "token": "colors.success", "icon": "trending-up", "label": "Savings" },
+    "debt_payoff": { "token": "colors.error", "icon": "card-outline", "label": "Debt Payoff" },
+    "combined": { "token": "colors.primary2", "icon": "git-merge-outline", "label": "Combined" }
+  },
+  "chipRecipe": "pill: backgroundColor = semanticColor at 12% opacity, text/icon = semanticColor, leading Ionicons",
+  "layout": { "minHeight": 44, "gap": "spacing.sm" },
+  "accessibility": {
+    "role": "button",
+    "label": "{name}, {typeLabel}, {statusWord}, monthly {amount}{, N of M milestones}. {draft ? 'Draft, awaiting approval.' : ''}",
+    "hint": "Double tap to view plan details"
+  }
+}

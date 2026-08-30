@@ -1,0 +1,59 @@
+{
+  "_comment": "Calendar-specific semantic mapping. ALL values reference budget-app/utils/design-system.ts — do not hardcode. This file documents which design-system token plays which calendar role.",
+  "source": "budget-app/utils/design-system.ts",
+  "screen": {
+    "background": { "token": "GradientBackground variant='bgDarkPurple'", "value": "gradients.bgDarkPurple" }
+  },
+  "semanticRoles": {
+    "income": { "token": "colors.success", "value": "#22c55e", "treatment": "solid" },
+    "actualSpend": { "token": "colors.error", "value": "#ef4444", "treatment": "solid" },
+    "projectedBillDue": { "token": "colors.warning", "value": "#eab308", "treatment": "ghosted/dashed/outline" },
+    "overdueBill": { "token": "colors.error", "value": "#ef4444", "treatment": "hollow ring (still unpaid, just late)" },
+    "paidBillContext": { "token": "colors.info", "value": "#3b82f6", "note": "only if a paid bill needs distinction; usually it's just a transaction" },
+    "accent": { "token": "colors.primary2", "value": "#a855f7" },
+    "selectedDay": { "token": "colors.primary", "value": "#7c3aed" },
+    "todayRing": { "token": "colors.primary2", "value": "#a855f7" }
+  },
+  "partnerAttribution": {
+    "partnerA": { "token": "colors.primary2", "value": "#a855f7" },
+    "partnerB": { "token": "colors.info", "value": "#3b82f6" },
+    "shared": { "token": "colors.textMuted", "value": "#94a3b8", "note": "neutral / no glyph" }
+  },
+  "surfaces": {
+    "summaryHeader": { "token": "glassEffects.glassFloating", "radius": "radius.xl" },
+    "calendarCard": { "token": "glassEffects.glass", "radius": "radius.lg" },
+    "daySection": { "token": "commonStyles.section + glassEffects.glass", "radius": "radius.lg" },
+    "actualEventRow": { "token": "glassEffects.glass (solid)", "radius": "radius.md" },
+    "projectedEventRow": { "fill": "transparent / rgba(255,255,255,0.02)", "border": "1px dashed colors.borderGlass", "radius": "radius.md" }
+  },
+  "text": {
+    "screenTitle": "typography.h3",
+    "summaryValue": "typography.h3",
+    "sectionTitle": "typography.bodyBold",
+    "eventName": "typography.small / smallBold",
+    "groupLabel": "typography.caption (uppercase) colors.textMuted",
+    "projectedTextOpacity": 0.7
+  },
+  "spacing": {
+    "screenPadding": "spacing.lg (16)",
+    "sectionGap": "spacing.lg (16)",
+    "cardPadding": "spacing.lg (16)",
+    "rowGap": "spacing.sm (8)",
+    "chipGap": "spacing.sm (8)"
+  },
+  "radii": {
+    "summaryCard": "radius.xl (20)",
+    "card": "radius.lg (16)",
+    "row": "radius.md (12)",
+    "chip": "radius.full"
+  },
+  "animation": {
+    "selection": "animation.fast (150ms) — instant under reduce-motion",
+    "stateChange": "animation.medium (250ms)"
+  },
+  "markers": {
+    "actualDot": { "shape": "filled circle", "size": 5 },
+    "incomeDot": { "shape": "filled circle/triangle", "size": 5 },
+    "projectedRing": { "shape": "hollow ring", "size": 5, "stroke": 1.5 }
+  }
+}

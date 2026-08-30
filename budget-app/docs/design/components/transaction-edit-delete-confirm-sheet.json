@@ -1,0 +1,35 @@
+{
+  "componentName": "DeleteConfirmSheet",
+  "description": "Bottom-sheet confirmation for the destructive delete, echoing the record being removed. Replaces the blocking Alert.alert; uses the shared confirm/form-sheet recipe.",
+  "platform": "react-native",
+  "props": {
+    "visible": { "type": "boolean", "required": true },
+    "merchantName": { "type": "string", "required": true, "description": "Transaction name echoed in the body" },
+    "amountLabel": { "type": "string", "required": true, "description": "Signed formatted amount, e.g. '− $84.20'" },
+    "onConfirm": { "type": "function", "required": true, "description": "Runs DELETE /auth/transactions/{id}" },
+    "onCancel": { "type": "function", "required": true },
+    "deleting": { "type": "boolean", "default": false, "description": "Mid-delete; disables buttons + shows spinner" }
+  },
+  "variants": ["default"],
+  "states": ["default", "deleting"],
+  "layout": {
+    "sheet": "colors.surface2",
+    "topRadius": "radius.xl",
+    "padding": "spacing.xl",
+    "gap": "spacing.md"
+  },
+  "tokens": {
+    "title": { "text": "typography.smallBold", "color": "colors.text", "content": "Delete this transaction?" },
+    "body": { "text": "typography.small", "color": "colors.textMuted", "numberOfLines": 2, "template": "This removes \"{merchantName} {amountLabel}\" and can't be undone." },
+    "deleteButton": { "bg": "colors.error", "radius": "radius.lg", "paddingVertical": "spacing.lg", "label": "typography.button", "labelColor": "#ffffff" },
+    "cancelButton": { "surface": "glassEffects.glass", "radius": "radius.lg", "label": "typography.button", "labelColor": "colors.text" }
+  },
+  "behavior": "On confirm: run delete → successHaptic() → router.back(). On failure: close sheet, surface InlineErrorCard above the CTA. The solid colors.error fill is the one sanctioned solid semantic fill (destructive intent).",
+  "accessibility": {
+    "role": "dialog",
+    "modal": "accessibilityViewIsModal",
+    "focusOnOpen": "title",
+    "deleteLabel": "Delete transaction, deletes permanently.",
+    "colorIndependent": "trash context + the word 'Delete' pair with the red fill; reduced-motion swaps slide-in for instant present"
+  }
+}

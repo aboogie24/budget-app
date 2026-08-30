@@ -1,0 +1,34 @@
+{
+  "componentName": "CategorySelect",
+  "description": "Single-select glass list of categories filtered by the selected budget type. Re-skins the bespoke selectBox. Falls back to a dashed empty affordance when no categories exist for the type.",
+  "platform": "react-native",
+  "props": {
+    "categories": { "type": "Array<{ id: string; name: string; type: string }>", "required": true },
+    "type": { "type": "'income' | 'expense'", "required": true, "description": "Filters the list: categories.filter(c => c.type.toLowerCase() === type)" },
+    "value": { "type": "string", "required": true, "description": "Selected category id (may be empty — category is optional)" },
+    "onChange": { "type": "function", "required": true, "description": "(categoryId: string) => void" },
+    "onCreate": { "type": "function", "required": false, "description": "Routes to category creation; used by the empty affordance" }
+  },
+  "variants": ["default"],
+  "states": ["default", "selected", "empty", "pressed"],
+  "layout": {
+    "container": { "glass": "glassEffects.glass", "radius": "radius.md", "maxHeightRows": 5, "scrollsInternally": true },
+    "row": { "direction": "row", "justify": "space-between", "align": "center", "paddingHorizontal": "spacing.md", "minHeight": 44, "bottomHairline": "colors.borderLight" },
+    "emptyRow": { "borderStyle": "dashed", "border": "colors.borderGlass", "paddingHorizontal": "spacing.md", "paddingVertical": "spacing.md", "direction": "row", "align": "center", "gap": "spacing.sm" }
+  },
+  "tokens": {
+    "name": { "type": "typography.bodyBold", "color": "colors.text", "numberOfLines": 1 },
+    "selectedFill": "colors.primary2 @12%",
+    "checkIcon": { "name": "checkmark", "color": "colors.primary2", "flexShrink": 0 },
+    "empty": { "icon": "pricetag-outline", "iconColor": "colors.textMuted", "text": "No {type} categories yet", "action": "+ Create", "actionColor": "colors.primary2" }
+  },
+  "behavior": "Single-select. If filtered list is empty, render the dashed empty affordance instead of an empty box; '+ Create' calls onCreate. Category stays optional — empty selection does not block Save.",
+  "accessibility": {
+    "role": "radiogroup",
+    "rowRole": "radio",
+    "state": "accessibilityState={{ checked }}",
+    "label": "{category name}",
+    "minTarget": "44pt row",
+    "colorIndependent": "Selection conveyed by checkmark icon + checked state, not the purple tint alone"
+  }
+}

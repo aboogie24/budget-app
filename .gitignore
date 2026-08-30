@@ -28,3 +28,6 @@ node_modules/
 .expo/
 dist/
 web-build/
+
+# teller
+teller-certs/

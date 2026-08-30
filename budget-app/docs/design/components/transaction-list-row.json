@@ -1,0 +1,47 @@
+{
+  "componentName": "TransactionRow",
+  "description": "A single transaction card in the transaction-list screen. Tap opens transaction/[id]; the inline category chip opens CategoryPicker to reassign. Geometry matches components/dashboard/RecentActivity.tsx for visual continuity.",
+  "platform": "react-native",
+  "reuses": ["idiom from dashboard/RecentActivity", "CategoryPicker (triggered)"],
+  "props": {
+    "id": { "type": "string", "required": true },
+    "type": { "type": "'income' | 'expense' | 'transfer'", "required": true },
+    "amount": { "type": "number", "required": true },
+    "note": { "type": "string", "required": false },
+    "categoryName": { "type": "string", "required": false, "description": "Undefined → unset (ghosted dashed) chip" },
+    "date": { "type": "string", "required": true, "description": "ISO timestamp; time shown when grouped by day" },
+    "source": { "type": "'teller' | 'plaid' | 'flinks' | 'bank' | undefined", "required": false },
+    "onPress": { "type": "function", "required": true, "description": "Opens transaction detail" },
+    "onEditCategory": { "type": "function", "required": true, "description": "Opens CategoryPicker for this tx id" }
+  },
+  "variants": ["income", "expense", "transfer"],
+  "states": ["default", "pressed", "category-unset", "long-title", "loading"],
+  "layout": {
+    "container": "glassEffects.glass",
+    "borderRadius": "radius.lg",
+    "padding": "spacing.md",
+    "minHeight": 64,
+    "iconChip": 36,
+    "gap": "spacing.md"
+  },
+  "tokens": {
+    "iconIncome": "trending-up / colors.success",
+    "iconExpense": "card-outline / colors.primary2",
+    "iconTransfer": "swap-horizontal / colors.textMuted",
+    "iconChipFill": "${iconColor}1f",
+    "title": "typography.smallBold + colors.text (numberOfLines 1)",
+    "amountIncome": "+{money}, getValueColor(+amount)=colors.success",
+    "amountExpense": "-{money}, getValueColor(-amount)=colors.error",
+    "amountTransfer": "{money} no sign, colors.textMuted",
+    "categoryChipSet": "fill ${colors.primary2}1f, border ${colors.primary2}3d, icon colors.accent, chevron colors.primary2, text colors.text",
+    "categoryChipUnset": "dashed border colors.borderGlass, transparent fill, text colors.textMuted",
+    "time": "time-outline colors.textMuted + typography.caption"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "{title}, {type} {amount}, {category or 'no category'}, {date}, via {source}.",
+    "categoryChipLabel": "Category {name}, double tap to change / No category, double tap to set.",
+    "touchTarget": "row minHeight 64; category chip padded to 44 via hitSlop"
+  },
+  "notes": "Amount is flexShrink:0 (never truncates); title ellipsizes. All rows are 'actual' (solid glass); the only ghosted element is an unset category chip."
+}

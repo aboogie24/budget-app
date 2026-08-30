@@ -31,6 +31,135 @@ export async function syncPlaidTransactions() {
   return api.post(`/auth/plaid/sync?user_id=${userId}`, undefined);
 }
 
+export type AttentionItem = {
+  id: string;
+  priority: number;
+  title: string;
+  body?: string;
+  icon: string;
+  color: string;
+  cta_label: string;
+  // ask_ai → open the advisor chat seeded with payload.seed;
+  // navigate → push payload.href. Both are used for AI nudges merged in
+  // client-side; the rest come from GET /auth/dashboard/attention.
+  action:
+    | 'reconnect'
+    | 'mark_paid'
+    | 'review'
+    | 'open_budget'
+    | 'ai_categorize'
+    | 'ask_ai'
+    | 'navigate';
+  payload?: Record<string, any>;
+};
+
+export async function fetchAttention() {
+  return api.get<{ items: AttentionItem[]; count: number }>('/auth/dashboard/attention');
+}
+
+// ─── AI nudges (proactive advisor cards) ───────────────────────
+export type AINudgeItem = {
+  id: string;
+  nudge_type: string;
+  title: string;
+  body: string;
+  action_type?: 'ask_ai' | 'navigate_to' | string;
+  action_data?: string;
+  priority: number;
+  is_read: boolean;
+};
+
+export async function fetchAINudges() {
+  return api.get<AINudgeItem[]>('/auth/ai/nudges');
+}
+
+// ─── Dashboard status verdict ───────────────────────────────────
+// GET /auth/dashboard/status?scope=household|personal — a ready-to-render
+// "how are we doing right now?" summary for the Status Headline card. The
+// backend synthesizes the worst-signal-wins status, an AI-authored warm
+// sentence, and this-month cash flow. If this call fails, the dashboard
+// falls back to a client-side computation (never an empty headline).
+export type DashboardStatusScope = 'household' | 'personal';
+export type DashboardStatus = 'good' | 'watch' | 'alert';
+
+export type DashboardStatusSignals = {
+  income_month: number;
+  expense_month: number;
+  cash_flow_month: number;
+  budgeted_month: number;
+  spent_month: number;
+  within_budget: boolean;
+  bills_overdue: number;
+  bills_due_soon: number;
+  bills_covered: boolean;
+  top_category: string;
+  top_category_amount: number;
+};
+
+export type DashboardStatusResponse = {
+  scope: DashboardStatusScope;
+  status: DashboardStatus;
+  headline: string;
+  hero_label: string;
+  hero_value: number;
+  signals: DashboardStatusSignals;
+};
+
+/**
+ * Fetch the synthesized dashboard status verdict for the given scope.
+ * The ScopeToggle's "Me" segment maps to scope=personal.
+ */
+export async function fetchDashboardStatus(scope: DashboardStatusScope = 'household') {
+  return api.get<DashboardStatusResponse>('/auth/dashboard/status', { scope });
+}
+
+export type NetWorthSnapshotPoint = {
+  date: string; // YYYY-MM-DD
+  total: number;
+};
+
+export async function recordNetWorthSnapshot(values: {
+  cash: number;
+  investments: number;
+  properties: number;
+  debt: number;
+  total: number;
+}, days: number = 30) {
+  return api.post<{ snapshots: NetWorthSnapshotPoint[]; days: number }>(
+    `/auth/dashboard/networth/snapshot?days=${days}`,
+    values,
+  );
+}
+
+export async function aiCategorizeTransactions() {
+  return api.post<{ merchants: number; classified: number; applied: number }>(
+    '/auth/transactions/ai-categorize',
+    undefined,
+  );
+}
+
+export type AdvisorMemory = {
+  id: string;
+  scope: 'shared' | 'private';
+  fact: string;
+};
+
+export async function fetchAdvisorMemories() {
+  return api.get<{ memories: AdvisorMemory[] }>('/auth/ai/memories');
+}
+
+export async function deleteAdvisorMemory(id: string) {
+  return api.delete(`/auth/ai/memories/${id}`);
+}
+
+export async function syncAllBankAccounts() {
+  return api.post<{
+    synced: number;
+    per_provider: Record<string, number>;
+    accounts: Array<{ account_id: string; provider: string; synced: number; error?: string }>;
+  }>(`/auth/bank/sync-all`, undefined);
+}
+
 export async function processRecurring() {
   return api.post(`/auth/recurring/process`);
 }

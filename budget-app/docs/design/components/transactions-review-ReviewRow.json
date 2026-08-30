@@ -1,0 +1,63 @@
+{
+  "componentName": "ReviewRow",
+  "screen": "transactions/review",
+  "description": "A single unverified transaction in the review queue. Flat ghosted glass row (outline category icon) with an icon+word+color confidence chip, a tappable category link, the signed amount, and an inline confirm checkmark. Wrapped in the existing right-swipe-to-confirm gesture.",
+  "platform": "react-native",
+  "surface": "glassEffects.glass",
+  "props": {
+    "id": { "type": "string", "required": true, "description": "Transaction id" },
+    "type": { "type": "string", "required": true, "description": "'income' | 'expense'" },
+    "amount": { "type": "number", "required": true, "description": "Transaction amount" },
+    "merchant": { "type": "string", "required": false, "description": "tx.note; falls back to 'Unknown merchant' (muted)" },
+    "categoryName": { "type": "string", "required": false, "description": "Category display name; falls back to 'Uncategorized' (colors.warning)" },
+    "matchConfidence": { "type": "string", "required": false, "description": "'exact'|'high'|'ai'|'medium'|'low'|undefined — drives the confidence chip" },
+    "ownerGlyph": { "type": "string", "required": false, "description": "'a'|'b'|undefined for partner attribution glyph (◑/◐), undefined = no glyph" },
+    "confirming": { "type": "boolean", "default": false, "description": "This row's verify PATCH is in flight" },
+    "onConfirm": { "type": "function", "required": true, "description": "Confirm/verify this transaction" },
+    "onEditCategory": { "type": "function", "required": true, "description": "Open the CategoryPicker for this transaction" },
+    "onSwipeConfirm": { "type": "function", "required": true, "description": "Right-swipe past threshold confirms the transaction" }
+  },
+  "confidenceChip": {
+    "note": "Always icon + word + color (color-independent). Chip bg = semantic color @12% (glassLight for unknown).",
+    "map": {
+      "exact":  { "word": "Exact",  "icon": "checkmark-circle",         "color": "colors.success" },
+      "high":   { "word": "High",   "icon": "checkmark-circle-outline",  "color": "colors.success" },
+      "ai":     { "word": "AI",     "icon": "sparkles",                  "color": "colors.primary2" },
+      "medium": { "word": "Medium", "icon": "remove-circle-outline",     "color": "colors.warning" },
+      "low":    { "word": "Low",    "icon": "alert-circle-outline",      "color": "colors.error" },
+      "unknown":{ "word": "Needs review", "icon": "help-circle-outline", "color": "colors.textMuted" }
+    },
+    "chipStyle": { "radius": "radius.full", "paddingHorizontal": "spacing.sm", "paddingVertical": "spacing.xs", "iconSize": 12, "labelType": "typography.caption" }
+  },
+  "layout": {
+    "surface": "glassEffects.glass",
+    "radius": "radius.lg",
+    "padding": "spacing.md",
+    "marginBottom": "spacing.sm",
+    "gap": "spacing.md",
+    "iconChip": { "size": 40, "radius": "radius.md", "tint": "{categoryColor}@12%", "glyph": "getCategoryIcon(*-outline variant); income = cash-outline" },
+    "merchant": { "type": "typography.bodyBold", "color": "colors.text", "numberOfLines": 1 },
+    "categoryLink": { "type": "typography.small", "color": "colors.primary2 (colors.warning when Uncategorized)", "suffix": "›", "onPress": "onEditCategory", "numberOfLines": 1 },
+    "amount": { "type": "typography.bodyBold", "colorBySign": "income + colors.success / expense - colors.error", "flexShrink": 0 },
+    "confirmButton": { "touchTarget": 44, "icon": "checkmark-circle-outline", "iconColor": "colors.success", "iconSize": 24, "loading": "ActivityIndicator colors.success" }
+  },
+  "swipeReveal": {
+    "background": "colors.success",
+    "radius": "radius.lg",
+    "icon": "checkmark-circle",
+    "label": "Confirm",
+    "labelType": "typography.smallBold",
+    "labelColor": "colors.text",
+    "note": "Preserve existing PanResponder threshold/animation; snap (no slide-out) under reduce-motion"
+  },
+  "states": ["default", "pressed", "confirming", "verifying-out"],
+  "accessibility": {
+    "role": "button",
+    "label": "{merchant}, {categoryName}, {income|expense} {amount}, {confidence word}",
+    "hint": "Double tap the checkmark to confirm; swipe right to confirm; tap the category to change it",
+    "touchTarget": "confirm checkmark and category link >= 44pt",
+    "colorIndependence": "confidence carries a word beside its icon; amount sign prefixed +/-",
+    "reducedMotion": "row disappears instantly instead of sliding out; no press-scale"
+  },
+  "tokensUsed": ["glassEffects.glass", "colors.text", "colors.textMuted", "colors.primary2", "colors.success", "colors.warning", "colors.error", "colors.borderGlass", "colors.glassLight", "typography.bodyBold", "typography.small", "typography.smallBold", "typography.caption", "radius.lg", "radius.md", "radius.full", "spacing.md", "spacing.sm", "spacing.xs"]
+}

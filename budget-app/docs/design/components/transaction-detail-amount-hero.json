@@ -1,0 +1,43 @@
+{
+  "componentName": "TransactionAmountHero",
+  "description": "The floating hero card of the transaction-detail screen: a type pill (INCOME/EXPENSE), the signed amount in h1, and a category chip. Only card on the screen that floats and uses h1. Supports a ghosted 'pending' variant for unsettled bank transactions.",
+  "platform": "react-native",
+  "sourceOfTruthTokens": "budget-app/utils/design-system.ts",
+  "props": {
+    "amount": { "type": "number", "required": true, "description": "Absolute transaction amount." },
+    "type": { "type": "string", "required": true, "description": "'income' | 'expense'. Drives caret icon, word, and sign color." },
+    "category": { "type": "string", "required": false, "description": "Category display name; falls back to 'Uncategorized' (rendered neutral)." },
+    "categoryColor": { "type": "string", "required": false, "description": "Category tint hex for the icon chip (used at 12% opacity). Neutral pricetag-outline when absent." },
+    "categoryIcon": { "type": "string", "required": false, "description": "Ionicons glyph for the category chip; defaults to 'pricetag-outline'." },
+    "isPending": { "type": "boolean", "default": false, "description": "Bank transaction not yet settled → dashed border, ~ prefix, PENDING pill, 70% amount opacity." }
+  },
+  "derivations": {
+    "isIncome": "type === 'income'",
+    "amountColor": "getValueColor(isIncome ? amount : -amount)",
+    "amountPrefix": "isPending ? '~' : (isIncome ? '+' : '-')",
+    "typeWord": "isIncome ? 'INCOME' : 'EXPENSE'",
+    "typeIcon": "isIncome ? 'caret-up' : 'caret-down'",
+    "typeTint": "isIncome ? colors.success : colors.error"
+  },
+  "variants": ["expense", "income", "pending", "uncategorized"],
+  "states": ["default", "pending", "loading"],
+  "layout": {
+    "card": { "surface": "glassEffects.glassFloating", "borderRadius": "radius.xl", "padding": "spacing.xl", "alignItems": "center" },
+    "pendingCard": { "borderStyle": "dashed", "borderColor": "colors.borderGlass" },
+    "typePill": { "borderRadius": "radius.full", "paddingHorizontal": "spacing.sm", "paddingVertical": "spacing.xs", "backgroundColor": "`${typeTint}1f`", "iconSize": 14 },
+    "pendingPill": { "borderRadius": "radius.full", "backgroundColor": "`${colors.warning}1f`", "icon": "hourglass-outline", "word": "PENDING", "tint": "colors.warning" },
+    "amount": { "typography": "typography.h1", "adjustsFontSizeToFit": true, "minimumFontScale": 0.7, "flexShrink": 0 },
+    "categoryChip": { "borderRadius": "radius.md", "iconChipTint": "`${categoryColor}1f`", "label": "typography.bodyBold + colors.text", "numberOfLines": 1 }
+  },
+  "typography": {
+    "typeWord": "typography.caption + typeTint",
+    "amount": "typography.h1 + amountColor (70% opacity when isPending, unless it fails contrast → colors.textMuted)",
+    "category": "typography.bodyBold + colors.text"
+  },
+  "accessibility": {
+    "role": "summary/text (non-interactive)",
+    "label": "{isPending ? 'Pending. ' : ''}{typeWord}, {isPending ? 'about ' : ''}{spoken amount}, {category}.",
+    "colorIndependence": "type by caret icon + word + sign prefix; pending by hourglass + PENDING word + ~ prefix; never color alone",
+    "contrast": "pending amount must clear 4.5:1; fall back to colors.textMuted at full opacity if 70% colors.text fails"
+  }
+}

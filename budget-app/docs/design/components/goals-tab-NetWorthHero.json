@@ -1,0 +1,35 @@
+{
+  "componentName": "GoalsNetWorthHero",
+  "description": "TIER 1 centerpiece of the Finances (goals tab) screen. Combined net worth headline with monthly delta, a real net-worth sparkline, and an Assets/Debts split bar. The only card on the screen that floats and the only place the h1-sized number lives.",
+  "platform": "react-native",
+  "surface": "glassEffects.glassFloating (radius.xl, shadow)",
+  "props": {
+    "netWorth": { "type": "number", "required": true, "description": "Assets - Debts, in dollars" },
+    "totalAssets": { "type": "number", "required": true },
+    "totalDebts": { "type": "number", "required": true },
+    "monthlyChangePct": { "type": "number", "required": false, "description": "Real first-vs-last snapshot delta; omit/null hides badge" },
+    "monthlyChange": { "type": "number", "required": false, "description": "Absolute month delta in dollars" },
+    "netWorthHistory": { "type": "number[]", "required": false, "description": "Real snapshot totals; < 2 points -> Sparkline shows 'Collecting…'" },
+    "balanceVisible": { "type": "boolean", "default": true, "description": "Eye toggle; false masks all currency to ••••••" }
+  },
+  "tokens": {
+    "label": "typography.caption / colors.textMuted",
+    "heroValue": "typography.h1 (32/700) / colors.text",
+    "deltaBadgeUp": "colors.success on `${colors.success}1f`, radius.full",
+    "deltaBadgeDown": "colors.error on `${colors.error}1f`, radius.full",
+    "deltaSubtext": "typography.caption / colors.textMuted",
+    "splitInset": "background `${colors.bg}33`, radius.md, 1px colors.borderGlass divider",
+    "assetsValue": "typography.bodyBold / colors.success (arrow-up glyph prefix)",
+    "debtsValue": "typography.bodyBold / colors.error (arrow-down glyph prefix)",
+    "padding": "spacing.lg"
+  },
+  "reuses": ["components/Sparkline.tsx (values=netWorthHistory, color=colors.primary2, 90x44)"],
+  "states": ["populated", "masked", "loading-skeleton"],
+  "colorIndependence": "Delta = arrow + sign + % + color. Assets/Debts = arrow-up/arrow-down glyph + color. Never color alone.",
+  "accessibility": {
+    "role": "summary",
+    "label": "Combined net worth, {netWorth}, {up|down} {pct} percent this month. Assets {totalAssets}, debts {totalDebts}.",
+    "maskedLabel": "Combined net worth, hidden."
+  },
+  "developerNotes": "netWorthHistory MUST be real snapshots (read the same NetWorthSnapshotPoint[] the dashboard gets from recordNetWorthSnapshot). Do NOT fabricate history with Math.random()."
+}

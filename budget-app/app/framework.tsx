@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,26 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { api } from '../utils/apiClient';
+import {
+  fetchUserTransactions,
+  fetchInvestmentHoldings,
+  fetchAccountBalances,
+  fetchProperties,
+} from '@/utils/api';
+import { getCurrentUser } from '@/utils/storage';
 import { ErrorState } from '@/components/ErrorState';
+import { BackButton } from '@/components/BackButton';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import {
+  colors,
+  spacing,
+  radius,
+  typography,
+  glassEffects,
+  gradients,
+  commonStyles,
+} from '@/utils/design-system';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -42,6 +61,7 @@ type Milestone = {
   target_amount?: number;
   status: 'pending' | 'reached' | 'skipped';
   reached_at?: string;
+  user_id?: string;
 };
 
 type Plan = {
@@ -50,6 +70,7 @@ type Plan = {
   plan_type: 'debt_payoff' | 'savings' | 'combined';
   status: 'draft' | 'active' | 'paused' | 'completed';
   milestones?: Milestone[];
+  user_id?: string;
 };
 
 type PlanWithProgress = Plan & {
@@ -58,15 +79,31 @@ type PlanWithProgress = Plan & {
   milestones_total: number;
 };
 
+type Member = { user_id: string; full_name: string; role: string };
+
+type PartnerGlyph = { glyph: string; color: string; name: string } | null;
+
+type Achievement = {
+  id: string;
+  emoji: string;
+  label: string;
+  unlocked: boolean;
+  hint: string;
+};
+
 // ─── Constants ──────────────────────────────────────────────────
 
-const LEVEL_COLORS: Record<number, string> = {
-  1: '#ef4444',
-  2: '#f97316',
-  3: '#eab308',
-  4: '#22c55e',
-  5: '#7c3aed',
+// Level colour scale — tokenized, accessibility-safe (danger → safe → aspirational).
+// Never colour-only: always number + name + ring fill + "LEVEL" label together.
+const LEVEL_TOKENS: Record<number, keyof typeof colors> = {
+  1: 'error', // Foundation — most fragile
+  2: 'warning', // Attack Debt — active effort, caution
+  3: 'info', // Build Security — stabilising
+  4: 'success', // Grow Wealth — healthy, growing
+  5: 'primary2', // Dream Big — aspirational / brand peak
 };
+
+const levelColorFor = (lvl: number): string => colors[LEVEL_TOKENS[lvl] ?? 'primary2'] || colors.primary;
 
 const LEVEL_NAMES: string[] = [
   'Foundation',
@@ -76,13 +113,23 @@ const LEVEL_NAMES: string[] = [
   'Dream Big',
 ];
 
-const PLAN_TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  debt_payoff: { label: 'Debt Payoff', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
-  savings: { label: 'Savings', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
-  combined: { label: 'Combined', color: '#a855f7', bg: 'rgba(168,85,247,0.15)' },
+const PLAN_TYPE_CONFIG: Record<
+  string,
+  { label: string; color: string; bg: string }
+> = {
+  debt_payoff: { label: 'Debt Payoff', color: colors.error, bg: `${colors.error}26` },
+  savings: { label: 'Savings', color: colors.success, bg: `${colors.success}26` },
+  combined: { label: 'Combined', color: colors.primary2, bg: `${colors.primary2}26` },
 };
 
-// ─── Progress Ring Component ────────────────────────────────────
+const shortDate = (d?: string): string | null => {
+  if (!d) return null;
+  const parsed = new Date(d);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
+// ─── Progress Ring Component (tokenized) ────────────────────────
 
 function ProgressRing({
   size,
@@ -97,19 +144,20 @@ function ProgressRing({
   color: string;
   children?: React.ReactNode;
 }) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (progress / 100) * circumference;
+  const radiusPx = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radiusPx;
+  const strokeDashoffset =
+    circumference - (Math.min(Math.max(progress, 0), 100) / 100) * circumference;
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={size} height={size} style={{ position: 'absolute' }}>
-        {/* Background circle */}
+        {/* Track */}
         <Circle
           cx={size / 2}
           cy={size / 2}
-          r={radius}
-          stroke="rgba(255,255,255,0.08)"
+          r={radiusPx}
+          stroke={colors.glassLight}
           strokeWidth={strokeWidth}
           fill="none"
         />
@@ -117,7 +165,7 @@ function ProgressRing({
         <Circle
           cx={size / 2}
           cy={size / 2}
-          r={radius}
+          r={radiusPx}
           stroke={color}
           strokeWidth={strokeWidth}
           fill="none"
@@ -133,6 +181,21 @@ function ProgressRing({
   );
 }
 
+// ─── Progress bar (shared, tokenized) ───────────────────────────
+
+function FrameworkProgressBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <View style={styles.progressBarBg}>
+      <View
+        style={[
+          styles.progressBarFill,
+          { width: `${Math.min(Math.max(pct, 0), 100)}%`, backgroundColor: color },
+        ]}
+      />
+    </View>
+  );
+}
+
 // ─── Main Screen ────────────────────────────────────────────────
 
 export default function FrameworkScreen() {
@@ -140,9 +203,24 @@ export default function FrameworkScreen() {
   const [level, setLevel] = useState<FrameworkLevel | null>(null);
   const [plans, setPlans] = useState<PlanWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [togglingMilestone, setTogglingMilestone] = useState<string | null>(null);
+
+  // Couples attribution
+  const [userId, setUserId] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [householdMembers, setHouseholdMembers] = useState<Member[]>([]);
+
+  // Achievements inputs (relocated from dashboard)
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [budgetsCount, setBudgetsCount] = useState(0);
+  const [savingsCurrent, setSavingsCurrent] = useState(0);
+  const [cashTotal, setCashTotal] = useState(0);
+  const [investmentTotal, setInvestmentTotal] = useState(0);
+  const [propertyTotal, setPropertyTotal] = useState(0);
+  const [debtTotal, setDebtTotal] = useState(0);
 
   const loadData = useCallback(async () => {
     try {
@@ -155,9 +233,7 @@ export default function FrameworkScreen() {
 
       // Load milestones + progress for active plans
       const allPlans = (plansData || []) as Plan[];
-      const activePlans: Plan[] = allPlans.filter(
-        (p: Plan) => p.status === 'active'
-      );
+      const activePlans: Plan[] = allPlans.filter((p: Plan) => p.status === 'active');
 
       const withProgress: PlanWithProgress[] = await Promise.all(
         activePlans.map(async (plan: Plan) => {
@@ -184,12 +260,96 @@ export default function FrameworkScreen() {
       );
 
       setPlans(withProgress);
+
+      // ── Achievements + attribution data (all non-blocking) ──
+      const user = await getCurrentUser().catch(() => null);
+      if (user) {
+        setUserId(user.id || null);
+        setUserName(user.full_name || user.email || null);
+      }
+
+      // Transactions — first-link (source) + reviewer (user_verified count).
+      fetchUserTransactions()
+        .then((txns) => setTransactions(Array.isArray(txns) ? txns : []))
+        .catch(() => {});
+
+      if (user?.id) {
+        // Household members for the partner glyph.
+        api
+          .get<any>(`/auth/households/me`, { user_id: user.id })
+          .then((hh) => {
+            let members = hh?.members;
+            if (typeof members === 'string') {
+              try {
+                members = JSON.parse(members);
+              } catch {
+                members = [];
+              }
+            }
+            if (Array.isArray(members) && members.length > 0) setHouseholdMembers(members);
+          })
+          .catch(() => {});
+
+        // Budgets count — budget-set.
+        api
+          .get(`/auth/budgets/user/${user.id}`)
+          .then((b) => setBudgetsCount(Array.isArray(b) ? b.length : 0))
+          .catch(() => {});
+
+        // Savings goals — savings-1k (sum current).
+        api
+          .get(`/auth/savings-goals`, { user_id: user.id })
+          .then((goals) => {
+            const arr = Array.isArray(goals) ? goals : [];
+            setSavingsCurrent(arr.reduce((s: number, g: any) => s + (g.current_amount || 0), 0));
+          })
+          .catch(() => {});
+
+        // Debts — for net worth.
+        api
+          .get(`/auth/debts`, { user_id: user.id })
+          .then((debts) => {
+            const arr = Array.isArray(debts) ? debts : [];
+            setDebtTotal(arr.reduce((s: number, d: any) => s + (d.balance || 0), 0));
+          })
+          .catch(() => {});
+      }
+
+      // Net-worth asset inputs — positive-nw + nw-10k.
+      Promise.all([
+        fetchAccountBalances('depository').catch(() => []),
+        fetchInvestmentHoldings().catch(() => []),
+        fetchProperties().catch(() => []),
+      ])
+        .then(([balances, holdings, props]) => {
+          setCashTotal(
+            (Array.isArray(balances) ? balances : []).reduce(
+              (s: number, a: any) => s + (a.current_balance || 0),
+              0
+            )
+          );
+          setInvestmentTotal(
+            (Array.isArray(holdings) ? holdings : []).reduce(
+              (s: number, h: any) => s + (h.institution_value || 0),
+              0
+            )
+          );
+          setPropertyTotal(
+            (Array.isArray(props) ? props : []).reduce(
+              (s: number, p: any) => s + (p.manual_value || p.zestimate || 0),
+              0
+            )
+          );
+        })
+        .catch(() => {});
+
       setError(null);
     } catch (e: any) {
       console.error('Failed to load framework data:', e);
       setError(e?.message || 'Failed to load framework data');
     } finally {
       setLoading(false);
+      setLoadedOnce(true);
       setRefreshing(false);
     }
   }, []);
@@ -210,7 +370,6 @@ export default function FrameworkScreen() {
       await api.put(`/auth/plans/${planId}/milestones/${milestone.id}`, {
         status: newStatus,
       });
-      // Reload data to reflect changes
       await loadData();
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Failed to update milestone');
@@ -220,32 +379,69 @@ export default function FrameworkScreen() {
   };
 
   const currentLevel = level?.level || 1;
-  const levelColor = LEVEL_COLORS[currentLevel] || '#7c3aed';
+  const levelColor = levelColorFor(currentLevel);
+  const pct = Math.round(level?.completed_pct || 0);
 
-  if (loading) {
-    return (
-      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
-        <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#c084fc" />
-          <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 14 }}>
-            Loading your progress...
-          </Text>
-        </SafeAreaView>
-      </LinearGradient>
+  // Partner glyph: A (current user) → primary2/◑, B → info/◐, shared/unknown → none.
+  const resolvePartner = useCallback(
+    (ownerId?: string): PartnerGlyph => {
+      if (!ownerId || !userId || householdMembers.length < 2) return null;
+      if (String(ownerId) === String(userId)) {
+        const me = householdMembers.find((m) => String(m.user_id) === String(userId));
+        return {
+          glyph: '◑',
+          color: colors.primary2,
+          name: (me?.full_name || userName || 'You').split(' ')[0],
+        };
+      }
+      const partner = householdMembers.find((m) => String(m.user_id) === String(ownerId));
+      if (!partner) return null;
+      return {
+        glyph: '◐',
+        color: colors.info,
+        name: (partner.full_name || 'Partner').split(' ')[0],
+      };
+    },
+    [userId, userName, householdMembers]
+  );
+
+  // Achievements — derived from current state, memoized. Ported verbatim from
+  // the pre-redesign dashboard, relocated to the framework (progress) surface.
+  const achievements = useMemo<Achievement[]>(() => {
+    const hasBankSyncedTx = transactions.some((t: any) =>
+      ['teller', 'bank', 'flinks', 'simplefin'].includes(String(t.source || ''))
     );
-  }
+    const verifiedCount = transactions.filter((t: any) => t.user_verified).length;
+    const netWorthNow = cashTotal + investmentTotal + propertyTotal - debtTotal;
+    return [
+      { id: 'first-link', emoji: '🔗', label: 'First link', unlocked: hasBankSyncedTx, hint: 'Link a bank account' },
+      { id: 'budget-set', emoji: '📊', label: 'Budget set', unlocked: budgetsCount > 0, hint: 'Create a budget' },
+      { id: 'reviewer', emoji: '✅', label: 'Reviewer', unlocked: verifiedCount >= 10, hint: 'Verify 10 transactions' },
+      { id: 'savings-1k', emoji: '💸', label: '$1k saved', unlocked: savingsCurrent >= 1000, hint: 'Save your first $1k' },
+      { id: 'positive-nw', emoji: '🌱', label: 'In the green', unlocked: netWorthNow > 0, hint: 'Get net worth above zero' },
+      { id: 'nw-10k', emoji: '💎', label: '$10k club', unlocked: netWorthNow >= 10000, hint: 'Net worth ≥ $10k' },
+    ];
+  }, [transactions, cashTotal, investmentTotal, propertyTotal, debtTotal, budgetsCount, savingsCurrent]);
 
-  if (error) {
+  const showSkeleton = loading && !loadedOnce;
+
+  // ── Reusable header ──
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <BackButton fallback="/(tabs)/goals" color={colors.text} />
+      <Text style={styles.headerTitle}>CoupleFlow Method</Text>
+      <View style={styles.headerRight}>
+        {loading && loadedOnce && <ActivityIndicator color={colors.primary2} size="small" />}
+      </View>
+    </View>
+  );
+
+  // ── Error state ──
+  if (error && !loadedOnce) {
     return (
-      <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+      <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
         <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={22} color="#fff" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>CoupleFlow Method</Text>
-            <View style={{ width: 36 }} />
-          </View>
+          {renderHeader()}
           <ErrorState
             title="Something went wrong"
             message={error}
@@ -256,340 +452,484 @@ export default function FrameworkScreen() {
             }}
           />
         </SafeAreaView>
-      </LinearGradient>
+      </GradientBackground>
     );
   }
 
   return (
-    <LinearGradient colors={['#0b1021', '#2b0f50', '#1b1039']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>CoupleFlow Method</Text>
-          <View style={{ width: 36 }} />
-        </View>
+        {renderHeader()}
 
         <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 60 }}
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#c084fc" />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary2}
+              colors={[colors.primary2]}
+            />
           }
         >
-          {/* ─── 1. Framework Level Hero ─── */}
-          <View style={[styles.card, { alignItems: 'center', paddingVertical: 28 }]}>
-            <ProgressRing
-              size={160}
-              strokeWidth={10}
-              progress={level?.completed_pct || 0}
-              color={levelColor}
-            >
-              <View style={{ alignItems: 'center' }}>
-                <Text style={{ color: levelColor, fontSize: 42, fontWeight: '800' }}>
-                  {currentLevel}
+          {showSkeleton ? (
+            <LoadingSkeleton />
+          ) : level == null ? (
+            <EmptyHero onGetStarted={() => router.push('/(tabs)/dashboard' as any)} />
+          ) : (
+            <>
+              {/* ── TIER 1: Level Hero (the only floating card) ── */}
+              <View
+                style={styles.hero}
+                accessibilityRole="summary"
+                accessibilityLabel={`Level ${currentLevel}, ${
+                  level.level_name || LEVEL_NAMES[currentLevel - 1]
+                }, ${pct} percent complete toward the next level.`}
+              >
+                <ProgressRing size={160} strokeWidth={12} progress={pct} color={levelColor}>
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={styles.ringPct}>{pct}%</Text>
+                    <Text style={[styles.ringNumber, { color: levelColor }]}>{currentLevel}</Text>
+                    <Text style={styles.ringLabel}>LEVEL</Text>
+                  </View>
+                </ProgressRing>
+
+                <Text style={styles.heroName} numberOfLines={1}>
+                  {level.level_name || LEVEL_NAMES[currentLevel - 1]}
                 </Text>
-                <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '600' }}>LEVEL</Text>
+                <Text style={styles.heroPct}>{pct}% complete</Text>
               </View>
-            </ProgressRing>
 
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700', marginTop: 16 }}>
-              {level?.level_name || LEVEL_NAMES[currentLevel - 1]}
-            </Text>
-            <Text style={{ color: '#94a3b8', fontSize: 14, marginTop: 4 }}>
-              {Math.round(level?.completed_pct || 0)}% complete
-            </Text>
-          </View>
+              {/* ── TIER 2: Journey stepper ── */}
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Your Journey</Text>
+                <View
+                  style={styles.stepper}
+                  accessibilityLabel={`Journey: level ${currentLevel} of ${LEVEL_NAMES.length}, current level ${
+                    level.level_name || LEVEL_NAMES[currentLevel - 1]
+                  }`}
+                >
+                  {LEVEL_NAMES.map((name, idx) => {
+                    const stepLevel = idx + 1;
+                    const isCompleted = stepLevel < currentLevel;
+                    const isCurrent = stepLevel === currentLevel;
+                    const isFuture = stepLevel > currentLevel;
+                    const dotColor = levelColorFor(stepLevel);
 
-          {/* ─── 2. Level Progress Stepper ─── */}
-          <View style={[styles.card, { marginTop: 14 }]}>
-            <Text style={styles.sectionTitle}>Your Journey</Text>
-            <View style={styles.stepper}>
-              {LEVEL_NAMES.map((name, idx) => {
-                const stepLevel = idx + 1;
-                const isCompleted = stepLevel < currentLevel;
-                const isCurrent = stepLevel === currentLevel;
-                const isFuture = stepLevel > currentLevel;
-                const dotColor = LEVEL_COLORS[stepLevel];
+                    return (
+                      <View key={stepLevel} style={styles.stepContainer}>
+                        {idx > 0 && (
+                          <View
+                            style={[
+                              styles.connector,
+                              {
+                                backgroundColor:
+                                  isCompleted || isCurrent
+                                    ? levelColorFor(stepLevel - 1)
+                                    : colors.glassLight,
+                              },
+                            ]}
+                          />
+                        )}
 
-                return (
-                  <View key={stepLevel} style={styles.stepContainer}>
-                    {/* Connector line (skip for first) */}
-                    {idx > 0 && (
-                      <View
-                        style={[
-                          styles.connector,
-                          {
-                            backgroundColor: isCompleted || isCurrent
-                              ? LEVEL_COLORS[stepLevel - 1]
-                              : 'rgba(255,255,255,0.1)',
-                          },
-                        ]}
-                      />
-                    )}
+                        <View
+                          style={[
+                            styles.stepDot,
+                            {
+                              backgroundColor: isCompleted || isCurrent ? dotColor : 'transparent',
+                              borderColor: isFuture ? colors.borderGlass : dotColor,
+                              borderWidth: 2,
+                            },
+                            isCurrent && {
+                              shadowColor: dotColor,
+                              shadowOpacity: 0.6,
+                              shadowRadius: 8,
+                              shadowOffset: { width: 0, height: 0 },
+                              elevation: 6,
+                            },
+                          ]}
+                        >
+                          {/* "You are here" ring on the current dot (colour-independent) */}
+                          {isCurrent && <View style={styles.currentRing} />}
+                          {isCompleted && <Ionicons name="checkmark" size={16} color={colors.text} />}
+                          {isCurrent && <Text style={styles.stepDotNum}>{stepLevel}</Text>}
+                        </View>
 
-                    {/* Dot */}
-                    <View
-                      style={[
-                        styles.stepDot,
-                        {
-                          backgroundColor: isCompleted || isCurrent ? dotColor : 'transparent',
-                          borderColor: isFuture ? 'rgba(255,255,255,0.2)' : dotColor,
-                          borderWidth: 2,
-                        },
-                        isCurrent && {
-                          shadowColor: dotColor,
-                          shadowOpacity: 0.6,
-                          shadowRadius: 8,
-                          shadowOffset: { width: 0, height: 0 },
-                          elevation: 6,
-                        },
-                      ]}
-                    >
-                      {isCompleted && (
-                        <Ionicons name="checkmark" size={12} color="#fff" />
-                      )}
-                      {isCurrent && (
-                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>
-                          {stepLevel}
+                        <Text
+                          style={[
+                            styles.stepLabel,
+                            {
+                              color: isCurrent
+                                ? colors.text
+                                : isFuture
+                                ? colors.textDark
+                                : colors.textMuted,
+                              fontWeight: isCurrent ? '700' : '400',
+                            },
+                          ]}
+                          numberOfLines={2}
+                        >
+                          {name}
                         </Text>
-                      )}
-                    </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
 
-                    {/* Label */}
+              {/* ── TIER 3: Criteria checklist ── */}
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Level {currentLevel} Criteria</Text>
+
+                <View style={{ marginTop: spacing.md }}>
+                  <FrameworkProgressBar pct={pct} color={levelColor} />
+                </View>
+                <Text style={styles.criteriaSummary}>
+                  {(level.criteria || []).filter((c) => c.met).length} of{' '}
+                  {(level.criteria || []).length} criteria met
+                </Text>
+
+                {(level.criteria || []).length === 0 ? (
+                  <>
+                    <View style={commonStyles.divider} />
+                    <Text style={styles.emptyInline}>No criteria for this level</Text>
+                  </>
+                ) : (
+                  <>
+                    <View style={commonStyles.divider} />
+                    {(level.criteria || []).map((criterion, idx) => (
+                      <View
+                        key={idx}
+                        style={styles.criterionRow}
+                        accessibilityLabel={`${criterion.name}, ${
+                          criterion.met ? 'met' : 'not yet'
+                        }. ${criterion.detail}`}
+                      >
+                        <View
+                          style={[
+                            styles.criterionIcon,
+                            {
+                              backgroundColor: criterion.met
+                                ? `${colors.success}26`
+                                : colors.glassLight,
+                            },
+                          ]}
+                        >
+                          <Ionicons
+                            name={criterion.met ? 'checkmark-circle' : 'ellipse-outline'}
+                            size={20}
+                            color={criterion.met ? colors.success : colors.textDark}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text
+                            style={[
+                              styles.criterionName,
+                              { color: criterion.met ? colors.text : colors.textMuted },
+                            ]}
+                          >
+                            {criterion.name}
+                          </Text>
+                          <Text style={styles.criterionDetail}>{criterion.detail}</Text>
+                        </View>
+                        {!criterion.met && <Text style={styles.notYet}>Not yet</Text>}
+                      </View>
+                    ))}
+                  </>
+                )}
+              </View>
+
+              {/* ── TIER 4: What to do next ── */}
+              {(level.next_steps || []).length > 0 && (
+                <View style={styles.card}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="bulb-outline" size={18} color={colors.warning} />
+                    <Text style={styles.sectionTitle}>What to Do Next</Text>
+                  </View>
+
+                  {level.next_steps.map((step, idx) => (
+                    <View key={idx} style={styles.nextStepRow}>
+                      <View style={styles.bulletDot} />
+                      <Text style={styles.nextStepText}>{step}</Text>
+                    </View>
+                  ))}
+
+                  <TouchableOpacity
+                    style={styles.ctaButton}
+                    onPress={() => router.push('/(tabs)/ai' as any)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Ask AI for help"
+                  >
+                    <LinearGradient
+                      colors={[...gradients.primaryGradient]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.ctaGradient}
+                    >
+                      <Ionicons name="sparkles" size={16} color={colors.text} />
+                      <Text style={styles.ctaText}>Ask AI for Help</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* ── Achievements (relocated from dashboard) ── */}
+              <Text style={styles.groupLabel}>ACHIEVEMENTS</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.achievementsRow}
+              >
+                {achievements.map((a) => (
+                  <View
+                    key={a.id}
+                    style={[
+                      styles.achBadge,
+                      a.unlocked ? styles.achBadgeUnlocked : styles.achBadgeLocked,
+                    ]}
+                    accessibilityLabel={`${a.label}, ${a.unlocked ? 'unlocked' : `locked. ${a.hint}`}`}
+                  >
+                    <Text style={[styles.achEmoji, !a.unlocked && { opacity: 0.35 }]}>{a.emoji}</Text>
                     <Text
                       style={[
-                        styles.stepLabel,
-                        {
-                          color: isCurrent ? '#fff' : isFuture ? '#475569' : '#94a3b8',
-                          fontWeight: isCurrent ? '700' : '500',
-                        },
+                        styles.achLabel,
+                        { color: a.unlocked ? colors.text : colors.textDark },
                       ]}
                       numberOfLines={2}
                     >
-                      {name}
+                      {a.unlocked ? a.label : a.hint}
                     </Text>
                   </View>
-                );
-              })}
-            </View>
-          </View>
+                ))}
+              </ScrollView>
 
-          {/* ─── 3. Current Level Criteria Checklist ─── */}
-          <View style={[styles.card, { marginTop: 14 }]}>
-            <Text style={styles.sectionTitle}>Level {currentLevel} Criteria</Text>
+              {/* ── TIER 5: Active plans ── */}
+              <Text style={styles.groupLabel}>ACTIVE PLANS</Text>
+              {plans.length > 0 ? (
+                plans.map((plan) => {
+                  const typeConfig =
+                    PLAN_TYPE_CONFIG[plan.plan_type] || PLAN_TYPE_CONFIG.combined;
+                  const reached = plan.milestones_reached;
+                  const total = plan.milestones_total;
 
-            {/* Overall progress bar */}
-            <View style={styles.progressBarBg}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  {
-                    width: `${Math.min(level?.completed_pct || 0, 100)}%`,
-                    backgroundColor: levelColor,
-                  },
-                ]}
-              />
-            </View>
-            <Text style={{ color: '#94a3b8', fontSize: 11, marginBottom: 14 }}>
-              {(level?.criteria || []).filter((c) => c.met).length} of{' '}
-              {(level?.criteria || []).length} criteria met
-            </Text>
-
-            {(level?.criteria || []).map((criterion, idx) => (
-              <View key={idx} style={styles.criterionRow}>
-                <View
-                  style={[
-                    styles.criterionIcon,
-                    {
-                      backgroundColor: criterion.met
-                        ? 'rgba(34,197,94,0.15)'
-                        : 'rgba(255,255,255,0.05)',
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name={criterion.met ? 'checkmark-circle' : 'ellipse-outline'}
-                    size={20}
-                    color={criterion.met ? '#22c55e' : '#475569'}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={[
-                      styles.criterionName,
-                      { color: criterion.met ? '#fff' : '#94a3b8' },
-                    ]}
-                  >
-                    {criterion.name}
-                  </Text>
-                  <Text style={styles.criterionDetail}>{criterion.detail}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          {/* ─── 4. Next Steps Card ─── */}
-          {(level?.next_steps || []).length > 0 && (
-            <View style={[styles.card, { marginTop: 14 }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <Ionicons name="bulb-outline" size={18} color="#eab308" />
-                <Text style={styles.sectionTitle}>What to Do Next</Text>
-              </View>
-
-              {level!.next_steps.map((step, idx) => (
-                <View key={idx} style={styles.nextStepRow}>
-                  <View style={styles.bulletDot} />
-                  <Text style={styles.nextStepText}>{step}</Text>
-                </View>
-              ))}
-
-              <TouchableOpacity
-                style={styles.aiButton}
-                onPress={() => {
-                  // Navigate to AI chat tab
-                  router.push('/(tabs)/ai' as any);
-                }}
-                activeOpacity={0.7}
-              >
-                <LinearGradient
-                  colors={['#7c3aed', '#a855f7']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.aiButtonGradient}
-                >
-                  <Ionicons name="sparkles" size={16} color="#fff" />
-                  <Text style={styles.aiButtonText}>Ask AI for Help</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* ─── 5. Active Plans with Milestones ─── */}
-          {plans.length > 0 && (
-            <View style={{ marginTop: 14 }}>
-              <Text style={[styles.sectionTitle, { marginBottom: 10, marginLeft: 4 }]}>
-                Active Plans
-              </Text>
-
-              {plans.map((plan) => {
-                const typeConfig = PLAN_TYPE_CONFIG[plan.plan_type] || PLAN_TYPE_CONFIG.combined;
-                const reached = plan.milestones_reached;
-                const total = plan.milestones_total;
-
-                return (
-                  <View key={plan.id} style={[styles.card, { marginBottom: 12 }]}>
-                    {/* Plan header */}
-                    <View style={styles.planHeader}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                  return (
+                    <View
+                      key={plan.id}
+                      style={styles.card}
+                      accessibilityLabel={`${plan.name}, ${typeConfig.label}, ${reached} of ${total} milestones reached`}
+                    >
+                      {/* Plan header */}
+                      <View style={styles.planHeader}>
+                        <Text style={styles.planName} numberOfLines={1}>
                           {plan.name}
                         </Text>
+                        <View style={[styles.typeBadge, { backgroundColor: typeConfig.bg }]}>
+                          <Text style={[styles.typeBadgeText, { color: typeConfig.color }]}>
+                            {typeConfig.label}
+                          </Text>
+                        </View>
                       </View>
-                      <View
-                        style={[styles.typeBadge, { backgroundColor: typeConfig.bg }]}
-                      >
-                        <Text style={{ color: typeConfig.color, fontSize: 11, fontWeight: '700' }}>
-                          {typeConfig.label}
-                        </Text>
-                      </View>
-                    </View>
 
-                    {/* Milestone progress summary */}
-                    <View style={styles.milestoneProgress}>
-                      <View style={styles.progressBarBg}>
-                        <View
-                          style={[
-                            styles.progressBarFill,
-                            {
-                              width: total > 0 ? `${(reached / total) * 100}%` : '0%',
-                              backgroundColor: '#22c55e',
-                            },
-                          ]}
-                        />
-                      </View>
-                      <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                      {/* Milestone progress */}
+                      <FrameworkProgressBar
+                        pct={total > 0 ? (reached / total) * 100 : 0}
+                        color={colors.success}
+                      />
+                      <Text style={styles.milestoneSummary}>
                         {reached} of {total} milestones reached
                       </Text>
-                    </View>
 
-                    {/* Milestone list */}
-                    {plan.milestones.map((ms) => {
-                      const isToggling = togglingMilestone === ms.id;
-                      const isReached = ms.status === 'reached';
+                      {plan.milestones.length > 0 && <View style={commonStyles.divider} />}
 
-                      return (
-                        <TouchableOpacity
-                          key={ms.id}
-                          style={styles.milestoneRow}
-                          onPress={() => handleToggleMilestone(plan.id, ms)}
-                          disabled={isToggling}
-                          activeOpacity={0.6}
-                        >
-                          {isToggling ? (
-                            <ActivityIndicator size="small" color="#c084fc" style={{ width: 24 }} />
-                          ) : (
-                            <Ionicons
-                              name={isReached ? 'checkmark-circle' : 'ellipse-outline'}
-                              size={22}
-                              color={isReached ? '#22c55e' : '#475569'}
-                            />
-                          )}
-                          <View style={{ flex: 1, marginLeft: 10 }}>
-                            <Text
-                              style={[
-                                styles.milestoneTitle,
-                                isReached && { color: '#94a3b8', textDecorationLine: 'line-through' },
-                              ]}
-                            >
-                              {ms.title}
-                            </Text>
-                            {ms.target_date && (
-                              <Text style={styles.milestoneDate}>
-                                Target: {new Date(ms.target_date).toLocaleDateString('en-US', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                })}
+                      {/* Milestone list */}
+                      {plan.milestones.map((ms) => {
+                        const isToggling = togglingMilestone === ms.id;
+                        const isReached = ms.status === 'reached';
+                        const subtitle = isReached
+                          ? `Reached ${shortDate(ms.reached_at) || ''}`.trim()
+                          : ms.target_date
+                          ? `Target ${shortDate(ms.target_date)}`
+                          : null;
+                        const partner = resolvePartner(ms.user_id || plan.user_id);
+
+                        return (
+                          <TouchableOpacity
+                            key={ms.id}
+                            style={styles.milestoneRow}
+                            onPress={() => handleToggleMilestone(plan.id, ms)}
+                            disabled={isToggling}
+                            activeOpacity={0.6}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${ms.title}, ${
+                              isReached ? 'reached' : 'pending'
+                            }${subtitle ? `, ${subtitle}` : ''}${
+                              partner ? `, by ${partner.name}` : ''
+                            }. Double tap to toggle.`}
+                          >
+                            <View style={styles.milestoneControl}>
+                              {isToggling ? (
+                                <ActivityIndicator size="small" color={colors.primary2} />
+                              ) : (
+                                <Ionicons
+                                  name={isReached ? 'checkmark-circle' : 'ellipse-outline'}
+                                  size={22}
+                                  color={isReached ? colors.success : colors.textDark}
+                                />
+                              )}
+                            </View>
+                            <View style={{ flex: 1, marginLeft: spacing.sm }}>
+                              <Text
+                                style={[
+                                  styles.milestoneTitle,
+                                  isReached && {
+                                    color: colors.textMuted,
+                                    textDecorationLine: 'line-through',
+                                  },
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {ms.title}
                               </Text>
-                            )}
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                );
-              })}
-            </View>
-          )}
-
-          {/* Empty state for plans */}
-          {plans.length === 0 && (
-            <View style={[styles.card, { marginTop: 14, alignItems: 'center', paddingVertical: 24 }]}>
-              <Ionicons name="map-outline" size={32} color="#475569" />
-              <Text style={{ color: '#94a3b8', fontSize: 14, marginTop: 8, textAlign: 'center' }}>
-                No active plans yet
-              </Text>
-              <TouchableOpacity
-                style={[styles.aiButton, { marginTop: 14 }]}
-                onPress={() => router.push('/plans')}
-                activeOpacity={0.7}
-              >
-                <LinearGradient
-                  colors={['#7c3aed', '#a855f7']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.aiButtonGradient}
-                >
-                  <Ionicons name="add-circle-outline" size={16} color="#fff" />
-                  <Text style={styles.aiButtonText}>Create a Plan</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
+                              {(subtitle || partner) && (
+                                <Text style={styles.milestoneSubtitle} numberOfLines={1}>
+                                  {subtitle}
+                                  {partner ? (
+                                    <Text style={{ color: partner.color }}>
+                                      {subtitle ? '  ' : ''}
+                                      {partner.glyph}
+                                    </Text>
+                                  ) : null}
+                                </Text>
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  );
+                })
+              ) : (
+                <View style={[styles.card, styles.emptyPlans]}>
+                  <Ionicons name="map-outline" size={32} color={colors.textDark} />
+                  <Text style={styles.emptyPlansText}>No active plans yet</Text>
+                  <TouchableOpacity
+                    style={styles.ctaButton}
+                    onPress={() => router.push('/plans' as any)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Create a plan"
+                  >
+                    <LinearGradient
+                      colors={[...gradients.primaryGradient]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.ctaGradient}
+                    >
+                      <Ionicons name="add-circle-outline" size={16} color={colors.text} />
+                      <Text style={styles.ctaText}>Create a Plan</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </>
           )}
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </GradientBackground>
+  );
+}
+
+// ─── Empty hero (brand-new couple, no framework level) ──────────
+
+function EmptyHero({ onGetStarted }: { onGetStarted: () => void }) {
+  return (
+    <View style={[styles.hero, { paddingVertical: spacing.xxl }]}>
+      <Ionicons name="compass-outline" size={72} color={colors.textDark} />
+      <Text style={[styles.heroName, { marginTop: spacing.lg, textAlign: 'center' }]}>
+        Your journey hasn&apos;t started yet
+      </Text>
+      <Text style={styles.emptyHeroSub}>
+        Add your income, debts, and savings to see your CoupleFlow level
+      </Text>
+      <TouchableOpacity
+        style={[styles.ctaButton, { marginTop: spacing.lg, alignSelf: 'stretch' }]}
+        onPress={onGetStarted}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel="Get started"
+      >
+        <LinearGradient
+          colors={[...gradients.primaryGradient]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.ctaGradient}
+        >
+          <Ionicons name="rocket-outline" size={16} color={colors.text} />
+          <Text style={styles.ctaText}>Get started</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── Loading skeleton (layout-matched) ──────────────────────────
+
+function LoadingSkeleton() {
+  return (
+    <View>
+      {/* Hero */}
+      <View style={[styles.hero, { gap: spacing.md }]}>
+        <Skeleton width={160} height={160} borderRadius={80} />
+        <Skeleton width={140} height={22} borderRadius={radius.sm} />
+        <Skeleton width={90} height={14} borderRadius={radius.sm} />
+      </View>
+
+      {/* Stepper */}
+      <View style={styles.card}>
+        <Skeleton width={110} height={14} />
+        <View style={[styles.stepper, { marginTop: spacing.lg }]}>
+          {[0, 1, 2, 3, 4].map((i) => (
+            <View key={i} style={styles.stepContainer}>
+              <Skeleton width={26} height={26} borderRadius={13} />
+              <Skeleton width={40} height={10} style={{ marginTop: spacing.sm }} />
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* Criteria */}
+      <View style={styles.card}>
+        <Skeleton width={130} height={14} />
+        <Skeleton width="100%" height={6} borderRadius={radius.full} style={{ marginTop: spacing.md }} />
+        <Skeleton width={110} height={12} style={{ marginTop: spacing.sm }} />
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={[styles.criterionRow, { borderBottomWidth: 0 }]}>
+            <Skeleton width={32} height={32} borderRadius={radius.full} />
+            <View style={{ flex: 1, gap: spacing.sm }}>
+              <Skeleton width="70%" height={12} />
+              <Skeleton width="45%" height={10} />
+            </View>
+          </View>
+        ))}
+      </View>
+
+      {/* Plan */}
+      <View style={styles.card}>
+        <Skeleton width="60%" height={16} />
+        <Skeleton width="100%" height={6} borderRadius={radius.full} style={{ marginTop: spacing.md }} />
+        {[0, 1].map((i) => (
+          <View key={i} style={[styles.milestoneRow, { alignItems: 'center' }]}>
+            <Skeleton width={22} height={22} borderRadius={radius.full} />
+            <View style={{ flex: 1, marginLeft: spacing.sm, gap: spacing.sm }}>
+              <Skeleton width="65%" height={12} />
+              <Skeleton width="40%" height={10} />
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -600,52 +940,104 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   headerTitle: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
+    ...typography.h3, fontWeight: '800',
+    color: colors.text,
   },
-  card: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 16,
-    padding: 16,
+  headerRight: {
+    width: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
-  sectionTitle: {
-    color: '#e5e7eb',
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 2,
+  scroll: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: 100,
   },
 
-  // Stepper
+  // Card (flat glass, subordinate)
+  card: {
+    ...glassEffects.glass,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  sectionTitle: {
+    ...typography.smallBold,
+    color: colors.text,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  groupLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: spacing.sm,
+    marginLeft: spacing.xs,
+  },
+
+  // TIER 1 hero (the only floating card)
+  hero: {
+    ...glassEffects.glassFloating,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+  },
+  ringPct: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  ringNumber: {
+    ...typography.h1,
+  },
+  ringLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    letterSpacing: 2,
+  },
+  heroName: {
+    ...typography.h3,
+    color: colors.text,
+    marginTop: spacing.lg,
+  },
+  heroPct: {
+    ...typography.small,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  emptyHeroSub: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+
+  // TIER 2 stepper
   stepper: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginTop: 14,
-    paddingHorizontal: 4,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xs,
   },
   stepContainer: {
     alignItems: 'center',
     flex: 1,
     position: 'relative',
+    paddingVertical: spacing.sm, // keep ≥44pt tappable area for future interactivity
   },
   connector: {
     position: 'absolute',
-    top: 12,
+    top: spacing.lg + 2,
     right: '50%',
     left: '-50%',
     height: 2,
@@ -659,124 +1051,210 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 1,
   },
+  currentRing: {
+    position: 'absolute',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1.5,
+    borderColor: colors.primary2,
+  },
+  stepDotNum: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: '700',
+  },
   stepLabel: {
-    fontSize: 10,
-    marginTop: 6,
+    ...typography.caption,
+    marginTop: spacing.sm,
     textAlign: 'center',
-    lineHeight: 13,
   },
 
   // Progress bar
   progressBarBg: {
     height: 6,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 3,
-    marginTop: 10,
+    backgroundColor: colors.glassLight,
+    borderRadius: radius.full,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
-    borderRadius: 3,
+    borderRadius: radius.full,
   },
 
-  // Criteria
+  // TIER 3 criteria
+  criteriaSummary: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+  },
   criterionRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 12,
-    paddingVertical: 8,
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.04)',
+    borderBottomColor: colors.borderLight,
   },
   criterionIcon: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
   criterionName: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...typography.smallBold,
   },
   criterionDetail: {
-    color: '#475569',
-    fontSize: 12,
+    ...typography.caption,
+    color: colors.textMuted,
     marginTop: 2,
   },
+  notYet: {
+    ...typography.caption,
+    color: colors.textMuted,
+    flexShrink: 0,
+    marginTop: spacing.sm,
+  },
+  emptyInline: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
 
-  // Next steps
+  // TIER 4 next steps
   nextStepRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
-    paddingVertical: 6,
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   bulletDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#c084fc',
-    marginTop: 6,
+    backgroundColor: colors.primary2,
+    marginTop: 7,
   },
   nextStepText: {
-    color: '#cbd5e1',
-    fontSize: 13,
+    ...typography.small,
+    color: colors.textMuted,
     flex: 1,
-    lineHeight: 20,
   },
 
-  // AI button
-  aiButton: {
-    marginTop: 16,
-    borderRadius: 12,
+  // CTA button
+  ctaButton: {
+    marginTop: spacing.lg,
+    borderRadius: radius.md,
     overflow: 'hidden',
   },
-  aiButtonGradient: {
+  ctaGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    minHeight: 44,
+    borderRadius: radius.md,
   },
-  aiButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
+  ctaText: {
+    ...typography.button,
+    color: colors.text,
   },
 
-  // Plans
+  // Achievements
+  achievementsRow: {
+    gap: spacing.sm,
+    paddingBottom: spacing.lg,
+    paddingRight: spacing.lg,
+  },
+  achBadge: {
+    width: 96,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  achBadgeUnlocked: {
+    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.primary2,
+  },
+  achBadgeLocked: {
+    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  achEmoji: {
+    fontSize: 24,
+  },
+  achLabel: {
+    ...typography.caption,
+    textAlign: 'center',
+  },
+
+  // TIER 5 plans
   planHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  planName: {
+    ...typography.bodyBold,
+    color: colors.text,
+    flex: 1,
   },
   typeBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+    flexShrink: 0,
   },
-  milestoneProgress: {
-    marginBottom: 12,
+  typeBadgeText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  milestoneSummary: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
   },
   milestoneRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: spacing.md,
+    minHeight: 44,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.04)',
+    borderTopColor: colors.borderLight,
+  },
+  milestoneControl: {
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   milestoneTitle: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: '600',
+    ...typography.smallBold,
+    color: colors.text,
   },
-  milestoneDate: {
-    color: '#475569',
-    fontSize: 11,
+  milestoneSubtitle: {
+    ...typography.caption,
+    color: colors.textMuted,
     marginTop: 2,
+  },
+
+  // Empty plans
+  emptyPlans: {
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+  },
+  emptyPlansText: {
+    ...typography.small,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+    textAlign: 'center',
   },
 });

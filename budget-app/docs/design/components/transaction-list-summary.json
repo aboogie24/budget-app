@@ -1,0 +1,34 @@
+{
+  "componentName": "TransactionListSummary",
+  "description": "Elevated glassFloating headline card for the transaction-list screen. Leads with the net money number for the currently visible (possibly filtered) set, with an income/expense split, item count, and an optional active-filter pill that can be cleared.",
+  "platform": "react-native",
+  "reuses": ["GradientBackground (ancestor)", "Skeleton"],
+  "props": {
+    "income": { "type": "number", "required": true, "description": "Sum of visible income transactions" },
+    "expense": { "type": "number", "required": true, "description": "Sum of visible expense transactions" },
+    "count": { "type": "number", "required": true, "description": "Number of visible transactions" },
+    "mode": { "type": "'net' | 'category' | 'day'", "required": true, "description": "Drives label and hero color: net→NET THIS LIST, category→SPENT IN THIS CATEGORY, day→ON THIS DAY" },
+    "filterLabel": { "type": "string", "required": false, "description": "Category or day label shown in the active-filter pill" },
+    "filterIcon": { "type": "string", "required": false, "description": "Ionicons name for the pill (pricetag / calendar-outline)" },
+    "onClearFilter": { "type": "function", "required": false, "description": "Clears params → router.replace('/transaction/list')" },
+    "loading": { "type": "boolean", "default": false, "description": "Renders Skeleton shell holding layout" }
+  },
+  "states": ["default", "filtered", "loading", "zero-net"],
+  "tokens": {
+    "container": "glassEffects.glassFloating",
+    "padding": "spacing.lg",
+    "label": "typography.caption + colors.textMuted (uppercase)",
+    "hero": "typography.h2, color via getValueColor(net) — colors.error for all-expense category",
+    "splitIncome": "colors.success",
+    "splitExpense": "colors.error",
+    "splitCount": "colors.textMuted",
+    "filterPillFill": "${colors.primary2}1f",
+    "filterPillRadius": "radius.full"
+  },
+  "accessibility": {
+    "label": "Net for this list {net}. Income {income}, expenses {expense}, {count} items.",
+    "clearFilterTarget": "44x44 via hitSlop",
+    "hint": "Clears the active filter"
+  },
+  "notes": "Omit a split column whose value is 0. Keep income and expense separate; derive net last — never pre-blend."
+}

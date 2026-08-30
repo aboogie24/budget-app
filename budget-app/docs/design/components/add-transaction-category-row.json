@@ -1,0 +1,31 @@
+{
+  "componentName": "CategoryRow",
+  "description": "Tap row that opens the existing CategoryPicker. Shows selected category or a placeholder; handles the no-categories empty state inline.",
+  "platform": "react-native",
+  "props": {
+    "selected": { "type": "{ id: string; name: string } | null", "required": true },
+    "hasCategories": { "type": "boolean", "required": true, "description": "Whether any category exists for the current type" },
+    "onPress": { "type": "function", "required": true, "description": "Open CategoryPicker" },
+    "onCreate": { "type": "function", "required": false, "description": "Route to category creation when none exist" }
+  },
+  "variants": ["default"],
+  "states": ["empty", "selected", "noCategories", "pressed"],
+  "layout": {
+    "row": { "bg": "colors.glassMedium", "border": "colors.borderGlass", "radius": "radius.md", "paddingHorizontal": "spacing.md", "minHeight": 48, "direction": "row", "align": "center" },
+    "gap": "spacing.md"
+  },
+  "tokens": {
+    "leadingIcon": { "name": "pricetag-outline", "color": "colors.textMuted" },
+    "selectedText": { "type": "typography.body", "color": "colors.text" },
+    "placeholderText": { "content": "Tap to select category", "color": "colors.textMuted" },
+    "chevron": { "name": "chevron-forward", "color": "colors.textDark", "flexShrink": 0 },
+    "noCategories": { "border": "dashed colors.borderGlass", "text": "No {type} categories yet", "action": "+ Create", "actionColor": "colors.primary2" }
+  },
+  "behavior": "numberOfLines=1 on the value, chevron pinned. In noCategories state the row shows a dashed border, outline icon, the word 'No … categories yet' and a '+ Create' action instead of opening an empty picker.",
+  "accessibility": {
+    "role": "button",
+    "label": "Category, {selected name or none selected}, opens category picker",
+    "minTarget": "48pt row",
+    "colorIndependent": "Empty state uses word + outline icon + dashed border, not color"
+  }
+}

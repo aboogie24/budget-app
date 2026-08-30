@@ -1,0 +1,62 @@
+{
+  "componentName": "SavingsGoalFormSheet",
+  "description": "Bottom-sheet modal for creating or editing a savings goal. A pure re-skin of the existing showForm Modal — same fields, same handleSave validation. Tokenizes the surface, inputs, and CTA to match add-transaction-form-field conventions.",
+  "platform": "react-native",
+  "props": {
+    "visible": { "type": "boolean", "required": true, "description": "showForm" },
+    "editing": { "type": "boolean", "required": true, "description": "true → 'Edit Goal' / 'Update'; false → 'New Savings Goal' / 'Create Goal'" },
+    "name": { "type": "string", "required": true },
+    "targetAmount": { "type": "string", "required": true },
+    "currentAmount": { "type": "string", "required": true },
+    "targetDate": { "type": "string", "required": false },
+    "priority": { "type": "string", "required": false },
+    "onChange": { "type": "function", "required": true, "description": "per-field setters (unchanged)" },
+    "onSave": { "type": "function", "required": true, "description": "handleSave" },
+    "onClose": { "type": "function", "required": true, "description": "close + resetForm" }
+  },
+  "fields": [
+    { "label": "Name", "placeholder": "e.g. Emergency Fund" },
+    { "label": "Target Amount", "placeholder": "$0.00", "keyboardType": "numeric" },
+    { "label": "Current Amount", "placeholder": "$0.00", "keyboardType": "numeric" },
+    { "label": "Target Date (optional)", "placeholder": "2026-12-31" },
+    { "label": "Priority (1 = highest)", "placeholder": "1", "keyboardType": "numeric" }
+  ],
+  "layout": {
+    "presentation": "bottom sheet, Modal animationType 'slide'",
+    "backdrop": "rgba(0,0,0,0.6) scrim (keep as-is)",
+    "sheetSurface": "colors.surface2",
+    "sheetRadius": "radius.xl (top corners)",
+    "sheetPadding": "spacing.xl",
+    "maxHeight": "85%",
+    "keyboardAvoidance": "wrap in KeyboardAvoidingView (behavior 'padding' iOS)"
+  },
+  "content": {
+    "title": { "type": "typography.h3", "color": "colors.text" },
+    "close": { "icon": "close", "size": 24, "color": "colors.textMuted", "hitSlop": "44pt" },
+    "fieldLabel": { "type": "typography.smallBold", "color": "colors.textMuted", "marginBottom": "spacing.sm" },
+    "input": {
+      "bg": "colors.glassLight",
+      "border": "1px colors.borderGlass",
+      "borderRadius": "radius.md",
+      "padding": { "horizontal": "spacing.md", "vertical": "spacing.md" },
+      "text": "typography.body colors.text",
+      "placeholderColor": "colors.textMuted"
+    },
+    "cta": {
+      "gradient": "gradients.primaryGradient",
+      "borderRadius": "radius.lg",
+      "paddingVertical": "spacing.lg",
+      "label": "typography.button colors.text",
+      "text": "editing ? 'Update' : 'Create Goal'"
+    }
+  },
+  "states": ["create", "edit", "validation-error (Alert, unchanged)"],
+  "accessibility": {
+    "role": "dialog",
+    "label": "{editing ? 'Edit goal' : 'New savings goal'} form",
+    "closeLabel": "Close",
+    "ctaLabel": "{editing ? 'Update goal' : 'Create goal'}",
+    "note": "Focus order top-to-bottom; numeric fields keep keyboardType='numeric'."
+  },
+  "developerNotes": "Re-skin only — keep all field state, handleSave, and Alert validation exactly. Swap #1a1a2e → colors.surface2 and the ['#a855f7','#7c3aed'] CTA → gradients.primaryGradient. Add KeyboardAvoidingView (missing today)."
+}

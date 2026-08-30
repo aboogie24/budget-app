@@ -1,0 +1,41 @@
+{
+  "componentName": "ProfileCard",
+  "description": "Top-of-screen richer glass card on the Settings tab: avatar + name + email + plan badge + edit button. Tokenized against design-system.ts. Supports a loading skeleton.",
+  "platform": "react-native",
+  "spec": "docs/design/specs/settings-tab-redesign.md#5.3",
+  "props": {
+    "name": { "type": "string", "required": true, "description": "User full name, typography.bodyBold colors.text, numberOfLines 1" },
+    "email": { "type": "string", "required": true, "description": "typography.caption colors.textMuted, numberOfLines 1" },
+    "plan": { "type": "string", "default": "Pro Plan", "description": "Plan label shown in the badge, prefixed with a star glyph" },
+    "avatarLabel": { "type": "string", "required": true, "description": "First initial, uppercased" },
+    "loading": { "type": "boolean", "default": false, "description": "Renders the profile skeleton (avatar circle + 2 lines + pill) instead of content" },
+    "onEditPress": { "type": "function", "required": false, "description": "Edit-profile tap handler" }
+  },
+  "variants": ["default", "loading", "longText"],
+  "states": ["default", "loading"],
+  "layout": {
+    "card": { "surface": "glassEffects.glass", "radius": "radius.lg", "padding": "spacing.lg", "gap": "spacing.md", "flexDirection": "row", "alignItems": "center" },
+    "avatar": { "size": 56, "radius": "radius.full", "fill": "colors.primary", "textColor": "colors.text", "fontWeight": 700 },
+    "name": { "type": "typography.bodyBold", "color": "colors.text" },
+    "email": { "type": "typography.caption", "color": "colors.textMuted", "marginTop": "spacing.xs" },
+    "planBadge": { "fill": "${colors.primary2}26", "border": "${colors.primary2}40", "radius": "radius.sm", "paddingHorizontal": "spacing.sm", "paddingVertical": 2, "textColor": "colors.primary2", "type": "typography.caption", "glyph": "star" },
+    "editButton": { "size": 36, "radius": "radius.md", "fill": "colors.glassLight", "border": "colors.borderGlass", "icon": "create-outline", "iconSize": 16, "iconColor": "colors.primary2", "hitSlopTo": 44 }
+  },
+  "skeleton": {
+    "component": "components/Skeleton.tsx",
+    "avatar": "Skeleton width 56 height 56 borderRadius radius.full",
+    "lines": ["Skeleton height 12 width 60%", "Skeleton height 10 width 40%", "Skeleton height 14 width 64 (pill)"]
+  },
+  "tokens": {
+    "colors": ["primary", "primary2", "text", "textMuted", "glassLight", "borderGlass"],
+    "typography": ["bodyBold", "caption"],
+    "spacing": ["lg", "md", "sm", "xs"],
+    "radius": ["lg", "md", "sm", "full"]
+  },
+  "accessibility": {
+    "avatarRole": "image (decorative initial)",
+    "editButton": { "role": "button", "label": "Edit profile", "target": ">= 44pt via hit-slop" },
+    "planBadge": "star glyph + text so plan tier is not color-only",
+    "overflow": "name + email numberOfLines 1 with ellipsis; badge sits on its own line (marginTop)"
+  }
+}

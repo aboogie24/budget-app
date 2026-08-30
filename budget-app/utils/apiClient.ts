@@ -1,10 +1,36 @@
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_URL =
-  Constants.expoConfig?.extra?.API_URL ??
-  (Constants as any).manifest?.extra?.API_URL ??
-  'http://localhost:8080';
+/**
+ * Resolve the backend base URL.
+ *
+ * In development the backend runs on the same machine as the Metro bundler, so
+ * the host is derived from Metro's `hostUri` — the dev machine's LAN IP that
+ * the device is already connected to. This follows network/DHCP changes with
+ * no manual reconfiguration. `hostUri` is only set while connected to Metro,
+ * so production/standalone builds fall through to the configured `API_URL`.
+ */
+function resolveApiUrl(): string {
+  const BACKEND_PORT = 8080;
+
+  const hostUri =
+    Constants.expoConfig?.hostUri ??
+    (Constants as any).manifest?.hostUri ??
+    (Constants as any).manifest2?.extra?.expoGo?.debuggerHost ??
+    '';
+  const metroHost = String(hostUri).split(':')[0];
+  if (metroHost && metroHost !== 'localhost' && metroHost !== '127.0.0.1') {
+    return `http://${metroHost}:${BACKEND_PORT}`;
+  }
+
+  return (
+    Constants.expoConfig?.extra?.API_URL ??
+    (Constants as any).manifest?.extra?.API_URL ??
+    `http://localhost:${BACKEND_PORT}`
+  );
+}
+
+const API_URL = resolveApiUrl();
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   try {

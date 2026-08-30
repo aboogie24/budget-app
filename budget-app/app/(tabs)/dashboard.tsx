@@ -1,15 +1,34 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { fetchUserTransactions, fetchInvestmentHoldings, fetchAccountBalances, fetchProperties, checkBudgetThresholds } from '@/utils/api';
+import {
+  fetchUserTransactions,
+  fetchInvestmentHoldings,
+  fetchAccountBalances,
+  fetchProperties,
+  fetchAttention,
+  fetchAINudges,
+  recordNetWorthSnapshot,
+  fetchDashboardStatus,
+  type AttentionItem,
+  type NetWorthSnapshotPoint,
+  type DashboardStatusResponse,
+} from '@/utils/api';
 import { api } from '@/utils/apiClient';
 import { getCurrentUser } from '@/utils/storage';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { DrawerNavigation } from '@/components/DrawerNavigation';
-import Svg, { Circle, Polygon, Polyline } from 'react-native-svg';
+import { AttentionCard } from '@/components/AttentionCard';
+import GradientBackground from '@/components/GradientBackground';
+import { Skeleton } from '@/components/Skeleton';
+import { colors, spacing, radius, typography } from '@/utils/design-system';
+import { StatusHeadlineCard, type HeadlineStatus } from '@/components/dashboard/StatusHeadlineCard';
+import { ThisWeekProof } from '@/components/dashboard/ThisWeekProof';
+import { TrajectoryStrip } from '@/components/dashboard/TrajectoryStrip';
+import { ScopeToggle, type Scope } from '@/components/dashboard/ScopeToggle';
+import { RecentActivity, type RecentTx, type PartnerGlyph } from '@/components/dashboard/RecentActivity';
 
 type Tx = {
   id: string;
@@ -46,33 +65,63 @@ type FrameworkLevel = {
   total_steps: number;
 };
 
+type Member = { user_id: string; full_name: string; role: string };
+
+// severity ordering for worst-signal-wins
+// Parse a 'YYYY-MM-DD…' string as a LOCAL calendar date. new Date('YYYY-MM-DD')
+// parses UTC midnight, which lands on the previous local day in negative-offset
+// timezones — every date comparison on this screen is calendar-local.
+const parseLocalDate = (value?: string): Date | null => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+};
+
+const SEVERITY: Record<Exclude<HeadlineStatus, 'setup'>, number> = { good: 0, watch: 1, alert: 2 };
+const severityMin = (...s: Exclude<HeadlineStatus, 'setup'>[]) =>
+  s.reduce((worst, cur) => (SEVERITY[cur] > SEVERITY[worst] ? cur : worst), 'good' as Exclude<HeadlineStatus, 'setup'>);
+
+const compact = (v: number) => {
+  if (Math.abs(v) >= 1000) return '$' + (v / 1000).toFixed(1) + 'k';
+  return '$' + Math.round(Math.abs(v)).toLocaleString('en-US');
+};
+
 export default function DashboardScreen() {
   const router = useRouter();
+
   const [transactions, setTransactions] = useState<Tx[]>([]);
   const [budgetsData, setBudgetsData] = useState<any[]>([]);
-  const [debtSummary, setDebtSummary] = useState({ total: 0, minPayment: 0, count: 0 });
-  const [savingsSummary, setSavingsSummary] = useState({ totalTarget: 0, totalCurrent: 0, count: 0 });
-  const [billsSummary, setBillsSummary] = useState({ paid: 0, total: 0 });
+  const [debtSummary, setDebtSummary] = useState({ total: 0 });
+  const [savingsSummary, setSavingsSummary] = useState({ totalTarget: 0, totalCurrent: 0 });
+  const [billsData, setBillsData] = useState<any[]>([]);
   const [investmentTotal, setInvestmentTotal] = useState(0);
   const [cashTotal, setCashTotal] = useState(0);
   const [propertyTotal, setPropertyTotal] = useState(0);
   const [userName, setUserName] = useState<string | null>(null);
   const [householdSummary, setHouseholdSummary] = useState<HouseholdSummary | null>(null);
-  const [isSharedMode, setIsSharedMode] = useState(false);
-  const [spendingAlertCount, setSpendingAlertCount] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [nudges, setNudges] = useState<any[]>([]);
   const [frameworkLevel, setFrameworkLevel] = useState<FrameworkLevel | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [householdMembers, setHouseholdMembers] = useState<{ user_id: string; full_name: string; role: string }[]>([]);
+  const [householdMembers, setHouseholdMembers] = useState<Member[]>([]);
+  const [attention, setAttention] = useState<AttentionItem[]>([]);
+  const [netWorthHistory, setNetWorthHistory] = useState<NetWorthSnapshotPoint[]>([]);
+
+  const [scope, setScope] = useState<Scope>('household');
+  const [statusResp, setStatusResp] = useState<DashboardStatusResponse | null>(null);
+  const [statusErrored, setStatusErrored] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
-  const monthStart = new Date(currentYear, currentMonth, 1);
-  const monthEnd = new Date(currentYear, currentMonth + 1, 0);
+  const monthStart = useMemo(() => new Date(currentYear, currentMonth, 1), [currentYear, currentMonth]);
+  const monthEnd = useMemo(() => new Date(currentYear, currentMonth + 1, 0), [currentYear, currentMonth]);
 
-  const loadDashboard = useCallback(async () => {
+  // ── Data loading ── preserves the original fetch flow; adds the status verdict.
+  const loadDashboard = useCallback(async (activeScope: Scope) => {
     const data = await fetchUserTransactions();
     if (data) setTransactions(data as Tx[]);
 
@@ -81,26 +130,24 @@ export default function DashboardScreen() {
       setUserName(user.full_name || user.email || null);
       setUserId(user.id || null);
     }
+    if (!user?.id) {
+      setLoading(false);
+      setLoadedOnce(true);
+      return;
+    }
 
-    if (!user?.id) return;
-
-    // Fetch household data — separate calls so member loading doesn't fail if summary fails
+    // Household data — separate calls so member loading survives a summary failure.
     try {
       const householdData = await api.get<any>(`/auth/households/me`, { user_id: user.id });
       const householdID = householdData?.household_id;
-
       if (householdID) {
-        // Store household members for avatars (from the /me response)
         let members = householdData.members;
         if (typeof members === 'string') {
           try { members = JSON.parse(members); } catch {}
         }
         if (Array.isArray(members) && members.length > 0) {
           setHouseholdMembers(members);
-          setIsSharedMode(true);
         }
-
-        // Try summary separately — this can fail without breaking members
         try {
           const summary = await api.get<HouseholdSummary>(`/auth/households/summary`, { household_id: householdID });
           setHouseholdSummary(summary);
@@ -112,13 +159,13 @@ export default function DashboardScreen() {
       console.log('Household fetch error:', e);
     }
 
-    // Load personal data as well (for comparison or fallback)
+    let localDebt = 0;
     try {
       const debts = await api.get(`/auth/debts`, { user_id: user.id });
       const debtsArray = Array.isArray(debts) ? debts : [];
       const totalDebt = debtsArray.reduce((sum, d) => sum + (d.balance || 0), 0);
-      const minPayments = debtsArray.reduce((sum, d) => sum + (d.min_payment || 0), 0);
-      setDebtSummary({ total: totalDebt, minPayment: minPayments, count: debtsArray.length });
+      setDebtSummary({ total: totalDebt });
+      localDebt = totalDebt;
     } catch (e) {
       console.error('Debts fetch error:', e);
     }
@@ -128,7 +175,7 @@ export default function DashboardScreen() {
       const goalsArray = Array.isArray(goals) ? goals : [];
       const totalTarget = goalsArray.reduce((sum, g) => sum + (g.target_amount || 0), 0);
       const totalCurrent = goalsArray.reduce((sum, g) => sum + (g.current_amount || 0), 0);
-      setSavingsSummary({ totalTarget, totalCurrent, count: goalsArray.length });
+      setSavingsSummary({ totalTarget, totalCurrent });
     } catch (e) {
       console.error('Savings goals fetch error:', e);
     }
@@ -142,222 +189,355 @@ export default function DashboardScreen() {
 
     try {
       const bills = await api.get(`/auth/bills`, { user_id: user.id });
-      const billsArr = Array.isArray(bills) ? bills : [];
-      const paidCount = billsArr.filter((b: any) => b.status === 'paid').length;
-      setBillsSummary({ paid: paidCount, total: billsArr.length });
+      setBillsData(Array.isArray(bills) ? bills : []);
     } catch (e) {
       console.error('Bills fetch error:', e);
     }
 
+    let localCash = 0;
+    let localInvestments = 0;
+    let localProperties = 0;
     try {
-      const [holdingsData, balancesData, propsData, alertsData] = await Promise.all([
+      const [holdingsData, balancesData, propsData] = await Promise.all([
         fetchInvestmentHoldings(),
         fetchAccountBalances('depository'),
         fetchProperties(),
-        checkBudgetThresholds().catch(() => []),
       ]);
       const invTotal = (Array.isArray(holdingsData) ? holdingsData : []).reduce(
-        (sum: number, h: any) => sum + (h.institution_value || 0), 0
+        (sum: number, h: any) => sum + (h.institution_value || 0), 0,
       );
       setInvestmentTotal(invTotal);
+      localInvestments = invTotal;
       const cash = (Array.isArray(balancesData) ? balancesData : []).reduce(
-        (sum: number, a: any) => sum + (a.current_balance || 0), 0
+        (sum: number, a: any) => sum + (a.current_balance || 0), 0,
       );
       setCashTotal(cash);
+      localCash = cash;
       const propTotal = (Array.isArray(propsData) ? propsData : []).reduce(
-        (sum: number, p: any) => sum + (p.manual_value || p.zestimate || 0), 0
+        (sum: number, p: any) => sum + (p.manual_value || p.zestimate || 0), 0,
       );
       setPropertyTotal(propTotal);
-      setSpendingAlertCount(Array.isArray(alertsData) ? alertsData.length : 0);
+      localProperties = propTotal;
     } catch {}
 
-    // Load AI nudges
-    try {
-      const nudgeData = await api.get<any[]>('/auth/ai/nudges');
-      setNudges(Array.isArray(nudgeData) ? nudgeData : []);
-    } catch {}
-
-    // Load framework level
     try {
       const levelData = await api.get<FrameworkLevel>('/auth/ai/framework-level');
       if (levelData) setFrameworkLevel(levelData);
     } catch {
       console.log('Framework level fetch skipped');
     }
+
+    try {
+      const att = await fetchAttention();
+      const items = Array.isArray(att?.items) ? [...att.items] : [];
+
+      // Merge in the advisor's proactive nudges — same card, tap opens a chat
+      // seeded with the nudge (or navigates when the nudge targets a screen).
+      try {
+        const nudges = await fetchAINudges();
+        for (const n of Array.isArray(nudges) ? nudges : []) {
+          if (n.is_read) continue;
+          const navigates = n.action_type === 'navigate_to' && !!n.action_data;
+          items.push({
+            id: `nudge-${n.id}`,
+            priority: 100 + (n.priority || 0),
+            title: n.title,
+            body: n.body,
+            icon: 'sparkles',
+            color: colors.primary2,
+            cta_label: navigates ? 'Open' : 'Ask AI',
+            action: navigates ? 'navigate' : 'ask_ai',
+            payload: navigates
+              ? { href: n.action_data }
+              : { seed: n.action_data || `${n.title} — ${n.body}. What should we do about this?` },
+          });
+        }
+      } catch (e) {
+        console.log('Nudge fetch error (non-blocking):', e);
+      }
+
+      setAttention(items);
+    } catch (e) {
+      console.log('Attention fetch error (non-blocking):', e);
+    }
+
+    // Net-worth snapshot (idempotent upsert) + trailing window for the sparkline.
+    try {
+      const snapTotal = localCash + localInvestments + localProperties - localDebt;
+      const res = await recordNetWorthSnapshot(
+        { cash: localCash, investments: localInvestments, properties: localProperties, debt: localDebt, total: snapTotal },
+        30,
+      );
+      setNetWorthHistory(Array.isArray(res?.snapshots) ? res.snapshots : []);
+    } catch (e) {
+      console.log('Net-worth snapshot error (non-blocking):', e);
+    }
+
+    // ── Status verdict ── scope=personal for "Me". On failure we fall back to
+    // a client-side worst-signal-wins verdict computed below.
+    try {
+      const statusScope = activeScope === 'me' ? 'personal' : 'household';
+      const s = await fetchDashboardStatus(statusScope);
+      setStatusResp(s);
+      setStatusErrored(false);
+    } catch (e) {
+      console.log('Status fetch error (falling back):', e);
+      setStatusResp(null);
+      setStatusErrored(true);
+    }
+
+    setLoading(false);
+    setLoadedOnce(true);
   }, [currentMonth, currentYear]);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadDashboard(scope);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadDashboard, scope]);
+
   useEffect(() => {
-    loadDashboard();
+    loadDashboard(scope);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadDashboard]);
 
   useFocusEffect(
     useCallback(() => {
-      loadDashboard();
-    }, [loadDashboard])
+      loadDashboard(scope);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadDashboard]),
   );
 
-  // Use household data if available, otherwise use personal data
-  const displayDebtTotal = isSharedMode && householdSummary ? householdSummary.total_debt : debtSummary.total;
-  const displaySavingsTarget = isSharedMode && householdSummary ? householdSummary.total_savings_target : savingsSummary.totalTarget;
-  const displaySavingsCurrent = isSharedMode && householdSummary ? householdSummary.total_savings_current : savingsSummary.totalCurrent;
-  const displayTotalIncome = isSharedMode && householdSummary ? householdSummary.total_income : 0;
-  const displayTotalExpenses = isSharedMode && householdSummary ? householdSummary.total_expenses : 0;
+  // Solo users are forced into "me" scope with no toggle.
+  const isCouple = householdMembers.length >= 2;
+  const effectiveScope: Scope = isCouple ? scope : 'me';
 
-  const expenseData = transactions.filter((t) => t.type === 'expense');
-  const incomeData = transactions.filter((t) => t.type === 'income');
-  const totalIncome = incomeData.reduce((sum, t) => sum + (t.amount || 0), 0);
-  const totalExpenses = expenseData.reduce((sum, t) => sum + (t.amount || 0), 0);
+  const onScopeChange = useCallback((next: Scope) => {
+    setScope(next);
+    // Re-fetch the status verdict scoped; the rest of the screen re-derives locally.
+    (async () => {
+      try {
+        const statusScope = next === 'me' ? 'personal' : 'household';
+        const s = await fetchDashboardStatus(statusScope);
+        setStatusResp(s);
+        setStatusErrored(false);
+      } catch {
+        setStatusResp(null);
+        setStatusErrored(true);
+      }
+    })();
+  }, []);
 
-  const countOccurrencesInMonth = (startDate?: string, frequency?: string) => {
+  // ── Scope-filtered transactions ──
+  const scopedTx = useMemo(() => {
+    if (effectiveScope === 'me') {
+      return transactions.filter((t) => userId && String(t.user_id) === String(userId));
+    }
+    return transactions;
+  }, [transactions, effectiveScope, userId]);
+
+  // ── This-month cash flow (locally computable, for the error fallback) ──
+  const { monthInflow, monthOutflow, monthFlow } = useMemo(() => {
+    let inflow = 0;
+    let outflow = 0;
+    for (const t of scopedTx) {
+      const d = parseLocalDate(t.date);
+      if (!d || d < monthStart || d > monthEnd) continue;
+      if (t.type === 'income') inflow += t.amount || 0;
+      else if (t.type === 'expense') outflow += t.amount || 0;
+    }
+    return { monthInflow: inflow, monthOutflow: outflow, monthFlow: inflow - outflow };
+  }, [scopedTx, monthStart, monthEnd]);
+
+  // ── Budget totals (personal budgets; household uses summary savings/debt) ──
+  // Mirrors the backend's occurrencesInMonth (handlers/budgets.go): step whole
+  // cadence intervals from the start_date anchor so biweekly keeps its 14-day
+  // phase instead of snapping to the first matching weekday of the month.
+  const countOccurrencesInMonth = useCallback((startDate?: string, frequency?: string) => {
     const freq = (frequency || '').toLowerCase();
-    const start = startDate ? new Date(startDate) : monthStart;
+    const start = (startDate ? parseLocalDate(startDate) : null) ?? monthStart;
     if (start > monthEnd) return 0;
     if (freq === 'weekly' || freq === 'biweekly') {
       const step = freq === 'weekly' ? 7 : 14;
-      let count = 0;
-      const current = new Date(Math.max(start.getTime(), monthStart.getTime()));
-      // align to same weekday as start
-      current.setDate(current.getDate() + ((7 + start.getDay() - current.getDay()) % 7));
-      while (current <= monthEnd) {
-        count++;
-        current.setDate(current.getDate() + step);
+      const current = new Date(start);
+      if (current < monthStart) {
+        const days = Math.floor((monthStart.getTime() - current.getTime()) / 86400000);
+        current.setDate(current.getDate() + Math.ceil(days / step) * step);
       }
+      let count = 0;
+      while (current <= monthEnd) { count++; current.setDate(current.getDate() + step); }
       return count;
     }
     if (freq === '1st-15th') return 2;
-    if (freq === 'monthly' || freq === '') return 1;
     return 1;
-  };
+  }, [monthStart, monthEnd]);
 
-  const budgetIncomeTotal = budgetsData
+  const budgetIncomeTotal = useMemo(() => budgetsData
     .filter((b) => (b.type || '').toLowerCase() === 'income')
-    .reduce((sum, b) => sum + (b.amount || 0) * countOccurrencesInMonth(b.start_date, b.frequency), 0);
-  const budgetExpenseTotal = budgetsData
+    .reduce((sum, b) => sum + (b.amount || 0) * countOccurrencesInMonth(b.start_date, b.frequency), 0),
+    [budgetsData, countOccurrencesInMonth]);
+  const budgetExpenseTotal = useMemo(() => budgetsData
     .filter((b) => (b.type || '').toLowerCase() === 'expense')
-    .reduce((sum, b) => sum + (b.amount || 0) * countOccurrencesInMonth(b.start_date, b.frequency), 0);
+    .reduce((sum, b) => sum + (b.amount || 0) * countOccurrencesInMonth(b.start_date, b.frequency), 0),
+    [budgetsData, countOccurrencesInMonth]);
 
-  const budgetPercent =
-    budgetsData.length && budgetIncomeTotal
-      ? Math.max(0, Math.min(100, Math.round(100 - (budgetExpenseTotal / budgetIncomeTotal) * 100)))
-      : 0;
-  const savingsPercent = displaySavingsTarget
-    ? Math.round((displaySavingsCurrent / displaySavingsTarget) * 100)
+  const budgetPercentUsed = budgetExpenseTotal > 0
+    ? Math.min(999, Math.round((monthOutflow / budgetExpenseTotal) * 100))
     : 0;
-  const billsPercent = billsSummary.total > 0 ? Math.round((billsSummary.paid / billsSummary.total) * 100) : 0;
-  const netWorth = cashTotal + investmentTotal + propertyTotal - displayDebtTotal;
 
-  const formatCurrency = (v: number) =>
-    v.toLocaleString('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-    });
+  // Savings + debt: household summary in household scope, else personal.
+  const useHousehold = effectiveScope === 'household' && householdSummary;
+  const savingsTarget = useHousehold ? householdSummary!.total_savings_target : savingsSummary.totalTarget;
+  const savingsCurrent = useHousehold ? householdSummary!.total_savings_current : savingsSummary.totalCurrent;
+  const displayDebtTotal = useHousehold ? householdSummary!.total_debt : debtSummary.total;
+  const savingsPercent = savingsTarget > 0 ? Math.round((savingsCurrent / savingsTarget) * 100) : 0;
 
-  const formatCompact = (v: number) => {
-    if (Math.abs(v) >= 1000) {
-      return '$' + (v / 1000).toFixed(1) + 'k';
+  // Net worth stays PERSONAL-scope in the trajectory strip: the snapshot series
+  // (and therefore the sparkline + delta %) is recorded from personal figures,
+  // and assets here are personal too. Swapping in household debt made the hero
+  // number disagree with its own trend line. Household combined finances live
+  // on the partner dashboard.
+  const netWorth = cashTotal + investmentTotal + propertyTotal - debtSummary.total;
+
+  // ── Bills (scoped: Me filters to this user's bills via user_id when present) ──
+  const scopedBills = useMemo(() => {
+    if (effectiveScope === 'me' && userId) {
+      return billsData.filter((b: any) => !b.user_id || String(b.user_id) === String(userId));
     }
-    return formatCurrency(v);
-  };
+    return billsData;
+  }, [billsData, effectiveScope, userId]);
+  const billsPaid = scopedBills.filter((b: any) => b.status === 'paid').length;
+  const billsTotal = scopedBills.length;
+  const billsOverdue = scopedBills.filter((b: any) => b.status === 'overdue').length;
+  const billsDueSoon = scopedBills.filter((b: any) => b.status === 'due' || b.status === 'due_soon').length;
 
-  // Weekly spending computation from transactions
-  const getWeeklySpending = () => {
+  // ── Weekly spending (Sunday→Saturday), from scoped transactions ──
+  const { dailyTotals, thisWeekTotal } = useMemo(() => {
     const today = new Date();
-    const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon...
-    // Get Monday of this week
-    const monday = new Date(today);
-    const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    monday.setDate(today.getDate() - diff);
-    monday.setHours(0, 0, 0, 0);
+    const dow = today.getDay();
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - dow);
+    weekStart.setHours(0, 0, 0, 0);
 
-    const dailyTotals = [0, 0, 0, 0, 0, 0, 0]; // M T W T F S S
-    let weekTotal = 0;
-    let myWeekTotal = 0;
-    let partnerWeekTotal = 0;
-
-    expenseData.forEach((t) => {
-      const txDate = new Date(t.date);
-      txDate.setHours(0, 0, 0, 0);
-      const diffDays = Math.floor((txDate.getTime() - monday.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays >= 0 && diffDays < 7) {
-        dailyTotals[diffDays] += t.amount || 0;
-        weekTotal += t.amount || 0;
-        const isPartnerTx = t.user_id && userId && String(t.user_id) !== String(userId);
-        if (isPartnerTx) {
-          partnerWeekTotal += t.amount || 0;
-        } else {
-          myWeekTotal += t.amount || 0;
-        }
+    const totals = [0, 0, 0, 0, 0, 0, 0];
+    let week = 0;
+    scopedTx.forEach((t) => {
+      if (t.type !== 'expense') return;
+      const txDate = parseLocalDate(typeof t.date === 'string' ? t.date : '');
+      if (!txDate) return;
+      // Round, not floor: DST makes one day 23h/25h and floor would shift the bucket.
+      const diff = Math.round((txDate.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24));
+      if (diff >= 0 && diff <= dow) {
+        totals[diff] += t.amount || 0;
+        week += t.amount || 0;
       }
     });
+    return { dailyTotals: totals, thisWeekTotal: week };
+  }, [scopedTx]);
 
-    return { dailyTotals, weekTotal, myWeekTotal, partnerWeekTotal };
-  };
+  // Weekly spending target from the monthly EXPENSE budget — income is not a
+  // spending cap. Scale by real days in the month, not a flat ÷4 (a month
+  // averages ~4.33 weeks, so ÷4 overstated the weekly budget ~8%).
+  const weeklyBudget = useMemo(() => {
+    if (budgetExpenseTotal <= 0) return 0;
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return Math.round((budgetExpenseTotal * 7) / daysInMonth);
+  }, [budgetExpenseTotal]);
 
-  const { dailyTotals, weekTotal: thisWeekTotal, myWeekTotal, partnerWeekTotal } = getWeeklySpending();
-  // Weekly budget = budgeted income / 4 (what you can spend per week)
-  // Falls back to budgeted expenses / 4 if no income budgets exist
-  const weeklyBudget = budgetIncomeTotal > 0
-    ? Math.round(budgetIncomeTotal / 4)
-    : budgetExpenseTotal > 0
-      ? Math.round(budgetExpenseTotal / 4)
-      : 0;
-  const weeklyPercentChange = weeklyBudget > 0 ? Math.round(((thisWeekTotal - weeklyBudget) / weeklyBudget) * 100) : 0;
+  // ── Client-side status fallback (worst-signal-wins) ──
+  const clientStatus = useMemo<{ status: Exclude<HeadlineStatus, 'setup'>; headline: string }>(() => {
+    const billsStatus: Exclude<HeadlineStatus, 'setup'> =
+      billsOverdue > 0 ? 'alert' : billsDueSoon > 0 ? 'watch' : 'good';
 
-  // Greeting based on time of day
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning,';
-    if (hour < 17) return 'Good afternoon,';
-    return 'Good evening,';
-  };
+    let spendStatus: Exclude<HeadlineStatus, 'setup'> = 'good';
+    if (weeklyBudget > 0) {
+      const over = ((thisWeekTotal - weeklyBudget) / weeklyBudget) * 100;
+      if (over > 20) spendStatus = 'alert';
+      else if (over > 5) spendStatus = 'watch';
+    }
 
-  // Time ago helper
-  const timeAgo = (dateStr: string) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-  };
+    const cashFlowStatus: Exclude<HeadlineStatus, 'setup'> =
+      monthFlow < 0 ? 'alert' : monthFlow < 50 ? 'watch' : 'good';
 
-  // Mini progress ring component
-  const MiniRing = ({ percent, size = 44, strokeWidth = 3, color = '#a855f7' }: { percent: number; size?: number; strokeWidth?: number; color?: string }) => {
-    const r = (size - strokeWidth) / 2;
-    const circ = 2 * Math.PI * r;
-    const offset = circ - (Math.min(percent, 100) / 100) * circ;
-    return (
-      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-        <Svg width={size} height={size}>
-          <Circle
-            cx={size / 2}
-            cy={size / 2}
-            r={r}
-            fill="none"
-            stroke="rgba(255,255,255,0.08)"
-            strokeWidth={strokeWidth}
-          />
-          <Circle
-            cx={size / 2}
-            cy={size / 2}
-            r={r}
-            fill="none"
-            stroke={color}
-            strokeWidth={strokeWidth}
-            strokeDasharray={`${circ}`}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-            transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          />
-        </Svg>
-        <View style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}>
-          <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>{Math.round(percent)}%</Text>
-        </View>
-      </View>
-    );
-  };
+    const overall = severityMin(billsStatus, spendStatus, cashFlowStatus);
+
+    // Deterministic per-state sentence.
+    let headline: string;
+    if (overall === 'good') {
+      headline = weeklyBudget > 0 && thisWeekTotal < weeklyBudget
+        ? "You're under budget and bills are covered — nice week."
+        : 'Everything looks on track this week.';
+    } else if (overall === 'watch') {
+      if (spendStatus === 'watch') headline = "Spending's running a bit hot this week — keep an eye on it.";
+      else if (billsStatus === 'watch') headline = 'A bill is coming due soon — worth a look.';
+      else headline = "Cash flow's near flat this month — keep an eye on it.";
+    } else {
+      if (billsStatus === 'alert') headline = "Heads up — a bill is overdue. Let's get it handled.";
+      else if (cashFlowStatus === 'alert') headline = "You're spending more than you're bringing in this month.";
+      else headline = "Spending's well over budget this week — time to reset.";
+    }
+    return { status: overall, headline };
+  }, [billsOverdue, billsDueSoon, weeklyBudget, thisWeekTotal, monthFlow]);
+
+  // ── Empty (new household / no data) detection ──
+  const isEmpty = loadedOnce && !loading && transactions.length === 0 && budgetsData.length === 0;
+
+  // ── Resolve headline props (endpoint wins; else fallback) ──
+  const headlineStatus: HeadlineStatus = isEmpty
+    ? 'setup'
+    : (statusResp?.status ?? clientStatus.status);
+  const headlineText = isEmpty
+    ? "Let's get your first numbers in — link an account or add a transaction."
+    : (statusResp?.headline || clientStatus.headline);
+  const heroCashFlow = statusResp?.hero_value ?? monthFlow;
+  const heroIn = statusResp?.signals?.income_month ?? monthInflow;
+  const heroOut = statusResp?.signals?.expense_month ?? monthOutflow;
+
+  // ── Recent transactions (last 3, actual) ──
+  const recentTx: RecentTx[] = useMemo(() =>
+    [...scopedTx]
+      .sort((a, b) => (parseLocalDate(b.date)?.getTime() ?? 0) - (parseLocalDate(a.date)?.getTime() ?? 0))
+      .slice(0, 3),
+    [scopedTx]);
+
+  // Partner glyph: A → primary2/◑, B → info/◐, shared/unknown/Me-scope → none.
+  const resolvePartner = useCallback((tx: RecentTx): PartnerGlyph => {
+    if (effectiveScope === 'me') return null;
+    if (!tx.user_id || !userId) return null;
+    if (String(tx.user_id) === String(userId)) {
+      const me = householdMembers.find((m) => String(m.user_id) === String(userId));
+      return { glyph: '◑', color: colors.primary2, name: (me?.full_name || userName || 'You').split(' ')[0] };
+    }
+    const partner = householdMembers.find((m) => String(m.user_id) === String(tx.user_id));
+    if (!partner) return null;
+    return { glyph: '◐', color: colors.info, name: (partner.full_name || 'Partner').split(' ')[0] };
+  }, [effectiveScope, userId, householdMembers, userName]);
+
+  // ── Greeting ──
+  const greeting = (() => {
+    const h = new Date().getHours();
+    const word = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+    return `${word}, ${(userName || 'there').split(' ')[0]}`;
+  })();
+
+  const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const todayIndex = new Date().getDay();
+
+  // Net-worth delta % from history (first vs last).
+  const netWorthDeltaPercent = useMemo(() => {
+    if (netWorthHistory.length < 2) return null;
+    const first = netWorthHistory[0].total;
+    const last = netWorthHistory[netWorthHistory.length - 1].total;
+    if (!first) return null;
+    return Math.round(((last - first) / Math.abs(first)) * 1000) / 10;
+  }, [netWorthHistory]);
+
+  const showSkeleton = loading && !loadedOnce;
+  const hasTrajectory = frameworkLevel != null || netWorthHistory.length >= 2 || netWorth !== 0;
 
   const drawerItems = [
     { id: 'dashboard', icon: 'grid-outline', label: 'Dashboard', onPress: () => router.push('/(tabs)/dashboard') },
@@ -373,767 +553,250 @@ export default function DashboardScreen() {
     { id: 'accounts', icon: 'link-outline', label: 'Linked Accounts', onPress: () => router.push('/linked-accounts') },
   ];
 
-  // Framework level steps
-  const frameworkSteps = [
-    { icon: 'home-outline' as const, label: 'Foundation' },
-    { icon: 'flame-outline' as const, label: 'Debt Free' },
-    { icon: 'shield-checkmark-outline' as const, label: 'Security' },
-    { icon: 'trending-up-outline' as const, label: 'Grow' },
-    { icon: 'star-outline' as const, label: 'Dream' },
-  ];
-
-  const currentLevelIndex = (frameworkLevel?.current_level ?? 1) - 1;
-  const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-  const todayDayIndex = (() => {
-    const d = new Date().getDay();
-    return d === 0 ? 6 : d - 1; // Convert Sun=0 to index 6, Mon=1 to index 0
-  })();
-
-  const maxBarValue = Math.max(...dailyTotals, 1);
+  const partners = householdMembers.filter((m) => userId && String(m.user_id) !== String(userId));
 
   return (
-    <LinearGradient colors={['#0f0a1e', '#1a1035', '#0f0a1e']} style={{ flex: 1 }}>
+    <GradientBackground variant="bgDarkPurple" style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+        {/* ── Header ── */}
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.drawerBtn} onPress={() => setDrawerOpen(true)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Ionicons name="menu" size={22} color={colors.text} />
+          </TouchableOpacity>
 
-          {/* ===== 1. HEADER - Greeting + Couple Avatars ===== */}
-          <View style={styles.headerRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.greetingSub}>{getGreeting()}</Text>
-              <Text style={styles.greeting}>
-                {userName || 'You'} <Text style={{ fontSize: 20 }}>{"\u2764\uFE0F"}</Text>
-              </Text>
-            </View>
-            <View style={styles.coupleAvatars}>
-              <LinearGradient
-                colors={['#7c3aed', '#a855f7']}
-                style={[styles.avatar, { zIndex: 2 }]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Text style={styles.avatarText}>
-                  {(userName || 'Y').charAt(0).toUpperCase()}
-                </Text>
-              </LinearGradient>
-              {(() => {
-                const partners = householdMembers.filter(m => userId && String(m.user_id) !== String(userId));
-                if (partners.length > 0) {
-                  return partners.slice(0, 2).map((partner, i) => (
-                    <LinearGradient
-                      key={partner.user_id}
-                      colors={i === 0 ? ['#ec4899', '#f472b6'] : ['#f59e0b', '#fbbf24']}
-                      style={[styles.avatar, { marginLeft: -12, zIndex: 1 - i }]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                    >
-                      <Text style={styles.avatarText}>
-                        {(partner.full_name || 'P').charAt(0).toUpperCase()}
-                      </Text>
-                    </LinearGradient>
-                  ));
-                }
-                // Show a dim placeholder partner avatar when solo
-                return (
-                  <View style={[styles.avatar, { marginLeft: -12, zIndex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderColor: '#0f0a1e' }]}>
-                    <Ionicons name="person-add-outline" size={14} color="rgba(255,255,255,0.3)" />
-                  </View>
-                );
-              })()}
-            </View>
+          <View style={styles.greetingWrap}>
+            <Text style={styles.greeting} numberOfLines={1}>{greeting}</Text>
           </View>
 
-          {/* ===== 2. AI INSIGHT CARD ===== */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.aiCard}
-            onPress={async () => {
-              if (nudges.length > 0) {
-                const nudge = nudges[0];
-                try { await api.post(`/auth/ai/nudges/${nudge.id}/dismiss`); } catch {}
-                setNudges(prev => prev.filter(n => n.id !== nudge.id));
-                if (nudge.action_type === 'ask_ai') {
-                  router.push('/(tabs)/ai-chat' as any);
-                } else if (nudge.action_type === 'navigate_to' && nudge.action_data) {
-                  router.push(nudge.action_data as any);
-                }
-              }
-            }}
-          >
-            <LinearGradient
-              colors={['rgba(124,58,237,0.15)', 'rgba(168,85,247,0.08)']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.aiCardGradient}
-            >
-              <LinearGradient
-                colors={['#7c3aed', '#a855f7']}
-                style={styles.aiIconBox}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Ionicons name="sparkles" size={18} color="#fff" />
-              </LinearGradient>
-              <Text style={styles.aiText} numberOfLines={2}>
-                {nudges.length > 0
-                  ? (nudges[0].body || nudges[0].title)
-                  : 'Your finances are looking good!'}
-              </Text>
-              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
-            </LinearGradient>
-          </TouchableOpacity>
-
-          {/* ===== 3. COUPLEFLOW LEVEL PROGRESS ===== */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.glassCard}
-            onPress={() => router.push('/framework' as any)}
-          >
-            <View style={styles.levelHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Ionicons
-                  name={frameworkSteps[currentLevelIndex]?.icon || 'shield-checkmark-outline'}
-                  size={14}
-                  color="#10b981"
-                />
-                <Text style={styles.levelLabel}>
-                  Level {frameworkLevel?.current_level ?? 1} · {frameworkLevel?.level_name ?? 'Foundation'}
-                </Text>
-              </View>
-              <Text style={{ fontSize: 11, color: '#10b981', fontWeight: '600' }}>
-                {frameworkLevel?.progress_percent ?? 0}%
-              </Text>
-            </View>
-            {/* Progress bar */}
-            <View style={styles.progressBarTrack}>
-              <LinearGradient
-                colors={['#10b981', '#34d399']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={[styles.progressBarFill, { width: `${frameworkLevel?.progress_percent ?? 0}%` as any }]}
-              />
-            </View>
-            {/* Step circles */}
-            <View style={styles.stepsRow}>
-              {frameworkSteps.map((step, i) => {
-                const done = i < currentLevelIndex;
-                const active = i === currentLevelIndex;
-                return (
-                  <View key={i} style={styles.stepItem}>
-                    <View
-                      style={[
-                        styles.stepCircle,
-                        done && { backgroundColor: '#10b981' },
-                        active && { backgroundColor: 'rgba(16,185,129,0.3)', borderWidth: 1.5, borderColor: '#10b981' },
-                        !done && !active && { backgroundColor: 'rgba(255,255,255,0.08)' },
-                      ]}
-                    >
-                      <Ionicons
-                        name={step.icon}
-                        size={11}
-                        color={done || active ? '#fff' : 'rgba(255,255,255,0.3)'}
-                      />
-                    </View>
-                    <Text style={[styles.stepLabel, { color: done || active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)' }]}>
-                      {step.label}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          </TouchableOpacity>
-
-          {/* ===== 4. THIS WEEK'S SPENDING - BAR CHART ===== */}
-          <View style={styles.glassCard}>
-            <View style={styles.weekHeader}>
-              <View>
-                <Text style={styles.smallLabel}>This Week</Text>
-                <Text style={styles.weekAmount}>
-                  {formatCurrency(thisWeekTotal)}
-                  <Text style={styles.weekBudgetText}> / {formatCurrency(weeklyBudget)}</Text>
-                </Text>
-              </View>
-              {weeklyBudget > 0 && (
-                <View style={[styles.changeBadge, { backgroundColor: weeklyPercentChange <= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)' }]}>
-                  <Ionicons
-                    name={weeklyPercentChange <= 0 ? 'trending-down' : 'trending-up'}
-                    size={12}
-                    color={weeklyPercentChange <= 0 ? '#10b981' : '#ef4444'}
-                  />
-                  <Text style={{ fontSize: 11, color: weeklyPercentChange <= 0 ? '#10b981' : '#ef4444', fontWeight: '600' }}>
-                    {Math.abs(weeklyPercentChange)}% {weeklyPercentChange <= 0 ? 'less' : 'more'}
-                  </Text>
+          <View style={styles.headerRight}>
+            {loading && loadedOnce && <ActivityIndicator color={colors.primary2} size="small" />}
+            {isCouple && (
+              <View style={styles.avatars}>
+                <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
+                  <Text style={styles.avatarText}>{(userName || 'Y').charAt(0).toUpperCase()}</Text>
                 </View>
-              )}
-            </View>
-            {/* Bar chart */}
-            <View style={styles.barChart}>
-              {dailyTotals.map((val, i) => {
-                const barH = maxBarValue > 0 ? Math.max((val / maxBarValue) * 60, val > 0 ? 4 : 0) : 0;
-                const dailyLimit = weeklyBudget / 7;
-                const isOver = val > dailyLimit && dailyLimit > 0;
-                const isToday = i === todayDayIndex;
-                // Show a subtle base bar for days with no spending
-                const displayH = barH > 0 ? barH : (isToday ? 6 : 2);
-                return (
-                  <View key={i} style={styles.barCol}>
-                    <View style={{ height: 60, justifyContent: 'flex-end' }}>
-                      {isOver ? (
-                        <LinearGradient
-                          colors={['#ef4444', '#dc2626']}
-                          style={[styles.bar, { height: displayH }]}
-                        />
-                      ) : isToday ? (
-                        <LinearGradient
-                          colors={['#a855f7', '#7c3aed']}
-                          style={[styles.bar, { height: displayH }]}
-                        />
-                      ) : (
-                        <View style={[styles.bar, { height: displayH, backgroundColor: barH > 0 ? 'rgba(168,85,247,0.4)' : 'rgba(255,255,255,0.06)' }]} />
-                      )}
-                    </View>
-                    <Text style={[styles.barLabel, isToday && { color: '#a855f7', fontWeight: '700' }]}>
-                      {dayLabels[i]}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-            {/* Footer: You vs Partner — this week only */}
-            <View style={styles.weekFooter}>
-              <View style={styles.weekFooterItem}>
-                <View style={[styles.dot, { backgroundColor: '#a855f7' }]} />
-                <Text style={styles.weekFooterText}>{(userName || 'You').split(' ')[0]}: {formatCurrency(myWeekTotal)}</Text>
-              </View>
-              {householdMembers
-                .filter(m => userId && String(m.user_id) !== String(userId))
-                .slice(0, 1)
-                .map(partner => (
-                  <View key={partner.user_id} style={styles.weekFooterItem}>
-                    <View style={[styles.dot, { backgroundColor: '#ec4899' }]} />
-                    <Text style={styles.weekFooterText}>{(partner.full_name || 'Partner').split(' ')[0]}: {formatCurrency(partnerWeekTotal)}</Text>
+                {partners.slice(0, 1).map((p) => (
+                  <View key={p.user_id} style={[styles.avatar, styles.avatarOverlap, { backgroundColor: colors.info }]}>
+                    <Text style={styles.avatarText}>{(p.full_name || 'P').charAt(0).toUpperCase()}</Text>
                   </View>
                 ))}
-            </View>
+              </View>
+            )}
+            <ScopeToggle value={scope} onChange={onScopeChange} visible={isCouple} />
           </View>
+        </View>
 
-          {/* ===== 5. BUDGET / SAVINGS / BILLS ROW ===== */}
-          <View style={styles.miniCardRow}>
-            {[
-              {
-                label: 'Budget',
-                value: formatCompact(Math.max(budgetIncomeTotal - budgetExpenseTotal, 0)),
-                sub: 'remaining',
-                pct: isNaN(budgetPercent) ? 0 : budgetPercent,
-                color: '#a855f7',
-              },
-              {
-                label: 'Savings',
-                value: formatCompact(displaySavingsCurrent),
-                sub: `of ${formatCompact(displaySavingsTarget)} goal`,
-                pct: isNaN(savingsPercent) ? 0 : Math.min(savingsPercent, 100),
-                color: '#f59e0b',
-              },
-              {
-                label: 'Bills',
-                value: `${billsSummary.paid}/${billsSummary.total}`,
-                sub: 'paid',
-                pct: isNaN(billsPercent) ? 0 : billsPercent,
-                color: '#10b981',
-              },
-            ].map((item) => (
-              <View key={item.label} style={styles.miniCard}>
-                <MiniRing percent={item.pct} color={item.color} />
-                <View style={{ alignItems: 'center', marginTop: 6 }}>
-                  <Text style={styles.miniCardValue}>{item.value}</Text>
-                  <Text style={styles.miniCardSub}>{item.sub}</Text>
-                </View>
-                <Text style={styles.miniCardLabel}>{item.label}</Text>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary2} colors={[colors.primary2]} />
+          }
+        >
+          {showSkeleton ? (
+            <View style={{ gap: spacing.lg }}>
+              <StatusHeadlineCard loading status="good" headline="" cashFlow={0} />
+              <View style={{ gap: spacing.md }}>
+                <Skeleton width={80} height={12} />
+                <ThisWeekProof
+                  loading
+                  spentThisWeek={0} weeklyBudget={0} weeklyByDay={[0, 0, 0, 0, 0, 0, 0]}
+                  todayIndex={todayIndex} dayLabels={dayLabels}
+                  budgetPercentUsed={0} savingsCurrent={0} savingsTarget={0} savingsProgressPercent={0}
+                  billsPaid={0} billsTotal={0}
+                />
               </View>
-            ))}
-          </View>
-
-          {/* ===== 6. NET WORTH CARD ===== */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.glassCard}
-            onPress={() => router.push('/accounts' as any)}
-          >
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <View>
-                <Text style={styles.smallLabel}>Net Worth</Text>
-                <Text style={styles.netWorthValue}>
-                  {netWorth < 0 ? '-' : ''}{formatCurrency(Math.abs(netWorth))}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                  <Ionicons
-                    name={netWorth >= 0 ? 'trending-up' : 'trending-down'}
-                    size={12}
-                    color={netWorth >= 0 ? '#10b981' : '#ef4444'}
-                  />
-                  <Text style={{ fontSize: 11, color: netWorth >= 0 ? '#10b981' : '#ef4444', fontWeight: '500' }}>
-                    this month
-                  </Text>
-                </View>
-              </View>
-              {/* Net worth sparkline */}
-              <View style={styles.sparklinePlaceholder}>
-                <Svg width={100} height={44}>
-                  {(() => {
-                    // Build sparkline from available data points
-                    const color = netWorth >= 0 ? '#10b981' : '#ef4444';
-                    const dataPoints = [
-                      cashTotal * 0.92,
-                      cashTotal * 0.95,
-                      cashTotal * 0.94,
-                      cashTotal * 0.97,
-                      cashTotal * 0.99,
-                      cashTotal,
-                      cashTotal + investmentTotal + propertyTotal - displayDebtTotal,
-                    ].map(v => Math.max(v, 0));
-                    const min = Math.min(...dataPoints);
-                    const max = Math.max(...dataPoints);
-                    const range = max - min || 1;
-                    const points = dataPoints.map((v, i) => {
-                      const x = (i / (dataPoints.length - 1)) * 100;
-                      const y = 42 - ((v - min) / range) * 38 - 2;
-                      return `${x},${y}`;
-                    }).join(' ');
-
-                    return (
-                      <>
-                        <Polygon
-                          points={`0,44 ${points} 100,44`}
-                          fill={color}
-                          fillOpacity={0.15}
-                        />
-                        <Polyline
-                          points={points}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth={2}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </>
-                    );
-                  })()}
-                </Svg>
-              </View>
-            </View>
-          </TouchableOpacity>
-
-          {/* ===== 7. RECENT ACTIVITY ===== */}
-          <View style={{ marginTop: 16 }}>
-            <View style={styles.activityHeader}>
-              <Text style={styles.activityTitle}>Recent Activity</Text>
-              <TouchableOpacity onPress={() => router.push('/transaction/list' as any)}>
-                <Text style={styles.seeAllText}>See all</Text>
-              </TouchableOpacity>
-            </View>
-            {transactions
-              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-              .slice(0, 5)
-              .map((item, index) => {
-                const isPartner = !!(item.user_id && userId && String(item.user_id) !== String(userId));
-                const partnerMember = isPartner ? householdMembers.find(m => String(m.user_id) === String(item.user_id)) : null;
-                const avatarInitial = isPartner
-                  ? (partnerMember?.full_name || 'P').charAt(0).toUpperCase()
-                  : (userName || 'Y').charAt(0).toUpperCase();
-                const whoLabel = isPartner
-                  ? (partnerMember?.full_name?.split(' ')[0] || 'Partner')
-                  : 'You';
-
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[
-                      styles.txRow,
-                      index < Math.min(transactions.length, 5) - 1 && styles.txRowBorder,
-                    ]}
-                    onPress={() =>
-                      router.push({
-                        pathname: '/transaction/[id]',
-                        params: {
-                          id: item.id,
-                          type: item.type,
-                          amount: String(item.amount),
-                          note: item.note,
-                          category_name: item.category_name || item.category,
-                          date: item.date,
-                          source: item.source,
-                        },
-                      })
-                    }
-                  >
-                    <LinearGradient
-                      colors={isPartner ? ['#ec4899', '#ec489988'] : ['#7c3aed', '#7c3aed88']}
-                      style={styles.txAvatar}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                    >
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>
-                        {avatarInitial}
-                      </Text>
-                    </LinearGradient>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.txDesc} numberOfLines={1}>
-                        {item.category_name || item.category || item.note || 'Transaction'}
-                      </Text>
-                      <Text style={styles.txMeta}>
-                        {whoLabel} · {timeAgo(item.date)}
-                      </Text>
+              <TrajectoryStrip loading netWorth={0} level={1} levelName="" progressPercent={0} />
+              <View style={{ gap: spacing.md }}>
+                {[0, 1, 2].map((i) => (
+                  <View key={i} style={styles.skelRow}>
+                    <Skeleton width={36} height={36} borderRadius={radius.md} />
+                    <View style={{ flex: 1, gap: spacing.sm }}>
+                      <Skeleton width="60%" height={12} />
+                      <Skeleton width="40%" height={10} />
                     </View>
-                    <Text style={[styles.txAmount, { color: item.type === 'expense' ? '#ef4444' : '#10b981' }]}>
-                      {item.type === 'expense' ? '-' : '+'}
-                      {formatCurrency(item.amount)}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-          </View>
+                    <Skeleton width={60} height={14} />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : (
+            <>
+              {/* ── TIER 1: Status Headline ── */}
+              <StatusHeadlineCard
+                status={headlineStatus}
+                headline={headlineText}
+                cashFlow={heroCashFlow}
+                moneyIn={isEmpty ? undefined : heroIn}
+                moneyOut={isEmpty ? undefined : heroOut}
+                errored={statusErrored && !isEmpty}
+                onRetry={() => loadDashboard(scope)}
+                onCtaPress={() => router.push('/link-account' as any)}
+              />
 
+              {isEmpty ? (
+                <View style={styles.emptyCard}>
+                  <Ionicons name="sparkles-outline" size={24} color={colors.textDark} />
+                  <Text style={styles.emptyText}>Nothing to show yet — this fills in as money moves.</Text>
+                </View>
+              ) : (
+                <>
+                  {/* ── TIER 2: Attention (only when non-empty) ── */}
+                  <View style={{ marginTop: spacing.xl }}>
+                    <AttentionCard items={attention} onActionComplete={() => loadDashboard(scope)} />
+                  </View>
+
+                  {/* ── TIER 3: This-week proof ── */}
+                  <View style={attention.length > 0 ? undefined : { marginTop: spacing.xl }}>
+                    <ThisWeekProof
+                      spentThisWeek={thisWeekTotal}
+                      weeklyBudget={weeklyBudget}
+                      weeklyByDay={dailyTotals}
+                      todayIndex={todayIndex}
+                      dayLabels={dayLabels}
+                      budgetPercentUsed={budgetPercentUsed}
+                      savingsCurrent={savingsCurrent}
+                      savingsTarget={savingsTarget}
+                      savingsProgressPercent={savingsPercent}
+                      billsPaid={billsPaid}
+                      billsTotal={billsTotal}
+                      onBudgetPress={() => router.push('/(tabs)/budget' as any)}
+                      onSavingsPress={() => router.push('/savings' as any)}
+                      onBillsPress={() => router.push('/bills' as any)}
+                    />
+                  </View>
+
+                  {/* ── TIER 4: Trajectory strip ── */}
+                  {hasTrajectory && (
+                    <View style={{ marginTop: spacing.lg }}>
+                      <TrajectoryStrip
+                        netWorth={netWorth}
+                        netWorthDeltaPercent={netWorthDeltaPercent}
+                        netWorthHistory={netWorthHistory}
+                        level={frameworkLevel?.current_level ?? 1}
+                        levelName={frameworkLevel?.level_name ?? 'Foundation'}
+                        progressPercent={frameworkLevel?.progress_percent ?? 0}
+                        onPress={() => router.push('/framework' as any)}
+                      />
+                    </View>
+                  )}
+
+                  {/* ── TIER 5: Recent activity ── */}
+                  <View style={{ marginTop: spacing.lg }}>
+                    <RecentActivity
+                      transactions={recentTx}
+                      resolvePartner={resolvePartner}
+                      onSeeAll={() => router.push('/transaction/list' as any)}
+                      onPressTx={(tx) =>
+                        router.push({
+                          pathname: '/transaction/[id]',
+                          params: {
+                            id: tx.id,
+                            type: tx.type,
+                            amount: String(tx.amount),
+                            note: tx.note,
+                            category_name: tx.category_name || tx.category,
+                            date: tx.date,
+                            source: tx.source,
+                          },
+                        })
+                      }
+                    />
+                  </View>
+                </>
+              )}
+            </>
+          )}
         </ScrollView>
       </SafeAreaView>
 
-      {/* ===== DRAWER ===== */}
-      <DrawerNavigation
-        isOpen={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        items={drawerItems}
-      />
+      <DrawerNavigation isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} items={drawerItems} />
 
-      {/* ===== FAB ===== */}
       <FloatingActionButton
         actions={[
-          {
-            id: 'add-expense',
-            icon: 'card-outline',
-            label: 'Add Expense',
-            color: '#f87171',
-            onPress: () => router.push({ pathname: '/add-transaction', params: { type: 'expense' } }),
-          },
-          {
-            id: 'add-income',
-            icon: 'trending-up',
-            label: 'Add Income',
-            color: '#34d399',
-            onPress: () => router.push({ pathname: '/add-transaction', params: { type: 'income' } }),
-          },
-          {
-            id: 'create-budget',
-            icon: 'pie-chart-outline',
-            label: 'Create Budget',
-            color: '#60a5fa',
-            onPress: () => router.push('/budget/add-budget'),
-          },
-          {
-            id: 'link-account',
-            icon: 'link-outline',
-            label: 'Link Account',
-            color: '#34d399',
-            onPress: () => router.push('/link-account'),
-          },
+          { id: 'add-expense', icon: 'card-outline', label: 'Add Expense', color: colors.error, onPress: () => router.push({ pathname: '/add-transaction', params: { type: 'expense' } }) },
+          { id: 'add-income', icon: 'trending-up', label: 'Add Income', color: colors.success, onPress: () => router.push({ pathname: '/add-transaction', params: { type: 'income' } }) },
+          { id: 'create-budget', icon: 'pie-chart-outline', label: 'Create Budget', color: colors.info, onPress: () => router.push('/budget/add-budget') },
+          { id: 'link-account', icon: 'link-outline', label: 'Link Account', color: colors.success, onPress: () => router.push('/link-account') },
         ]}
       />
-    </LinearGradient>
+    </GradientBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  // Header
-  headerRow: {
+  header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
-  greetingSub: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.5)',
+  drawerBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -spacing.sm,
+  },
+  greetingWrap: {
+    flex: 1,
   },
   greeting: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#fff',
-    marginTop: 2,
+    ...typography.h3,
+    fontWeight: '800',
+    color: colors.text,
   },
-  coupleAvatars: {
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  avatars: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 28,
+    height: 28,
+    borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#0f0a1e',
+    borderWidth: 1.5,
+    borderColor: colors.bg,
+  },
+  avatarOverlap: {
+    marginLeft: -10,
   },
   avatarText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  },
-
-  // AI Insight Card
-  aiCard: {
-    marginBottom: 16,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  aiCardGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    paddingHorizontal: 16,
-    gap: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.2)',
-  },
-  aiIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  aiText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 18,
-    color: 'rgba(255,255,255,0.9)',
-  },
-
-  // Glass card (reusable)
-  glassCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 16,
-    padding: 14,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    marginBottom: 16,
-  },
-
-  // Level Progress
-  levelHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  levelLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.7)',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  progressBarTrack: {
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: 4,
-    borderRadius: 2,
-  },
-  stepsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
-  },
-  stepItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-  },
-  stepCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepLabel: {
-    fontSize: 8,
-  },
-
-  // Weekly Spending
-  weekHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  smallLabel: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.5)',
-    fontWeight: '500',
-  },
-  weekAmount: {
-    fontSize: 22,
+    ...typography.caption,
+    color: colors.text,
     fontWeight: '700',
-    color: '#fff',
-    marginTop: 2,
   },
-  weekBudgetText: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.4)',
-    fontWeight: '400',
+  scroll: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: 120,
   },
-  changeBadge: {
+  skelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    gap: spacing.md,
   },
-  barChart: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 6,
-    height: 80,
-    paddingHorizontal: 4,
-  },
-  barCol: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  bar: {
-    width: '100%',
-    maxWidth: 28,
-    borderRadius: 4,
-    alignSelf: 'center',
-  },
-  barLabel: {
-    fontSize: 9,
-    color: 'rgba(255,255,255,0.4)',
-    marginTop: 4,
-    fontWeight: '400',
-  },
-  weekFooter: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-    marginTop: 10,
-    paddingTop: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  weekFooterItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  weekFooterText: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.4)',
-  },
-
-  // Mini card row
-  miniCardRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
-  },
-  miniCard: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+  emptyCard: {
+    marginTop: spacing.xl,
+    padding: spacing.xl,
+    borderRadius: radius.lg,
+    backgroundColor: colors.glassLight,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: colors.borderGlass,
     alignItems: 'center',
-    gap: 6,
+    gap: spacing.sm,
   },
-  miniCardValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  miniCardSub: {
-    fontSize: 9,
-    color: 'rgba(255,255,255,0.4)',
-  },
-  miniCardLabel: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.5)',
-    fontWeight: '600',
-  },
-
-  // Net Worth
-  netWorthValue: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#fff',
-    marginTop: 4,
-  },
-  sparklinePlaceholder: {
-    width: 100,
-    height: 44,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  sparklineBar: {
-    flex: 1,
-    borderRadius: 8,
-  },
-
-  // Recent Activity
-  activityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  activityTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  seeAllText: {
-    fontSize: 12,
-    color: '#a855f7',
-    fontWeight: '500',
-  },
-  txRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 10,
-  },
-  txRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.04)',
-  },
-  txAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  txDesc: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#fff',
-  },
-  txMeta: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.35)',
-  },
-  txAmount: {
-    fontSize: 14,
-    fontWeight: '600',
+  emptyText: {
+    ...typography.small,
+    color: colors.textMuted,
+    textAlign: 'center',
   },
 });

@@ -1,0 +1,45 @@
+{
+  "componentName": "CreateHouseholdForm",
+  "description": "Name input + Create Household CTA. Renders as a floating onboarding hero when it's the primary action (no invite), or a demoted flat card when an incoming invite outranks it.",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "props": {
+    "value": { "type": "string", "required": true, "description": "Household name input" },
+    "onChangeText": { "type": "function", "required": true, "description": "Input change handler" },
+    "onCreate": { "type": "function", "required": true, "description": "Create household handler" },
+    "submitting": { "type": "boolean", "default": false, "description": "Shows Creating... and disables CTA" },
+    "prominence": { "type": "string", "default": "hero", "description": "hero | demoted — controls surface + CTA weight" }
+  },
+  "variants": ["hero", "demoted"],
+  "states": ["default", "disabled", "submitting"],
+  "derived": { "ctaDisabled": "!value.trim() || submitting" },
+  "layout": {
+    "hero": {
+      "surface": "glassEffects.glassFloating",
+      "radius": "radius.xl",
+      "padding": "spacing.xl",
+      "align": "center",
+      "iconChip": { "size": 80, "radius": "radius.xxl", "fill": "${colors.primary2}1a", "border": "${colors.primary2}26", "icon": "home-outline", "iconSize": 40, "iconColor": "colors.primary2" },
+      "cta": { "gradient": "gradients.primaryGradient", "radius": "radius.lg", "paddingV": "spacing.md", "icon": "add-circle-outline", "iconSize": 18, "iconColor": "#fff", "disabledOpacity": 0.5 }
+    },
+    "demoted": {
+      "surface": "glassEffects.glass",
+      "align": "flex-start",
+      "cta": "secondaryBtn (glass fill, colors.primary2 text) — loses visual fight to Accept & Join"
+    },
+    "input": { "surface": "glassEffects.glass", "radius": "radius.md", "paddingH": "spacing.md", "paddingV": "spacing.md", "text": "colors.text", "placeholder": "colors.textDark" }
+  },
+  "typography": {
+    "heroTitle": { "style": "typography.h3", "weight": "800", "color": "colors.text", "text": "Start your household" },
+    "heroSub": { "style": "typography.small", "color": "colors.textMuted", "align": "center" },
+    "ctaText": { "style": "typography.button", "weight": "800", "color": "#fff", "text": "Create Household", "submittingText": "Creating..." }
+  },
+  "inputProps": { "placeholder": "e.g. The Johnsons, Casa del Amor" },
+  "accessibility": {
+    "inputLabel": "Household name",
+    "ctaRole": "button",
+    "ctaLabel": "Create household",
+    "ctaDisabledAnnounce": "disabled when name is empty",
+    "touchTarget": "full-width, >=44pt tall"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "componentName": "InsightsTrendChip",
+  "description": "Compact 'vs last month' delta pill used in the Insights Month Summary headline (on Net, Income, and Expenses). Conveys direction with icon + word + color together so it is never color-only.",
+  "platform": "react-native",
+  "screen": "insights",
+  "props": {
+    "percent": { "type": "number", "required": true, "description": "Change vs last month, e.g. 8.4 or -12.0. Sign indicates raw direction of the underlying metric." },
+    "metric": { "type": "'net' | 'income' | 'expense'", "required": true, "description": "Which figure this chip annotates. Drives the good/bad color mapping." },
+    "hasPrior": { "type": "boolean", "default": true, "description": "False when there is no previous month to compare (first month of data). Renders the 'new' variant instead of a percentage." },
+    "showSuffix": { "type": "boolean", "default": true, "description": "When true append 'vs last month' / 'vs last mo'. The Net hero chip shows the full suffix; the per-figure chips use the short form." }
+  },
+  "colorLogic": {
+    "note": "Mirrors existing changeColor(pct, isExpense). Direction is good/bad, not just up/down.",
+    "expense": { "up": "colors.error", "down": "colors.success", "flat": "colors.textMuted" },
+    "income": { "up": "colors.success", "down": "colors.error", "flat": "colors.textMuted" },
+    "net": { "up": "colors.success", "down": "colors.error", "flat": "colors.textMuted" },
+    "noPrior": "colors.textMuted"
+  },
+  "iconLogic": {
+    "up": "trending-up",
+    "down": "trending-down",
+    "flat": "remove",
+    "noPrior": "remove"
+  },
+  "wordLogic": {
+    "expenseUp": "more", "expenseDown": "less",
+    "incomeUp": "up", "incomeDown": "down",
+    "flat": "flat", "noPrior": "new"
+  },
+  "variants": ["net", "income", "expense", "flat", "new"],
+  "states": ["default"],
+  "layout": {
+    "borderRadius": "radius.full",
+    "paddingHorizontal": "spacing.sm",
+    "paddingVertical": "spacing.xs",
+    "gap": "spacing.xs",
+    "iconSize": 14,
+    "background": "`${semanticColor}1f` (~12% tint of the resolved color)"
+  },
+  "typography": { "label": "typography.caption", "percentFormat": "`${Math.abs(percent).toFixed(1)}%`" },
+  "accessibility": {
+    "role": "text",
+    "label": "{word} {percent} percent versus last month | 'new this month' when hasPrior is false",
+    "colorIndependent": true,
+    "note": "icon + word + color together; never relies on color alone"
+  },
+  "tokensUsed": ["colors.success", "colors.error", "colors.textMuted", "radius.full", "spacing.sm", "spacing.xs", "typography.caption"]
+}

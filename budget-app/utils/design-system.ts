@@ -26,7 +26,9 @@ export const colors = {
   textDark: '#475569',       // Tertiary text (darker gray)
 
   // Status & Semantic
-  success: '#22c55e',        // Green (income, positive)
+  success: '#22c55e',        // Green (income, positive) — small marks/text only
+  successDeep: '#166534',    // Deep green for LARGE surfaces (swipe bg, banners) —
+                             // full-bleed #22c55e glares on the dark theme
   warning: '#eab308',        // Yellow (warnings)
   error: '#ef4444',          // Red (expenses, negative)
   info: '#3b82f6',           // Blue (info)
@@ -41,6 +43,24 @@ export const colors = {
   glassMedium: 'rgba(255,255,255,0.08)',
   glassStrong: 'rgba(255,255,255,0.12)',
 };
+
+// ─── CHART CATEGORICAL PALETTE ───
+// Fixed-order series hues for charts. Deliberately EXCLUDES the status tokens
+// (success/warning/error) so a category never accidentally reads as
+// "over budget" or "income". Validated against the dark surface (#0f172a):
+// lightness band, chroma floor, adjacent-pair CVD separation (worst ΔE 13.4),
+// ≥3:1 contrast. Assign by index in fixed order — never cycle; overflow folds
+// into "Other".
+export const chartCategorical = [
+  '#a855f7', // purple (brand)
+  '#0d9488', // teal
+  '#d55181', // magenta
+  '#3987e5', // blue
+  '#d95926', // orange
+  '#9085e9', // violet
+  '#0891b2', // cyan
+  '#c98500', // gold
+] as const;
 
 // ─── GRADIENT DEFINITIONS ───
 export const gradients = {

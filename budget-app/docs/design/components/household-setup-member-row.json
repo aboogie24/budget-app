@@ -1,0 +1,28 @@
+{
+  "componentName": "MemberRow",
+  "description": "A single household member: avatar initial, email, role, and a color-independent owner badge.",
+  "platform": "react-native",
+  "tokensSource": "budget-app/utils/design-system.ts",
+  "props": {
+    "email": { "type": "string", "required": true, "description": "Member email" },
+    "role": { "type": "string", "default": "member", "description": "Member role (owner|member)" },
+    "isYou": { "type": "boolean", "default": false, "description": "Whether this row is the current user" }
+  },
+  "variants": ["default", "you", "owner"],
+  "states": ["default"],
+  "layout": {
+    "row": { "direction": "row", "align": "center", "gap": "spacing.md", "paddingVertical": "spacing.sm" },
+    "avatar": { "size": 40, "radius": "radius.md", "fill": "colors.glassMedium", "fillYou": "${colors.primary}33" },
+    "ownerBadge": { "radius": "radius.sm", "fill": "${colors.primary2}26", "border": "${colors.primary2}40", "icon": "star", "iconSize": 11, "color": "colors.primary2", "word": "Owner", "flexShrink": 0 }
+  },
+  "typography": {
+    "avatarInitial": { "style": "typography.bodyBold", "color": "colors.text" },
+    "email": { "style": "typography.smallBold", "color": "colors.text", "numberOfLines": 1, "youSuffix": " (you)" },
+    "role": { "style": "typography.caption", "color": "colors.textMuted", "transform": "capitalize" },
+    "badgeText": { "style": "typography.caption", "weight": "700", "color": "colors.primary2" }
+  },
+  "accessibility": {
+    "role": "text",
+    "label": "{email}{isYou ? ', you' : ''}, {role}{role==='owner' ? ', owner' : ''}"
+  }
+}

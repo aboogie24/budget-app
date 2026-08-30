@@ -1,0 +1,30 @@
+{
+  "componentName": "ShareToggleRow",
+  "description": "Share-with-household switch row with title + explanatory subcopy. Re-skins the bespoke toggleRow + Switch. Preceded by a token divider to separate it from the fields above.",
+  "platform": "react-native",
+  "props": {
+    "value": { "type": "boolean", "required": true },
+    "onValueChange": { "type": "function", "required": true, "description": "(next: boolean) => void" }
+  },
+  "variants": ["default"],
+  "states": ["off", "on"],
+  "layout": {
+    "divider": { "style": "commonStyles.divider", "color": "colors.borderLight" },
+    "row": { "direction": "row", "align": "center", "justify": "space-between", "gap": "spacing.md", "paddingVertical": "spacing.sm" },
+    "textCol": { "flex": 1 }
+  },
+  "tokens": {
+    "title": { "text": "Share with household", "type": "typography.smallBold", "color": "colors.text" },
+    "subcopy": { "text": "Let your partner view and edit this budget", "type": "typography.caption", "color": "colors.textMuted" },
+    "switch": { "thumbColor": "#ffffff", "trackOn": "colors.primary2", "trackOff": "colors.textDark" }
+  },
+  "behavior": "Toggles the is_shared payload field. No animation beyond the native Switch.",
+  "accessibility": {
+    "role": "switch",
+    "state": "accessibilityState={{ checked: value }}",
+    "label": "Share with household",
+    "hint": "Let your partner view and edit this budget",
+    "minTarget": "44pt row; Switch independently >=44pt",
+    "colorIndependent": "On/off conveyed by persistent title + subcopy text and the Switch's accessible state, not track color alone"
+  }
+}

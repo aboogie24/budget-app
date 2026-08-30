@@ -1,0 +1,47 @@
+{
+  "componentName": "BudgetHeroSummary",
+  "description": "The centerpiece card of the budget tab. The ONLY floating card on the screen (glassFloating). Summarizes the active scope's budget: Budgeted / Spent / Remaining, a status badge (On track / Watch / Over), and a full-width progress bar. Evolves the current heroCard.",
+  "platform": "react-native",
+  "props": {
+    "type": { "type": "'expense' | 'income'", "required": true, "description": "Active scope; drives label and badge word" },
+    "totalBudgeted": { "type": "number", "required": true },
+    "totalSpent": { "type": "number", "required": true, "description": "Spent (expense) or earned (income)" },
+    "totalRemaining": { "type": "number", "required": true },
+    "usedPercent": { "type": "number", "required": true, "description": "spent/budgeted*100, not clamped for the label" },
+    "budgetedCount": { "type": "number", "required": true, "description": "categories with a budget set" }
+  },
+  "statusModel": {
+    "helper": "budgetStatus(spent, budgeted): 'ontrack' | 'watch' | 'over'",
+    "ontrack": { "when": "pct <= 80", "token": "colors.success", "icon": "checkmark-circle", "word": "On track" },
+    "watch": { "when": "pct 80..100", "token": "colors.warning", "icon": "alert-circle", "word": "Watch" },
+    "over": { "when": "spent > budgeted && budgeted > 0", "token": "colors.error", "icon": "warning", "word": "Over" },
+    "note": "Same status color drives the badge, the progress bar fill, and the Spent stat color. Icon + word + color together — never color alone."
+  },
+  "layout": {
+    "card": "glassEffects.glassFloating",
+    "padding": "spacing.lg",
+    "marginBottom": "spacing.xl",
+    "progressBarHeight": 6,
+    "progressRadius": "radius.full"
+  },
+  "regions": {
+    "label": { "text": "EXPENSE BUDGET | INCOME BUDGET", "style": "typography.caption uppercase, colors.textMuted, letterSpacing 0.5" },
+    "statusBadge": { "shape": "radius.full pill top-right", "bg": "${statusColor}1f", "content": "icon + word + '{pct}% used|earned'" },
+    "stats": {
+      "columns": ["Budgeted", "Spent", "Remaining"],
+      "label": "typography.caption colors.textMuted",
+      "value": "typography.h3 colors.text (fmtShort)",
+      "spentColor": "status color (ontrack->text, watch->warning, over->error)",
+      "remainingColor": "colors.success when >=0; else colors.error with '-' prefix, column relabeled 'Over by'"
+    },
+    "progressBar": { "fill": "status color", "track": "colors.glassLight", "trailingLabel": "'{pct}%' typography.caption" },
+    "footerMeta": { "left": "'{n} categories budgeted'", "right": "'${remaining} left'", "style": "typography.caption colors.textMuted" }
+  },
+  "states": ["ontrack", "watch", "over", "loading-skeleton", "empty (all zeros)"],
+  "accessibility": {
+    "role": "summary",
+    "label": "{type} budget, {status word}, {pct} percent used. Budgeted {budgeted}, spent {spent}, remaining {remaining}.",
+    "note": "Status conveyed by icon + word + color. Progress color is never the only signal — stat text always states the numbers."
+  },
+  "developerNotes": "Only card that uses glassFloating on this screen (mirrors the dashboard headline rule). Do not clamp the percent label (>100% is truthful); clamp only the bar width to 0..100."
+}

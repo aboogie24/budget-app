@@ -1,0 +1,21 @@
+{
+  "componentName": "WelcomeBrandWordmark",
+  "description": "The CoupleFlow wordmark rendered on the welcome/entry screen. Reproduces the auth-screen mark ('Couple ♥ Flow') so the first impression matches register/login. Replaces the old plain text badge 'CoupleFlow'. Fully tokenized: uses colors.accent for the heart instead of the off-token pink #ec4899 used by the auth screens (flagged for app-wide reconciliation).",
+  "platform": "react-native",
+  "designSystem": {
+    "layout": "horizontal Text + Ionicons(heart) + Text, spacing.xs gap, centered",
+    "typography": "typography.h3 weight",
+    "coupleColor": "colors.primary2 (#a855f7)",
+    "heartAndFlowColor": "colors.accent (#c084fc) — token-safe substitute for auth-screen #ec4899"
+  },
+  "props": {
+    "align": { "type": "'center' | 'left'", "default": "center", "description": "Horizontal alignment within its container" }
+  },
+  "states": ["default"],
+  "accessibility": {
+    "role": "header",
+    "label": "CoupleFlow",
+    "note": "Meaning does not depend on color; the heart is decorative"
+  },
+  "developerNotes": "Auth screens hardcode #ec4899 for the heart/'Flow'. This uses colors.accent to stay tokenized. If the exact pink is required, add colors.brandPink to design-system.ts and use it across welcome/register/login — do not one-off."
+}

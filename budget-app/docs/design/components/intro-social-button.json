@@ -1,0 +1,37 @@
+{
+  "componentName": "IntroSocialButton",
+  "description": "Additive fast-path OAuth button (Apple / Google) on the intro screen. Outlined glass, subordinate to the primary CTA. Omit entirely if social auth is out of v1 scope.",
+  "platform": "react-native",
+  "props": {
+    "provider": { "type": "string", "required": true, "enum": ["apple", "google"], "description": "Drives icon (logo-apple / logo-google) and label" },
+    "loading": { "type": "boolean", "default": false, "description": "Shows spinner + 'Connecting to {Provider}…'" },
+    "disabled": { "type": "boolean", "default": false, "description": "Dims + blocks press while another action runs" },
+    "onPress": { "type": "function", "required": true, "description": "Triggers provider flow; wire to the existing expo-auth-session / AppleAuthentication helpers in register.tsx" }
+  },
+  "variants": ["apple", "google"],
+  "states": ["default", "pressed", "loading", "disabled"],
+  "platformRules": { "apple": "iOS only", "google": "iOS + Android" },
+  "tokens": {
+    "surface": "glassEffects.glassEnhanced",
+    "border": "colors.borderGlass",
+    "radius": "radius.lg",
+    "labelType": "typography.button",
+    "labelColor": "colors.text",
+    "iconColor": "colors.text",
+    "spinnerColor": "colors.text"
+  },
+  "layout": { "minHeight": 52, "fullWidth": true, "iconSize": 18 },
+  "dividerAbove": {
+    "rule": "colors.borderGlass",
+    "label": "or",
+    "labelType": "typography.caption",
+    "labelColor": "colors.textMuted",
+    "sidePadding": "spacing.md"
+  },
+  "accessibility": {
+    "role": "button",
+    "label": "Continue with {Apple|Google}",
+    "busyState": "accessibilityState.busy = loading",
+    "minTarget": "44x44"
+  }
+}

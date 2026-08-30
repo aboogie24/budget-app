@@ -1,0 +1,48 @@
+{
+  "componentName": "CategoryBudgetRow",
+  "description": "The workhorse list row for a leaf category or subcategory. Shows an icon, name (tap to drill into transactions), an inline progress bar with spent/left/over, status chips, and a tappable budget-amount pill that becomes an inline editor. Tokenized re-skin of the existing CategoryBudgetRow.",
+  "platform": "react-native",
+  "props": {
+    "category": { "type": "SubcategoryData | CategoryData", "required": true, "description": "id, name, color, icon, budget_amount, budget_id, spent, unverified_count" },
+    "onSetBudget": { "type": "(categoryId: string, budgetId: string | null | undefined, amount: number) => void", "required": true },
+    "isSubcategory": { "type": "boolean", "default": false, "description": "Adds spacing.xxl left indent and reduces icon/type sizes" }
+  },
+  "interactions": {
+    "tapName": "router.push('/transaction/list', { category_id, category_name })",
+    "tapReviewChip": "router.push('/transactions/review', { category_id, category_name })",
+    "tapAmount": "enter inline edit; focus TextInput; submit on blur/return; optimistic update then reload"
+  },
+  "layout": {
+    "paddingVertical": "spacing.md (sub: spacing.sm)",
+    "paddingHorizontal": "spacing.md",
+    "subIndentLeft": "spacing.xxl",
+    "gap": "spacing.sm",
+    "bottomHairline": "colors.borderLight",
+    "overBudgetWash": "${colors.error}0a",
+    "iconChip": { "size": "36 (sub 28)", "radius": "radius.md (sub radius.sm)", "bg": "${category.color}22", "glyph": "category.color" }
+  },
+  "regions": {
+    "name": "typography.smallBold colors.text (sub: typography.small colors.textMuted), numberOfLines 1",
+    "overChip": { "show": "spent > budget && hasBudget", "content": "warning glyph + 'Over'", "color": "colors.error on ${colors.error}1f", "radius": "radius.sm" },
+    "reviewChip": { "show": "unverified_count > 0", "content": "'{n} to review' + chevron-forward", "color": "colors.warning on ${colors.warning}1f", "radius": "radius.sm" },
+    "withBudget": {
+      "progressBar": { "height": 3, "color": "budgetStatus(spent, budgeted) -> success|warning|error" },
+      "leftLabel": "'{spent} spent' colors.textMuted typography.caption",
+      "rightLabel": "'{left} left' colors.textMuted, or '{over} over' colors.error"
+    },
+    "noBudget": "'{spent} spent · No budget set' or 'Tap amount to set budget' typography.caption colors.textDark"
+  },
+  "budgetControl": {
+    "setState": { "shape": "pill min-width 64 radius.sm", "bg": "colors.glassLight", "border": "colors.borderGlass", "hasBudget": "'{amount}' colors.text typography.smallBold", "unset": "'+ Set' colors.primary2 typography.caption" },
+    "editState": { "input": "numeric TextInput", "bg": "${colors.primary2}1f", "border": "${colors.primary2}66", "radius": "radius.sm", "prefix": "'$' colors.primary2", "text": "colors.text" }
+  },
+  "states": ["default-budgeted", "default-unbudgeted", "over-budget", "has-review", "editing", "pressed", "subcategory"],
+  "accessibility": {
+    "minTouch": 44,
+    "rowLabel": "{name}, {spent} spent of {budget}, {left|over}{, over budget}. Double tap to view transactions.",
+    "pillLabel": "Set budget for {name}, currently ${amount}. Double tap to edit.",
+    "reviewChipLabel": "{n} transactions to review in {name}. Double tap to open.",
+    "note": "Over budget = wash + Over chip + error progress + 'over' text; four signals, never color-only."
+  },
+  "developerNotes": "Drive progress color off the shared budgetStatus helper. Amount pill is flexShrink:0 (never truncates); name is numberOfLines:1 + ellipsis."
+}
