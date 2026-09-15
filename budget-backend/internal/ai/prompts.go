@@ -55,6 +55,16 @@ Users classify debts as either "attack" (pay off aggressively) or "structured" (
 - Default categories: credit cards = attack, auto loans = attack, personal/medical = attack, student loans = attack (unless on forgiveness track), mortgage = structured.
 - Always respect the user's classification — the category is their preference, not a hard rule.
 
+## Household Scope (Me vs Household)
+When the couple is in a household, financial tools default to Household scope — the same gate as the dashboard Me/Household toggle: the caller's data plus partner data they opted to share (share_transactions / share_budgets / share_debts / share_savings). Pass scope="me" only when the user asks about their personal numbers. Tool results include a "scope" field and, on the snapshot, a nested "me" cash-flow breakdown. Never invent partner numbers; if sharing is off, the tools simply omit that partner's private data. Private advisor memories stay private — never surface a partner's private facts.
+
+## Empty-State / Setup-First Policy
+If get_financial_snapshot reports setup_priority=true (or active_budgets==0 AND linked_accounts==0), you MUST prioritize setup before ambitious plans:
+1. Lead with creating a few starter budgets via create_budget (and/or linking a bank — tell them to use Link Account in the app).
+2. Do NOT open with multi-milestone vacation plans, complex debt avalanches, or investment roadmaps until they have budgets or synced transactions.
+3. After they approve starter budgets (or link an account), then plan bigger goals.
+A seeded empty-user chat should sound like a helpful setup coach, not a trip planner.
+
 ## What You Cannot Do
 - Move real money — you create goals, plans, budgets, and manual entries in the app, but never touch bank accounts
 - Delete anything — removing goals, budgets, plans, or transactions is done by the user in the app
@@ -78,19 +88,23 @@ The user's financial data is provided to you via tools. Use them to give grounde
 
 // ContextData holds all the dynamic context injected into the system prompt per request.
 type ContextData struct {
-	UserName       string
-	HouseholdName  string
-	FrameworkLevel string
-	FrameworkPct   float64
+	UserName        string
+	HouseholdName   string
+	FrameworkLevel  string
+	FrameworkPct    float64
 	BudgetedIncome  float64
 	ActualIncome    float64
 	MonthlyExpenses float64
-	TotalDebt      float64
-	TotalSavings   float64
-	BankBalance    float64
-	DebtCount      int
-	SavingsCount   int
-	BudgetCount    int
+	TotalDebt       float64
+	TotalSavings    float64
+	BankBalance     float64
+	DebtCount       int
+	SavingsCount    int
+	BudgetCount     int
+	LinkedAccounts  int
+	Scope           string // "me" | "household" — how the live snapshot was built
+	MeActualIncome  float64
+	MeExpenses      float64
 }
 
 // BuildContextBlock generates a dynamic context string injected into every AI request.
@@ -116,6 +130,19 @@ func BuildContextBlock(data ContextData) string {
 	ctx += fmt.Sprintf("- Total savings: $%.2f (%d goals)\n", data.TotalSavings, data.SavingsCount)
 	ctx += fmt.Sprintf("- Bank balance: $%.2f\n", data.BankBalance)
 	ctx += fmt.Sprintf("- Active budgets: %d\n", data.BudgetCount)
+	ctx += fmt.Sprintf("- Linked bank accounts: %d\n", data.LinkedAccounts)
+	if data.Scope != "" {
+		ctx += fmt.Sprintf("- Snapshot scope: %s (matches dashboard Me/Household toggle; partner-shared data gated by sharing preferences)\n", data.Scope)
+	}
+	if data.Scope == ScopeHousehold {
+		ctx += fmt.Sprintf("- Me-only cash flow this month: $%.2f income / $%.2f expenses\n", data.MeActualIncome, data.MeExpenses)
+	}
+	if data.BudgetCount == 0 && data.LinkedAccounts == 0 {
+		ctx += "\n## Setup Priority\n"
+		ctx += "- This couple has no budgets and no linked accounts yet.\n"
+		ctx += "- Lead with setup: propose create_budget starter lines and point them to Link Account.\n"
+		ctx += "- Do NOT lead with vacation plans, multi-milestone roadmaps, or aggressive debt attacks until they have a budget or synced data.\n"
+	}
 
 	return ctx
 }

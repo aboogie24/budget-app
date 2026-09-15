@@ -1,0 +1,136 @@
+package ai
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+// ScopeMe and ScopeHousehold mirror the dashboard Me vs Household toggle.
+const (
+	ScopeMe        = "me"
+	ScopeHousehold = "household"
+)
+
+// ParseScope resolves the tool "scope" input. Couples default to household
+// (matching the dashboard); solo users always get me. Invalid values fall back
+// to the same default.
+func ParseScope(raw string, householdID string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if householdID == "" {
+		return ScopeMe
+	}
+	switch s {
+	case ScopeMe, "personal", "mine":
+		return ScopeMe
+	case ScopeHousehold, "couple", "shared", "we", "":
+		return ScopeHousehold
+	default:
+		return ScopeHousehold
+	}
+}
+
+// ScopeFromInput extracts an optional "scope" field from a tool's JSON input.
+func ScopeFromInput(input json.RawMessage, householdID string) string {
+	raw := ""
+	if len(input) > 0 {
+		var params struct {
+			Scope string `json:"scope"`
+		}
+		if err := json.Unmarshal(input, &params); err == nil {
+			raw = params.Scope
+		}
+	}
+	return ParseScope(raw, householdID)
+}
+
+// partnerShareSubquery returns a SQL fragment selecting partner user_ids in the
+// household who opted into sharing the given preference column
+// (share_transactions, share_budgets, share_debts, share_savings). Defaults to
+// true when no sharing_preferences row exists — same gate as
+// handlers/transactions.go and handlers/budgets.go.
+func partnerShareSubquery(prefColumn string, hhPlaceholder, userPlaceholder string) string {
+	return "(SELECT hm.user_id FROM household_members hm" +
+		" LEFT JOIN sharing_preferences sp ON sp.user_id = hm.user_id" +
+		" AND (sp.household_id::text = " + hhPlaceholder + " OR sp.household_id IS NULL)" +
+		" WHERE hm.household_id::text = " + hhPlaceholder +
+		" AND hm.user_id != " + userPlaceholder +
+		" AND COALESCE(sp." + prefColumn + ", true) = true)"
+}
+
+// txScopeWhere is the transaction visibility predicate used by GetTransactions /
+// GetBudgetSummary. Solo: caller's rows. Household: caller's rows OR any row
+// tagged with the household OR partner rows they opted to share.
+func txScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold bool) string {
+	if !hasHousehold || scope == ScopeMe {
+		return "t.user_id = " + userPlaceholder
+	}
+	return "(t.user_id = " + userPlaceholder +
+		" OR t.household_id::text = " + hhPlaceholder +
+		" OR (t.household_id IS NOT NULL AND t.user_id IN " +
+		partnerShareSubquery("share_transactions", hhPlaceholder, userPlaceholder) + "))"
+}
+
+// budgetScopeWhere mirrors GetBudgetsByUser: own budgets, plus partner budgets
+// that are is_shared and the partner opted into share_budgets.
+func budgetScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold bool) string {
+	if !hasHousehold || scope == ScopeMe {
+		return "b.user_id = " + userPlaceholder
+	}
+	return "(b.user_id = " + userPlaceholder +
+		" OR (b.is_shared = true AND b.user_id IN " +
+		partnerShareSubquery("share_budgets", hhPlaceholder, userPlaceholder) + "))"
+}
+
+// debtScopeWhere matches dashboard Household debt totals from
+// GET /auth/households/summary: Household mode is household_id-tagged rows
+// only. Me mode is the caller's rows. (Do NOT OR in is_shared / share_debts —
+// that diverges from the dashboard summary the acceptance checks against.)
+func debtScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold bool) string {
+	if !hasHousehold || scope == ScopeMe {
+		return "d.user_id = " + userPlaceholder
+	}
+	return "d.household_id::text = " + hhPlaceholder
+}
+
+// savingsScopeWhere matches dashboard Household savings totals from
+// GET /auth/households/summary: Household mode is household_id-tagged rows
+// only. Me mode is the caller's rows.
+func savingsScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold bool) string {
+	if !hasHousehold || scope == ScopeMe {
+		return "g.user_id = " + userPlaceholder
+	}
+	return "g.household_id::text = " + hhPlaceholder
+}
+
+// billsScopeWhere mirrors ListBills (share_budgets gate + is_shared).
+func billsScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold bool) string {
+	if !hasHousehold || scope == ScopeMe {
+		return "b.user_id = " + userPlaceholder
+	}
+	return "(b.user_id = " + userPlaceholder +
+		" OR (b.is_shared = true AND b.user_id IN " +
+		partnerShareSubquery("share_budgets", hhPlaceholder, userPlaceholder) + "))"
+}
+
+// scopeMeta adds Me-vs-Household labeling to a tool result map.
+func scopeMeta(scope, householdID string) map[string]interface{} {
+	meta := map[string]interface{}{
+		"scope": scope,
+	}
+	if householdID != "" {
+		meta["household_id"] = householdID
+		meta["scope_note"] = "scope=household matches the dashboard Household toggle: transactions/budgets/bills use sharing-preference gates; debt and savings use household_id-tagged rows (same as /auth/households/summary). scope=me is only yours."
+	} else {
+		meta["scope_note"] = "Solo user — personal scope only."
+	}
+	return meta
+}
+
+// debtSavingsArgs returns (userPlaceholder, hhPlaceholder, args) for debt/savings
+// queries so placeholders never skip $1. Household scope binds only householdID.
+func debtSavingsArgs(scope, userID, householdID string, hasHousehold bool) (userP, hhP string, args []interface{}) {
+	if hasHousehold && scope == ScopeHousehold {
+		return "$1", "$1", []interface{}{householdID}
+	}
+	return "$1", "$2", []interface{}{userID}
+}
