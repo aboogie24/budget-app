@@ -27,14 +27,11 @@ func calculateDebtPayoffTool(conn *sql.DB, userID, householdID string, input jso
 		params.DebtCategory = "attack"
 	}
 
-	// Household-aware debt set (same sharing gate as get_debts / dashboard).
+	// Household-aware debt set (same household_id semantics as get_debts / dashboard summary).
 	scope := ParseScope("", householdID) // default household when couple
 	hasHH := householdID != ""
-	where := debtScopeWhere(scope, "$1", "$2", hasHH)
-	args := []interface{}{userID}
-	if hasHH && scope == ScopeHousehold {
-		args = []interface{}{userID, householdID}
-	}
+	userP, hhP, args := debtSavingsArgs(scope, userID, householdID, hasHH)
+	where := debtScopeWhere(scope, userP, hhP, hasHH)
 	query := `SELECT d.id, d.name, d.balance, COALESCE(d.apr, 0), COALESCE(d.min_payment, 0), COALESCE(d.debt_category, 'attack')
 		FROM debt_accounts d WHERE ` + where
 	nextArg := len(args) + 1
@@ -121,21 +118,23 @@ func projectSavingsTool(conn *sql.DB, userID, householdID string, input json.Raw
 	var args []interface{}
 	if params.GoalID != "" {
 		// Specific goal: allow if owned by caller OR visible under household scope.
-		where := savingsScopeWhere(scope, "$2", "$3", hasHH)
-		query = `SELECT g.id, g.name, COALESCE(g.current_amount, 0), COALESCE(g.target_amount, 0), COALESCE(g.target_date::text, '')
-		         FROM savings_goals g WHERE g.id = $1 AND (` + where + `)`
-		args = []interface{}{params.GoalID, userID}
 		if hasHH && scope == ScopeHousehold {
-			args = append(args, householdID)
+			where := savingsScopeWhere(scope, "$2", "$2", hasHH)
+			query = `SELECT g.id, g.name, COALESCE(g.current_amount, 0), COALESCE(g.target_amount, 0), COALESCE(g.target_date::text, '')
+			         FROM savings_goals g WHERE g.id = $1 AND (` + where + `)`
+			args = []interface{}{params.GoalID, householdID}
+		} else {
+			where := savingsScopeWhere(scope, "$2", "$3", false)
+			query = `SELECT g.id, g.name, COALESCE(g.current_amount, 0), COALESCE(g.target_amount, 0), COALESCE(g.target_date::text, '')
+			         FROM savings_goals g WHERE g.id = $1 AND (` + where + `)`
+			args = []interface{}{params.GoalID, userID}
 		}
 	} else {
-		where := savingsScopeWhere(scope, "$1", "$2", hasHH)
+		userP, hhP, savArgs := debtSavingsArgs(scope, userID, householdID, hasHH)
+		where := savingsScopeWhere(scope, userP, hhP, hasHH)
 		query = `SELECT g.id, g.name, COALESCE(g.current_amount, 0), COALESCE(g.target_amount, 0), COALESCE(g.target_date::text, '')
 		         FROM savings_goals g WHERE ` + where + ` ORDER BY g.created_at DESC`
-		args = []interface{}{userID}
-		if hasHH && scope == ScopeHousehold {
-			args = append(args, householdID)
-		}
+		args = savArgs
 	}
 
 	rows, err := conn.Query(query, args...)
