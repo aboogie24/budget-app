@@ -161,14 +161,18 @@ func TestRegisterUser_InvalidJSON(t *testing.T) {
 }
 
 func TestCompleteOnboarding_Success(t *testing.T) {
+	userID := "11111111-1111-1111-1111-111111111111"
 	withUsersMockDB(t, func(mock sqlmock.Sqlmock) {
-		// UPDATE user
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"household_id"}).
+				AddRow("22222222-2222-2222-2222-222222222222"))
 		mock.ExpectExec(`UPDATE users`).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 	})
 
 	body := map[string]interface{}{
-		"user_id":              "11111111-1111-1111-1111-111111111111",
+		"user_id":              userID,
 		"monthly_budget_goal": 3000.0,
 	}
 	b, _ := json.Marshal(body)
