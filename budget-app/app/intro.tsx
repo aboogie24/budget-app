@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { IntroSplash } from '@/components/intro-Splash';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -32,23 +33,18 @@ export default function IntroScreen() {
   const router = useRouter();
   const API_URL = api.getBaseUrl();
 
-  // ── Local state (the new surface area: loading / error) ──
-  const [active, setActive] = useState<ActiveAuth>(null); // §3.2 in-flight auth
-  const [error, setError] = useState<ErrorInfo>(null); // §3.5 error banner
-  // First-paint check: Apple availability probe gates whether the Apple button
-  // shows. While probing we skeleton the action stack (§3.3) so it never flashes.
+  const [active, setActive] = useState<ActiveAuth>(null);
+  const [error, setError] = useState<ErrorInfo>(null);
   const [checkingConfig, setCheckingConfig] = useState(true);
   const [appleAvailable, setAppleAvailable] = useState(false);
 
   const inFlight = active !== null;
 
-  // Google Sign-In hook (mirrors register.tsx)
   const [googleRequest, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
     ...GOOGLE_CLIENT_IDS,
     selectAccount: true,
   });
 
-  // Probe Apple availability once (drives whether the Apple button renders).
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -67,7 +63,6 @@ export default function IntroScreen() {
     };
   }, []);
 
-  // Handle the Google response when it arrives.
   useEffect(() => {
     if (googleResponse?.type === 'success') {
       const idToken = googleResponse.params.id_token;
@@ -77,13 +72,11 @@ export default function IntroScreen() {
       errorHaptic();
       setError({ title: "Couldn't sign in", message: 'Check your connection and try again.' });
     } else if (googleResponse?.type === 'dismiss' || googleResponse?.type === 'cancel') {
-      // User backed out — quietly clear the in-flight state, no error.
       setActive(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleResponse]);
 
-  // ── Navigation (unchanged contract) ──
   const handleGetStarted = async () => {
     if (inFlight) return;
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -95,7 +88,6 @@ export default function IntroScreen() {
     router.push('/login');
   };
 
-  // ── Shared OAuth completion (mirrors register.tsx) ──
   const completeOAuthLogin = async (data: any) => {
     const user = data.user;
     const session = { ...user, token: data.token };
@@ -104,7 +96,6 @@ export default function IntroScreen() {
     router.replace(user?.onboarding_complete ? '/(tabs)/dashboard' : '/onboarding');
   };
 
-  // Google: exchange the ID token with our backend.
   const handleGoogleToken = async (idToken: string) => {
     try {
       const response = await fetch(`${API_URL}/users/oauth/google`, {
@@ -135,7 +126,6 @@ export default function IntroScreen() {
     promptGoogleAsync();
   };
 
-  // Apple Sign-In (mirrors register.tsx).
   const startApple = async () => {
     if (inFlight) return;
     setError(null);
@@ -170,7 +160,6 @@ export default function IntroScreen() {
       await completeOAuthLogin(data);
     } catch (err: any) {
       if (err?.code === 'ERR_REQUEST_CANCELED') {
-        // user cancelled — no error surface
         return;
       }
       console.error('Apple OAuth error:', err);
@@ -186,7 +175,6 @@ export default function IntroScreen() {
     else startApple();
   };
 
-  // Which social methods are available (graceful degradation, §8).
   const socialProviders: SocialProvider[] = [
     ...(appleAvailable ? (['apple'] as const) : []),
     'google',
@@ -194,10 +182,10 @@ export default function IntroScreen() {
   const hasSocial = socialProviders.length > 0;
 
   return (
+    <IntroSplash>
     <GradientBackground variant="bgDarkPurple">
       <SafeAreaView style={styles.safe}>
         <View style={styles.content}>
-          {/* ── Top group: brand + value prop (static, always solid) ── */}
           <View style={styles.topGroup}>
             <IntroBrandMark />
             <Text style={styles.headline} numberOfLines={2}>
@@ -208,10 +196,8 @@ export default function IntroScreen() {
             </Text>
           </View>
 
-          {/* ── Bottom group: action stack ── */}
           <View style={styles.actions}>
             {checkingConfig ? (
-              // §3.3 first-paint skeleton — brand stays solid, only actions skeleton
               <View style={styles.skeletonStack}>
                 <Skeleton height={52} borderRadius={radius.lg} />
                 <Skeleton height={52} borderRadius={radius.lg} />
@@ -222,14 +208,12 @@ export default function IntroScreen() {
               </View>
             ) : (
               <>
-                {/* §3.5 error banner (renders null when no error) */}
                 <IntroErrorBanner
                   title={error?.title}
                   message={error?.message}
                   onDismiss={() => setError(null)}
                 />
 
-                {/* Primary CTA */}
                 <IntroPrimaryButton
                   label="Get Started"
                   onPress={handleGetStarted}
@@ -238,14 +222,12 @@ export default function IntroScreen() {
 
                 {hasSocial && (
                   <>
-                    {/* Divider with "or" label */}
                     <View style={styles.divider}>
                       <View style={styles.dividerLine} />
                       <Text style={styles.dividerLabel}>or</Text>
                       <View style={styles.dividerLine} />
                     </View>
 
-                    {/* Social fast-path buttons */}
                     {socialProviders.map((provider) => (
                       <IntroSocialButton
                         key={provider}
@@ -262,7 +244,6 @@ export default function IntroScreen() {
                   </>
                 )}
 
-                {/* Sign In link */}
                 <TouchableOpacity
                   onPress={goToLogin}
                   disabled={inFlight}
@@ -277,7 +258,6 @@ export default function IntroScreen() {
                   </Text>
                 </TouchableOpacity>
 
-                {/* Legal caption */}
                 <Text style={styles.legal}>
                   By continuing you agree to our{' '}
                   <Text style={styles.legalLink}>Terms</Text> &{' '}
@@ -289,6 +269,7 @@ export default function IntroScreen() {
         </View>
       </SafeAreaView>
     </GradientBackground>
+    </IntroSplash>
   );
 }
 
