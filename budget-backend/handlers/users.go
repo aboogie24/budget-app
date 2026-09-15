@@ -11,6 +11,7 @@ import (
 )
 
 // CompleteOnboarding saves the user's monthly budget goal and marks onboarding done.
+// Ensures a household exists so finish never leaves the user household-less.
 func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID            string  `json:"user_id"`
@@ -32,7 +33,13 @@ func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	_, err = conn.Exec(`
+	if _, err := db.EnsureHouseholdForUser(conn.Conn, req.UserID); err != nil {
+		log.Printf("CompleteOnboarding ensure household: %v", err)
+		http.Error(w, "Failed to ensure household", http.StatusInternalServerError)
+		return
+	}
+
+	res, err := conn.Exec(`
 		UPDATE users SET monthly_budget_goal = $1, onboarding_complete = TRUE WHERE id = $2
 	`, req.MonthlyBudgetGoal, req.UserID)
 	if err != nil {
@@ -40,8 +47,73 @@ func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save onboarding", http.StatusInternalServerError)
 		return
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("CompleteOnboarding rows affected: %v", err)
+		http.Error(w, "Failed to save onboarding", http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
 
-	json.NewEncoder(w).Encode(map[string]any{"status": "onboarding complete"})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":              "onboarding complete",
+		"onboarding_complete": true,
+		"user_id":             req.UserID,
+		"monthly_budget_goal": req.MonthlyBudgetGoal,
+	})
+}
+
+// GetCurrentUser returns the user profile including onboarding_complete so cold
+// starts can avoid bouncing into the wizard after finish (anvil writes AsyncStorage).
+// GET /auth/users/me?user_id=
+func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		validationError(w, "user_id is required")
+		return
+	}
+
+	conn, err := db.New()
+	if err != nil {
+		http.Error(w, "Database connection error", http.StatusInternalServerError)
+		return
+	}
+	defer conn.Close()
+
+	var (
+		id                 string
+		email              string
+		fullName           string
+		onboardingComplete bool
+		monthlyBudgetGoal  float64
+	)
+	err = conn.QueryRow(`
+		SELECT id, email, COALESCE(full_name, ''), COALESCE(onboarding_complete, FALSE),
+		       COALESCE(monthly_budget_goal, 0)
+		FROM users WHERE id = $1
+	`, userID).Scan(&id, &email, &fullName, &onboardingComplete, &monthlyBudgetGoal)
+	if err == sql.ErrNoRows {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		log.Printf("GetCurrentUser error: %v", err)
+		http.Error(w, "Database query error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"id":                  id,
+		"email":               email,
+		"full_name":           fullName,
+		"onboarding_complete": onboardingComplete,
+		"monthly_budget_goal": monthlyBudgetGoal,
+	})
 }
 
 func RegisterUser(w http.ResponseWriter, r *http.Request) {
@@ -105,10 +177,11 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"status": "user registered",
 		"user": map[string]any{
-			"id":           user.ID,
-			"email":        user.Email,
-			"full_name":    user.FullName,
-			"isFirstLogin": true,
+			"id":                  user.ID,
+			"email":               user.Email,
+			"full_name":           user.FullName,
+			"isFirstLogin":        true,
+			"onboarding_complete": false,
 		},
 	})
 }
