@@ -81,29 +81,25 @@ func budgetScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold
 		partnerShareSubquery("share_budgets", hhPlaceholder, userPlaceholder) + "))"
 }
 
-// debtScopeWhere: own debts, plus partner debts that are is_shared and the
-// partner opted into share_debts. Also includes rows tagged with household_id
-// so totals align with /auth/households/summary.
+// debtScopeWhere matches dashboard Household debt totals from
+// GET /auth/households/summary: Household mode is household_id-tagged rows
+// only. Me mode is the caller's rows. (Do NOT OR in is_shared / share_debts —
+// that diverges from the dashboard summary the acceptance checks against.)
 func debtScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold bool) string {
 	if !hasHousehold || scope == ScopeMe {
 		return "d.user_id = " + userPlaceholder
 	}
-	return "(d.user_id = " + userPlaceholder +
-		" OR d.household_id::text = " + hhPlaceholder +
-		" OR (d.is_shared = true AND d.user_id IN " +
-		partnerShareSubquery("share_debts", hhPlaceholder, userPlaceholder) + "))"
+	return "d.household_id::text = " + hhPlaceholder
 }
 
-// savingsScopeWhere: own goals, household-tagged goals, or partner shared goals
-// gated by share_savings.
+// savingsScopeWhere matches dashboard Household savings totals from
+// GET /auth/households/summary: Household mode is household_id-tagged rows
+// only. Me mode is the caller's rows.
 func savingsScopeWhere(scope, userPlaceholder, hhPlaceholder string, hasHousehold bool) string {
 	if !hasHousehold || scope == ScopeMe {
 		return "g.user_id = " + userPlaceholder
 	}
-	return "(g.user_id = " + userPlaceholder +
-		" OR g.household_id::text = " + hhPlaceholder +
-		" OR (g.is_shared = true AND g.user_id IN " +
-		partnerShareSubquery("share_savings", hhPlaceholder, userPlaceholder) + "))"
+	return "g.household_id::text = " + hhPlaceholder
 }
 
 // billsScopeWhere mirrors ListBills (share_budgets gate + is_shared).
@@ -123,9 +119,18 @@ func scopeMeta(scope, householdID string) map[string]interface{} {
 	}
 	if householdID != "" {
 		meta["household_id"] = householdID
-		meta["scope_note"] = "scope=household includes your data plus partner-shared data gated by sharing preferences (same gate as the dashboard Me/Household toggle). scope=me is only yours."
+		meta["scope_note"] = "scope=household matches the dashboard Household toggle: transactions/budgets/bills use sharing-preference gates; debt and savings use household_id-tagged rows (same as /auth/households/summary). scope=me is only yours."
 	} else {
 		meta["scope_note"] = "Solo user — personal scope only."
 	}
 	return meta
+}
+
+// debtSavingsArgs returns (userPlaceholder, hhPlaceholder, args) for debt/savings
+// queries so placeholders never skip $1. Household scope binds only householdID.
+func debtSavingsArgs(scope, userID, householdID string, hasHousehold bool) (userP, hhP string, args []interface{}) {
+	if hasHousehold && scope == ScopeHousehold {
+		return "$1", "$1", []interface{}{householdID}
+	}
+	return "$1", "$2", []interface{}{userID}
 }
