@@ -44,12 +44,13 @@ Backend E2E suite is documented in code at
 
 Point-in-time planning docs. Status below is inventory against `main`
 (C025 audit / C028 docs sync). Prefer this over stale Phases 3-5 open
-wording. See also [`COUPLEFLOW-AI-PLAN.md`](plans/COUPLEFLOW-AI-PLAN.md)
-status section. [`tracker.html`](../tracker.html) AI rows may lag.
+wording. See [`COUPLEFLOW-AI-PLAN-STATUS.md`](plans/COUPLEFLOW-AI-PLAN-STATUS.md).
+[`tracker.html`](../tracker.html) AI rows may lag.
 
 | Doc | What it covers | Status |
 |---|---|---|
-| [COUPLEFLOW-AI-PLAN.md](plans/COUPLEFLOW-AI-PLAN.md) | AI financial assistant | Shipped: Phases 1-2, action queue, partner plan approval, memory, nudges, C027 grounding. Open: leave-household, path/framework UX, Phase 6. C026 onboarding backend on main. |
+| [COUPLEFLOW-AI-PLAN-STATUS.md](plans/COUPLEFLOW-AI-PLAN-STATUS.md) | AI plan shipped vs open inventory (C028) | Living status vs code |
+| [COUPLEFLOW-AI-PLAN.md](plans/COUPLEFLOW-AI-PLAN.md) | AI financial assistant phases | Shipped: 1-2, action queue, partner plan approval, memory, nudges, C027. Open: leave-household, path UX, Phase 6. C026 on main. |
 | [TELLER-INTEGRATION-PLAN.md](plans/TELLER-INTEGRATION-PLAN.md) | Teller as bank provider | Implemented |
 | [FLINKS-INTEGRATION-PLAN.md](plans/FLINKS-INTEGRATION-PLAN.md) | Flinks + provider-choice architecture | Provider abstraction implemented |
 | [CATEGORIZATION-IMPROVEMENT-PLAN.md](plans/CATEGORIZATION-IMPROVEMENT-PLAN.md) | Auto-categorization improvements | Largely shipped (rules + AI pass) |
