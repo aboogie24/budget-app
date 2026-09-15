@@ -4,9 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
-	"time"
-
-	"github.com/aboogie/budget-backend/internal/recurrence"
 )
 
 func getFinancialSnapshot(conn *sql.DB, userID, householdID string, input json.RawMessage) (string, error) {
@@ -14,40 +11,18 @@ func getFinancialSnapshot(conn *sql.DB, userID, householdID string, input json.R
 	hasHH := householdID != ""
 	snapshot := scopeMeta(scope, householdID)
 
-	now := time.Now().UTC()
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	monthEnd := monthStart.AddDate(0, 1, 0)
+	monthStart, monthEnd := currentMonthBoundsUTC()
 
-	// Budgeted income — same occurrence math as the budget tab / dashboard.
-	var budgetedIncome float64
+	// Budgeted income — same OccurrencesInMonth math as LoadFinancialContext / Budget tab.
 	budgetWhere := budgetScopeWhere(scope, "$1", "$2", hasHH)
 	budgetArgs := []interface{}{userID}
 	if hasHH && scope == ScopeHousehold {
 		budgetArgs = []interface{}{userID, householdID}
 	}
-	budgetSQL := `
-		SELECT amount, COALESCE(frequency, ''), start_date
-		FROM budgets b WHERE ` + budgetWhere
-	if budgetRows, err := conn.Query(budgetSQL, budgetArgs...); err != nil {
-		log.Printf("snapshot budgeted income query error: %v", err)
-	} else {
-		for budgetRows.Next() {
-			var amount float64
-			var freq string
-			var start sql.NullTime
-			if budgetRows.Scan(&amount, &freq, &start) == nil {
-				var startPtr *time.Time
-				if start.Valid {
-					startPtr = &start.Time
-				}
-				budgetedIncome += amount * float64(recurrence.OccurrencesInMonth(startPtr, freq, monthStart, monthEnd))
-			}
-		}
-		budgetRows.Close()
-	}
-	snapshot["budgeted_monthly_income"] = budgetedIncome
+	snapshot["budgeted_monthly_income"] = sumBudgetedMonthlyIncome(conn, budgetWhere, budgetArgs, monthStart, monthEnd)
 
 	// Actuals — calendar month, sharing-gated like GetTransactions / dashboard.
+	// Explicit type IN (income, expense) excludes internal transfers (type=transfer).
 	txWhere := txScopeWhere(scope, "$1", "$2", hasHH)
 	txArgs := []interface{}{userID}
 	if hasHH && scope == ScopeHousehold {
@@ -60,6 +35,7 @@ func getFinancialSnapshot(conn *sql.DB, userID, householdID string, input json.R
 			COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0)
 		FROM transactions t
 		WHERE `+txWhere+`
+		  AND t.type IN ('income', 'expense')
 		  AND date >= date_trunc('month', CURRENT_DATE)
 	`, txArgs...).Scan(&actualIncome, &actualExpenses)
 	if err != nil {
@@ -68,14 +44,11 @@ func getFinancialSnapshot(conn *sql.DB, userID, householdID string, input json.R
 	snapshot["income_received_this_month"] = actualIncome.Float64
 	snapshot["expenses_this_month"] = actualExpenses.Float64
 	snapshot["cash_flow_this_month"] = actualIncome.Float64 - actualExpenses.Float64
-	snapshot["numbers_note"] = "income_received/expenses/cash_flow are ACTUAL calendar-month transactions (internal transfers excluded). budgeted_monthly_income is the PLAN — never compare it against actual expenses as if it were money received."
+	snapshot["numbers_note"] = "income_received/expenses/cash_flow are ACTUAL calendar-month transactions (internal transfers excluded via type IN (income, expense)). budgeted_monthly_income is the PLAN — never compare it against actual expenses as if it were money received."
 
-	// Total debt
-	debtWhere := debtScopeWhere(scope, "$1", "$2", hasHH)
-	debtArgs := []interface{}{userID}
-	if hasHH && scope == ScopeHousehold {
-		debtArgs = []interface{}{userID, householdID}
-	}
+	// Total debt — Household matches /auth/households/summary (household_id only).
+	debtUserP, debtHhP, debtArgs := debtSavingsArgs(scope, userID, householdID, hasHH)
+	debtWhere := debtScopeWhere(scope, debtUserP, debtHhP, hasHH)
 	var totalDebt sql.NullFloat64
 	err = conn.QueryRow(`
 		SELECT COALESCE(SUM(balance), 0)
@@ -86,12 +59,9 @@ func getFinancialSnapshot(conn *sql.DB, userID, householdID string, input json.R
 	}
 	snapshot["total_debt"] = totalDebt.Float64
 
-	// Total savings
-	savWhere := savingsScopeWhere(scope, "$1", "$2", hasHH)
-	savArgs := []interface{}{userID}
-	if hasHH && scope == ScopeHousehold {
-		savArgs = []interface{}{userID, householdID}
-	}
+	// Total savings — same household_id-only semantics as the dashboard summary.
+	savUserP, savHhP, savArgs := debtSavingsArgs(scope, userID, householdID, hasHH)
+	savWhere := savingsScopeWhere(scope, savUserP, savHhP, hasHH)
 	var totalSavings sql.NullFloat64
 	err = conn.QueryRow(`
 		SELECT COALESCE(SUM(current_amount), 0)
@@ -135,6 +105,7 @@ func getFinancialSnapshot(conn *sql.DB, userID, householdID string, input json.R
 				COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0)
 			FROM transactions
 			WHERE user_id = $1
+			  AND type IN ('income', 'expense')
 			  AND date >= date_trunc('month', CURRENT_DATE)
 		`, userID).Scan(&meIncome, &meExpenses)
 		snapshot["me"] = map[string]interface{}{
