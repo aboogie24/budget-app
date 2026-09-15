@@ -65,17 +65,57 @@ func TestTxScopeWhereMeVsHousehold(t *testing.T) {
 	}
 }
 
-func TestBudgetDebtSavingsGates(t *testing.T) {
+func TestBudgetGatesKeepSharePrefs(t *testing.T) {
 	b := budgetScopeWhere(ScopeHousehold, "$1", "$2", true)
 	if !strings.Contains(b, "share_budgets") || !strings.Contains(b, "is_shared") {
 		t.Fatalf("budget gate: %s", b)
 	}
+}
+
+func TestDebtSavingsHouseholdMatchesSummary(t *testing.T) {
+	// Dashboard Household uses GET /auth/households/summary:
+	//   SUM(...) FROM debt_accounts/savings_goals WHERE household_id = $1
 	d := debtScopeWhere(ScopeHousehold, "$1", "$2", true)
-	if !strings.Contains(d, "share_debts") {
-		t.Fatalf("debt gate: %s", d)
+	if strings.Contains(d, "share_debts") || strings.Contains(d, "is_shared") || strings.Contains(d, "user_id") {
+		t.Fatalf("household debt must be household_id-only like /auth/households/summary: %s", d)
 	}
+	if d != "d.household_id::text = $2" {
+		t.Fatalf("expected household_id predicate, got %q", d)
+	}
+
 	s := savingsScopeWhere(ScopeHousehold, "$1", "$2", true)
-	if !strings.Contains(s, "share_savings") {
-		t.Fatalf("savings gate: %s", s)
+	if strings.Contains(s, "share_savings") || strings.Contains(s, "is_shared") || strings.Contains(s, "user_id") {
+		t.Fatalf("household savings must be household_id-only like /auth/households/summary: %s", s)
+	}
+	if s != "g.household_id::text = $2" {
+		t.Fatalf("expected household_id predicate, got %q", s)
+	}
+
+	meD := debtScopeWhere(ScopeMe, "$1", "$2", true)
+	if meD != "d.user_id = $1" {
+		t.Fatalf("me debt: %q", meD)
+	}
+	meS := savingsScopeWhere(ScopeMe, "$1", "$2", true)
+	if meS != "g.user_id = $1" {
+		t.Fatalf("me savings: %q", meS)
+	}
+}
+
+func TestDebtSavingsArgsNoPlaceholderGap(t *testing.T) {
+	userP, hhP, args := debtSavingsArgs(ScopeHousehold, "u1", "hh1", true)
+	if userP != "$1" || hhP != "$1" || len(args) != 1 || args[0] != "hh1" {
+		t.Fatalf("household bind: userP=%s hhP=%s args=%v", userP, hhP, args)
+	}
+	userP, hhP, args = debtSavingsArgs(ScopeMe, "u1", "hh1", true)
+	if userP != "$1" || len(args) != 1 || args[0] != "u1" {
+		t.Fatalf("me bind: userP=%s hhP=%s args=%v", userP, hhP, args)
+	}
+}
+
+func TestScopeMetaMentionsSummarySemantics(t *testing.T) {
+	meta := scopeMeta(ScopeHousehold, "hh-1")
+	note, _ := meta["scope_note"].(string)
+	if !strings.Contains(note, "households/summary") && !strings.Contains(note, "household_id-tagged") {
+		t.Fatalf("scope_note should describe summary/household_id debt-savings semantics: %s", note)
 	}
 }
