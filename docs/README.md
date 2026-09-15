@@ -11,9 +11,9 @@ mockups in
 
 ```
 docs/
-├── plans/     # Feature & integration plans (point-in-time; see status notes)
-├── app/       # Frontend (budget-app): builds, design system, testing
-└── backend/   # Backend (budget-backend): testing & implementation notes
++- plans/     # Feature and integration plans (point-in-time; see status notes)
++- app/       # Frontend (budget-app): builds, design system, testing
++- backend/   # Backend (budget-backend): testing and implementation notes
 ```
 
 ## App (`docs/app/`)
@@ -42,25 +42,27 @@ Backend E2E suite is documented in code at
 
 ## Plans (`docs/plans/`)
 
-Point-in-time planning docs. **Status reflects when they were written** — the
-tracker is the source of truth for what actually shipped.
+Point-in-time planning docs. Status below is inventory against `main`
+(C025 audit / C028 docs sync). Prefer this over stale Phases 3-5 open
+wording. See also [`COUPLEFLOW-AI-PLAN.md`](plans/COUPLEFLOW-AI-PLAN.md)
+status section. [`tracker.html`](../tracker.html) AI rows may lag.
 
 | Doc | What it covers | Status |
 |---|---|---|
-| [COUPLEFLOW-AI-PLAN.md](plans/COUPLEFLOW-AI-PLAN.md) | AI financial assistant: product & architecture | Phases 1–2 + tools/approval shipped; 3–5 open |
+| [COUPLEFLOW-AI-PLAN.md](plans/COUPLEFLOW-AI-PLAN.md) | AI financial assistant | Shipped: Phases 1-2, action queue, partner plan approval, memory, nudges, C027 grounding. Open: leave-household, path/framework UX, Phase 6. C026 onboarding backend on main. |
 | [TELLER-INTEGRATION-PLAN.md](plans/TELLER-INTEGRATION-PLAN.md) | Teller as bank provider | Implemented |
-| [FLINKS-INTEGRATION-PLAN.md](plans/FLINKS-INTEGRATION-PLAN.md) | Flinks (Canada) + provider-choice architecture | Provider abstraction implemented |
+| [FLINKS-INTEGRATION-PLAN.md](plans/FLINKS-INTEGRATION-PLAN.md) | Flinks + provider-choice architecture | Provider abstraction implemented |
 | [CATEGORIZATION-IMPROVEMENT-PLAN.md](plans/CATEGORIZATION-IMPROVEMENT-PLAN.md) | Auto-categorization improvements | Largely shipped (rules + AI pass) |
 | [CATEGORY-SYSTEM-UPGRADE.md](plans/CATEGORY-SYSTEM-UPGRADE.md) | Smart tagging, auto-matching, subcategories | Implemented |
 | [BUDGET-SCREEN-UPGRADE.md](plans/BUDGET-SCREEN-UPGRADE.md) | Subcategory-aware budget screen | Implemented |
-| [DEBT-CATEGORIZATION-PLAN.md](plans/DEBT-CATEGORIZATION-PLAN.md) | Auto loans & flexible liability types | Implemented |
-| [ONBOARDING-REDESIGN-PLAN.md](plans/ONBOARDING-REDESIGN-PLAN.md) | Onboarding flow redesign | Implemented |
-| [FIX-WELCOME-REDIRECT.md](plans/FIX-WELCOME-REDIRECT.md) | Login → welcome-screen redirect bug | Fixed |
+| [DEBT-CATEGORIZATION-PLAN.md](plans/DEBT-CATEGORIZATION-PLAN.md) | Auto loans and flexible liability types | Implemented |
+| [ONBOARDING-REDESIGN-PLAN.md](plans/ONBOARDING-REDESIGN-PLAN.md) | Onboarding flow redesign | Implemented (UI); C026 backend on main |
+| [FIX-WELCOME-REDIRECT.md](plans/FIX-WELCOME-REDIRECT.md) | Login welcome-screen redirect bug | Fixed |
 
 ## Operations
 
 - Releases: manual [Release API workflow](../.github/workflows/release-api.yml)
-  — choose patch/minor/major; publishes image + Helm chart to GHCR
+  -- choose patch/minor/major; publishes image + Helm chart to GHCR
   (see BUILDS.md for the mobile side).
 - Deploy: `helm install budget-api oci://ghcr.io/aboogie24/budget-app/charts/budget-api`
   (bundled PostgreSQL, migrations run automatically).
