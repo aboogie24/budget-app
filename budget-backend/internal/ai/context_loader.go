@@ -27,11 +27,11 @@ func LoadFinancialContext(dbConn *sql.DB, userID, householdID string, ctx *Conte
 		ctxArgs = []interface{}{userID, householdID}
 	}
 
+	monthStart, monthEnd := currentMonthBoundsUTC()
+	ctx.BudgetedIncome = sumBudgetedMonthlyIncome(dbConn, budgetWhere, ctxArgs, monthStart, monthEnd)
+
+	// Actuals: type IN (income, expense) excludes internal transfers (type=transfer).
 	q := "SELECT " +
-		"COALESCE((SELECT SUM(CASE COALESCE(b.frequency, '') " +
-		"WHEN 'weekly' THEN b.amount * 4 WHEN 'biweekly' THEN b.amount * 2 " +
-		"WHEN '1st-15th' THEN b.amount * 2 ELSE b.amount END) " +
-		"FROM budgets b WHERE (" + budgetWhere + ") AND b.type = 'income'), 0), " +
 		"COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE (" + txWhere + ") " +
 		"AND t.type = 'income' AND t.date >= date_trunc('month', CURRENT_DATE)), 0), " +
 		"COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE (" + txWhere + ") " +
@@ -45,7 +45,6 @@ func LoadFinancialContext(dbConn *sql.DB, userID, householdID string, ctx *Conte
 		"(SELECT COUNT(*) FROM linked_accounts WHERE user_id = $1)"
 
 	err := dbConn.QueryRow(q, ctxArgs...).Scan(
-		&ctx.BudgetedIncome,
 		&ctx.ActualIncome,
 		&ctx.MonthlyExpenses,
 		&ctx.TotalDebt,
@@ -64,7 +63,8 @@ func LoadFinancialContext(dbConn *sql.DB, userID, householdID string, ctx *Conte
 		_ = dbConn.QueryRow(
 			"SELECT COALESCE(SUM(amount) FILTER (WHERE type = 'income'), 0), "+
 				"COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0) "+
-				"FROM transactions WHERE user_id = $1 AND date >= date_trunc('month', CURRENT_DATE)",
+				"FROM transactions WHERE user_id = $1 AND type IN ('income','expense') "+
+				"AND date >= date_trunc('month', CURRENT_DATE)",
 			userID,
 		).Scan(&ctx.MeActualIncome, &ctx.MeExpenses)
 	}
