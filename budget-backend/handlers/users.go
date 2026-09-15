@@ -11,6 +11,7 @@ import (
 )
 
 // CompleteOnboarding saves the user's monthly budget goal and marks onboarding done.
+// Ensures a household exists so finish never leaves the user household-less.
 func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID            string  `json:"user_id"`
@@ -32,12 +33,28 @@ func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	_, err = conn.Exec(`
+	if _, err := db.EnsureHouseholdForUser(conn.Conn, req.UserID); err != nil {
+		log.Printf("CompleteOnboarding ensure household: %v", err)
+		http.Error(w, "Failed to ensure household", http.StatusInternalServerError)
+		return
+	}
+
+	res, err := conn.Exec(`
 		UPDATE users SET monthly_budget_goal = $1, onboarding_complete = TRUE WHERE id = $2
 	`, req.MonthlyBudgetGoal, req.UserID)
 	if err != nil {
 		log.Printf("CompleteOnboarding error: %v", err)
 		http.Error(w, "Failed to save onboarding", http.StatusInternalServerError)
+		return
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("CompleteOnboarding rows affected: %v", err)
+		http.Error(w, "Failed to save onboarding", http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
