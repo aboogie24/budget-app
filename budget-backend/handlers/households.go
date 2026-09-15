@@ -1,12 +1,10 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/gofrs/uuid"
