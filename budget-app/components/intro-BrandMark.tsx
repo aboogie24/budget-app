@@ -8,8 +8,8 @@ import { colors, spacing, radius, typography } from '@/utils/design-system';
  *
  * The CoupleFlow brand mark for the intro (welcome) screen. Two overlapping
  * translucent glass halo circles (the "shared household" motif) behind a
- * wordmark row: Couple ♥ Flow, expressed entirely in the purple family —
- * NO pink. Purely decorative + identity, no interaction.
+ * wordmark row: Couple ♥ Flow — Couple/heart purple, Flow blue (#3b82f6).
+ * Purely decorative + identity, no interaction.
  */
 export function IntroBrandMark() {
   return (
@@ -27,8 +27,8 @@ export function IntroBrandMark() {
       {/* Wordmark row */}
       <View style={styles.logoRow}>
         <Text style={styles.wordmark}>Couple</Text>
-        <Ionicons name="heart" size={28} color={colors.accent} style={styles.heart} />
-        <Text style={styles.wordmark}>Flow</Text>
+        <Ionicons name="heart" size={28} color={colors.primary2} style={styles.heart} />
+        <Text style={[styles.wordmark, styles.wordmarkFlow]}>Flow</Text>
       </View>
     </View>
   );
@@ -69,6 +69,9 @@ const styles = StyleSheet.create({
   wordmark: {
     ...typography.h1,
     color: colors.primary2,
+  },
+  wordmarkFlow: {
+    color: colors.info,
   },
   heart: {
     marginHorizontal: spacing.xs,
