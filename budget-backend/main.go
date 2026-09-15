@@ -19,6 +19,7 @@ func main() {
 
 	r := mux.NewRouter()
 	routes.SetupRoutes(r)
+	routes.MountC026(r)
 
 	// Start background recurring transaction processor (runs daily).
 	handlers.StartRecurringTicker()
