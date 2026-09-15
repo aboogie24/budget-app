@@ -41,12 +41,6 @@ func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Safety net: never leave a finished onboarding user without a household
-	// (OB1 should have created one; this covers skip/race paths).
-	if _, ensureErr := db.EnsureHouseholdForUser(conn.Conn, req.UserID); ensureErr != nil {
-		log.Printf("CompleteOnboarding ensure household: %v", ensureErr)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"status":              "onboarding complete",
