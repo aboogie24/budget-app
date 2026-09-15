@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -49,13 +50,76 @@ func TestGetCurrentUser_MissingUserID(t *testing.T) {
 }
 
 func TestCompleteOnboarding_ReturnsOnboardingCompleteFlag(t *testing.T) {
+	userID := "11111111-1111-1111-1111-111111111111"
 	withUsersMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"household_id"}).
+				AddRow("22222222-2222-2222-2222-222222222222"))
 		mock.ExpectExec(`UPDATE users`).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 	})
 
 	body := map[string]interface{}{
-		"user_id":             "11111111-1111-1111-1111-111111111111",
+		"user_id":             userID,
+		"monthly_budget_goal": 0,
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/onboarding/complete", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	CompleteOnboarding(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var result map[string]interface{}
+	_ = json.Unmarshal(rr.Body.Bytes(), &result)
+	if result["onboarding_complete"] != true {
+		t.Fatalf("expected onboarding_complete=true, got %v", result)
+	}
+}
+
+func TestCompleteOnboarding_UserNotFound(t *testing.T) {
+	userID := "11111111-1111-1111-1111-111111111111"
+	withUsersMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"household_id"}).
+				AddRow("22222222-2222-2222-2222-222222222222"))
+		mock.ExpectExec(`UPDATE users`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+	})
+
+	body := map[string]interface{}{
+		"user_id":             userID,
+		"monthly_budget_goal": 0,
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/onboarding/complete", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	CompleteOnboarding(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCompleteOnboarding_EnsuresHouseholdWhenMissing(t *testing.T) {
+	userID := "11111111-1111-1111-1111-111111111111"
+	withUsersMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectExec(`INSERT INTO households`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`INSERT INTO household_members`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`UPDATE users`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	})
+
+	body := map[string]interface{}{
+		"user_id":             userID,
 		"monthly_budget_goal": 0,
 	}
 	b, _ := json.Marshal(body)
