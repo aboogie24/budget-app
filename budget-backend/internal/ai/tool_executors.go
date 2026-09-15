@@ -27,15 +27,22 @@ func calculateDebtPayoffTool(conn *sql.DB, userID, householdID string, input jso
 		params.DebtCategory = "attack"
 	}
 
-	// Build query with category filter
-	query := `SELECT id, name, balance, COALESCE(apr, 0), COALESCE(min_payment, 0), COALESCE(debt_category, 'attack')
-		FROM debt_accounts WHERE user_id = $1`
+	// Household-aware debt set (same sharing gate as get_debts / dashboard).
+	scope := ParseScope("", householdID) // default household when couple
+	hasHH := householdID != ""
+	where := debtScopeWhere(scope, "$1", "$2", hasHH)
 	args := []interface{}{userID}
+	if hasHH && scope == ScopeHousehold {
+		args = []interface{}{userID, householdID}
+	}
+	query := `SELECT d.id, d.name, d.balance, COALESCE(d.apr, 0), COALESCE(d.min_payment, 0), COALESCE(d.debt_category, 'attack')
+		FROM debt_accounts d WHERE ` + where
+	nextArg := len(args) + 1
 	if params.DebtCategory != "all" {
-		query += ` AND debt_category = $2`
+		query += fmt.Sprintf(` AND d.debt_category = $%d`, nextArg)
 		args = append(args, params.DebtCategory)
 	}
-	query += ` ORDER BY apr DESC`
+	query += ` ORDER BY d.apr DESC`
 
 	rows, err := conn.Query(query, args...)
 	if err != nil {
@@ -57,11 +64,10 @@ func calculateDebtPayoffTool(conn *sql.DB, userID, householdID string, input jso
 		}
 	}
 
-	response := map[string]interface{}{
-		"strategy":      params.Strategy,
-		"extra_payment": params.ExtraPayment,
-		"debt_category": params.DebtCategory,
-	}
+	response := scopeMeta(scope, householdID)
+	response["strategy"] = params.Strategy
+	response["extra_payment"] = params.ExtraPayment
+	response["debt_category"] = params.DebtCategory
 
 	// Attack debts get the aggressive payoff simulation
 	if len(attackDebts) > 0 {
@@ -109,16 +115,27 @@ func projectSavingsTool(conn *sql.DB, userID, householdID string, input json.Raw
 		params.AnnualRate = 0.05
 	}
 
+	scope := ParseScope("", householdID)
+	hasHH := householdID != ""
 	var query string
 	var args []interface{}
 	if params.GoalID != "" {
-		query = `SELECT id, name, COALESCE(current_amount, 0), COALESCE(target_amount, 0), COALESCE(target_date, '')
-		         FROM savings_goals WHERE id = $1 AND user_id = $2`
+		// Specific goal: allow if owned by caller OR visible under household scope.
+		where := savingsScopeWhere(scope, "$2", "$3", hasHH)
+		query = `SELECT g.id, g.name, COALESCE(g.current_amount, 0), COALESCE(g.target_amount, 0), COALESCE(g.target_date::text, '')
+		         FROM savings_goals g WHERE g.id = $1 AND (` + where + `)`
 		args = []interface{}{params.GoalID, userID}
+		if hasHH && scope == ScopeHousehold {
+			args = append(args, householdID)
+		}
 	} else {
-		query = `SELECT id, name, COALESCE(current_amount, 0), COALESCE(target_amount, 0), COALESCE(target_date, '')
-		         FROM savings_goals WHERE user_id = $1 ORDER BY created_at DESC`
+		where := savingsScopeWhere(scope, "$1", "$2", hasHH)
+		query = `SELECT g.id, g.name, COALESCE(g.current_amount, 0), COALESCE(g.target_amount, 0), COALESCE(g.target_date::text, '')
+		         FROM savings_goals g WHERE ` + where + ` ORDER BY g.created_at DESC`
 		args = []interface{}{userID}
+		if hasHH && scope == ScopeHousehold {
+			args = append(args, householdID)
+		}
 	}
 
 	rows, err := conn.Query(query, args...)
@@ -147,11 +164,11 @@ func projectSavingsTool(conn *sql.DB, userID, householdID string, input json.Raw
 		return `{"message":"No savings goals found.","projections":[]}`, nil
 	}
 
-	result, _ := json.Marshal(map[string]interface{}{
-		"monthly_amount": params.MonthlyAmount,
-		"annual_rate":    params.AnnualRate,
-		"projections":    projections,
-	})
+	out := scopeMeta(scope, householdID)
+	out["monthly_amount"] = params.MonthlyAmount
+	out["annual_rate"] = params.AnnualRate
+	out["projections"] = projections
+	result, _ := json.Marshal(out)
 	return string(result), nil
 }
 
