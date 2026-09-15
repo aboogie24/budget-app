@@ -133,6 +133,6 @@ export function useCoupleFlowDashboard() {
     heroCashFlow, heroIn, heroOut, recentTx, resolvePartner, greeting, dayLabels, todayIndex,
     netWorthDeltaPercent, showSkeleton, hasTrajectory, drawerItems, thisWeekTotal, weeklyBudget,
     dailyTotals, budgetPercentUsed, savingsCurrent, savingsTarget, savingsPercent, billsPaid,
-    billsTotal, netWorth, frameworkLevel,
+    billsTotal, netWorth, frameworkLevel, netWorthHistory,
   };
 }
