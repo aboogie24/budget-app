@@ -9,11 +9,8 @@ import (
 func getDebts(conn *sql.DB, userID, householdID string, input json.RawMessage) (string, error) {
 	scope := ScopeFromInput(input, householdID)
 	hasHH := householdID != ""
-	where := debtScopeWhere(scope, "$1", "$2", hasHH)
-	args := []interface{}{userID}
-	if hasHH && scope == ScopeHousehold {
-		args = []interface{}{userID, householdID}
-	}
+	userP, hhP, args := debtSavingsArgs(scope, userID, householdID, hasHH)
+	where := debtScopeWhere(scope, userP, hhP, hasHH)
 
 	rows, err := conn.Query(`
 		SELECT d.id, d.name, d.balance, COALESCE(d.apr, 0),
@@ -64,11 +61,8 @@ func getDebts(conn *sql.DB, userID, householdID string, input json.RawMessage) (
 func getSavingsGoals(conn *sql.DB, userID, householdID string, input json.RawMessage) (string, error) {
 	scope := ScopeFromInput(input, householdID)
 	hasHH := householdID != ""
-	where := savingsScopeWhere(scope, "$1", "$2", hasHH)
-	args := []interface{}{userID}
-	if hasHH && scope == ScopeHousehold {
-		args = []interface{}{userID, householdID}
-	}
+	userP, hhP, args := debtSavingsArgs(scope, userID, householdID, hasHH)
+	where := savingsScopeWhere(scope, userP, hhP, hasHH)
 
 	rows, err := conn.Query(`
 		SELECT g.id, g.name, COALESCE(g.current_amount, 0), COALESCE(g.target_amount, 0),
