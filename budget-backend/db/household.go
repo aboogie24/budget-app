@@ -38,9 +38,25 @@ func EnsureHouseholdForUser(conn *sql.DB, userID string) (string, error) {
 		log.Printf("ensure household create error: %v", err)
 		return "", err
 	}
-	if _, err := conn.Exec(`INSERT INTO household_members (household_id, user_id, role) VALUES ($1,$2,'owner') ON CONFLICT DO NOTHING`, newID, userID); err != nil {
+	// PK is (household_id, user_id), so ON CONFLICT DO NOTHING would not catch a
+	// concurrent insert with a different household_id and would leave this row orphaned.
+	// Insert only when the user has no membership yet; otherwise drop the unused household.
+	res, err := conn.Exec(`
+		INSERT INTO household_members (household_id, user_id, role)
+		SELECT $1, $2, 'owner'
+		WHERE NOT EXISTS (SELECT 1 FROM household_members WHERE user_id = $2)
+	`, newID, userID)
+	if err != nil {
 		log.Printf("ensure household member insert error: %v", err)
+		_, _ = conn.Exec(`DELETE FROM households WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM household_members WHERE household_id = $1)`, newID)
 		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		_, _ = conn.Exec(`DELETE FROM households WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM household_members WHERE household_id = $1)`, newID)
+		if existing := ResolveHouseholdID(conn, userID); existing != "" {
+			return existing, nil
+		}
+		return "", errors.New("failed to attach household membership")
 	}
 	return newID, nil
 }
