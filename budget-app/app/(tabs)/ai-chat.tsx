@@ -18,6 +18,8 @@ import { api } from '../../utils/apiClient';
 import { colors, spacing, radius, typography, glassEffects } from '../../utils/design-system';
 import GradientBackground from '../../components/GradientBackground';
 import Markdown from 'react-native-markdown-display';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { atAiCap, aiCapCopy, parseEntitlementErrorCode } from '@/utils/entitlements';
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -97,6 +99,8 @@ const MessageBubble = React.memo(function MessageBubble({ item }: { item: Messag
 
 export default function AIChatScreen() {
   const router = useRouter();
+  const { entitlements, refresh: refreshEntitlements } = useEntitlements();
+  const aiCapped = atAiCap(entitlements);
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
 
@@ -210,6 +214,28 @@ export default function AIChatScreen() {
     const text = source.trim();
     if (!text || isStreaming) return;
 
+    if (atAiCap(entitlements)) {
+      // Soft Free cap — shared money stays open; nudge to household Plus.
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `temp-${Date.now()}`,
+          role: 'user',
+          content: text,
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: `cap-${Date.now()}`,
+          role: 'assistant',
+          content:
+            "You've used this week's Free advisor messages. Upgrade to Plus for full AI with tools & approvals — still one household plan for both of you.",
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      setInputText('');
+      return;
+    }
+
     setInputText('');
 
     // Create conversation if needed
@@ -290,7 +316,8 @@ export default function AIChatScreen() {
 
       xhr.onload = () => {
         if (xhr.status >= 400) {
-          reject(new Error(`HTTP ${xhr.status}`));
+          const body = xhr.responseText || `HTTP ${xhr.status}`;
+          reject(new Error(body));
           return;
         }
         resolve();
@@ -316,12 +343,25 @@ export default function AIChatScreen() {
 
       // Refresh conversation list to update titles
       loadConversations();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Send message error:', err);
+      const code =
+        parseEntitlementErrorCode(err?.message) ||
+        (typeof err?.message === 'string' && err.message.includes('403')
+          ? null
+          : null);
+      const capped =
+        code === 'ai_message_budget' ||
+        (typeof err?.message === 'string' && err.message.includes('ai_message_budget'));
+      if (capped) {
+        refreshEntitlements();
+      }
       const errorMsg: Message = {
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: 'Sorry, I had trouble connecting. Please try again.',
+        content: capped
+          ? "You've used this week's Free advisor messages. Upgrade to Plus for full AI — shared budgets stay open."
+          : 'Sorry, I had trouble connecting. Please try again.',
         created_at: new Date().toISOString(),
       };
       setMessages(prev => [...prev, errorMsg]);
@@ -666,6 +706,28 @@ export default function AIChatScreen() {
             </View>
           )}
 
+          {aiCapped ? (
+            <View style={styles.capBanner} accessibilityRole="summary">
+              <Text style={styles.capBannerTitle}>Free advisor this week</Text>
+              <Text style={styles.capBannerBody}>{aiCapCopy(entitlements)}</Text>
+              <TouchableOpacity
+                style={styles.capBannerCta}
+                onPress={() => router.push('/paywall?reason=ai_message_budget')}
+                accessibilityRole="button"
+                accessibilityLabel="Subscribe to Plus"
+              >
+                <Text style={styles.capBannerCtaText}>Subscribe to Plus</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/(tabs)')}
+                accessibilityRole="button"
+                accessibilityLabel="Back to shared money"
+              >
+                <Text style={styles.capBannerLink}>Back to shared money</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           {/* Input Bar */}
           <View style={styles.inputBar}>
             <TextInput
@@ -677,19 +739,19 @@ export default function AIChatScreen() {
               onChangeText={setInputText}
               multiline
               maxLength={2000}
-              editable={!isStreaming}
+              editable={!isStreaming && !aiCapped}
               onSubmitEditing={() => sendMessage()}
               blurOnSubmit={false}
             />
             <TouchableOpacity
-              style={[styles.sendBtn, (!inputText.trim() || isStreaming) && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, (!inputText.trim() || isStreaming || aiCapped) && styles.sendBtnDisabled]}
               onPress={() => sendMessage()}
-              disabled={!inputText.trim() || isStreaming}
+              disabled={!inputText.trim() || isStreaming || aiCapped}
             >
               <Ionicons
                 name="arrow-up-circle"
                 size={32}
-                color={inputText.trim() && !isStreaming ? colors.accent : colors.textDark}
+                color={inputText.trim() && !isStreaming && !aiCapped ? colors.accent : colors.textDark}
               />
             </TouchableOpacity>
           </View>
@@ -1031,5 +1093,41 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     opacity: 0.5,
+  },
+
+  capBanner: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.glassStrong,
+    borderWidth: 1,
+    borderColor: `${colors.warning}55`,
+    gap: spacing.sm,
+  },
+  capBannerTitle: {
+    ...typography.smallBold,
+    color: colors.warning,
+  },
+  capBannerBody: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  capBannerCta: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  capBannerCtaText: {
+    ...typography.smallBold,
+    color: colors.text,
+  },
+  capBannerLink: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textAlign: 'center',
+    fontWeight: '600',
   },
 });
