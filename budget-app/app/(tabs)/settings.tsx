@@ -15,6 +15,8 @@ import { colors, spacing, radius, typography } from '@/utils/design-system';
 import { SettingsRow } from '@/components/settings-tab-SettingsRow';
 import { SettingsGroup } from '@/components/settings-tab-SettingsGroup';
 import { ProfileCard } from '@/components/settings-tab-ProfileCard';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { isPlus } from '@/utils/entitlements';
 
 type Household = {
   name?: string;
@@ -26,6 +28,7 @@ type Household = {
 export default function SettingsScreen() {
   const router = useRouter();
   const { theme, toggleTheme } = useTheme();
+  const { planLabel, plan } = useEntitlements();
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [household, setHousehold] = useState<Household | null>(null);
@@ -259,9 +262,45 @@ export default function SettingsScreen() {
               name={userName || 'Your Name'}
               email={userEmail}
               avatarLabel={userName?.charAt(0)?.toUpperCase() || 'A'}
-              plan="Pro Plan"
+              plan={planLabel}
+              onPlanPress={() => router.push('/paywall')}
             />
           </View>
+
+
+          {/* Plan — C032: real Free | Plus · Household from entitlements */}
+          <SettingsGroup label="PLAN">
+            <SettingsRow
+              icon="diamond-outline"
+              title="Plan"
+              subtitle={
+                isPlus(plan)
+                  ? 'Plus · Household · covers you + partner'
+                  : 'Free · upgrade for full AI & multi-bank'
+              }
+              value={planLabel}
+              onPress={() => router.push('/paywall')}
+            />
+            {isPlus(plan) ? (
+              <SettingsRow
+                icon="card-outline"
+                title="Manage"
+                subtitle="Subscription placeholder"
+                onPress={() =>
+                  Alert.alert('Manage plan', 'Checkout not connected yet')
+                }
+                showDivider
+              />
+            ) : (
+              <SettingsRow
+                icon="sparkles-outline"
+                title="Upgrade"
+                subtitle="Full AI, multi-bank, push nudges"
+                onPress={() => router.push('/paywall')}
+                showDivider
+              />
+            )}
+          </SettingsGroup>
 
           {/* Household */}
           <SettingsGroup

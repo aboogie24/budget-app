@@ -19,6 +19,8 @@ import { BackButton } from '@/components/BackButton';
 import GradientBackground from '@/components/GradientBackground';
 import { Skeleton } from '@/components/Skeleton';
 import { colors, spacing, radius, typography, glassEffects } from '@/utils/design-system';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { atBankLimit } from '@/utils/entitlements';
 
 const APP_SCHEME = 'budgetapp';
 
@@ -86,7 +88,7 @@ const formatSynced = (iso: string) => {
 function LinkedStatusBadge({ status }: { status: ItemStatus }) {
   const meta = getStatusMeta(status);
   return (
-    <View style={[styles.badge, { backgroundColor: `${meta.color}1f` }]}>
+    <View style={[styles.badge, { backgroundColor: `${meta.color}1f` }]}> 
       <Ionicons name={meta.icon} size={12} color={meta.color} />
       <Text style={[styles.badgeLabel, { color: meta.color }]} numberOfLines={1}>
         {meta.label}
@@ -214,6 +216,8 @@ function LinkedAccountRow({
 
 export default function LinkedAccountsScreen() {
   const router = useRouter();
+  const { entitlements } = useEntitlements();
+  const bankLimited = atBankLimit(entitlements);
   const [accounts, setAccounts] = useState<LinkedAccountStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
@@ -222,6 +226,15 @@ export default function LinkedAccountsScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const API_URL = api.getBaseUrl();
+
+  const openLinkAccount = () => {
+    if (atBankLimit(entitlements)) {
+      router.push('/paywall?reason=banks_limit');
+      return;
+    }
+    router.push('/link-account');
+  };
+
 
   /* ── Load linked accounts with status ───────────────────────────── */
   const loadAccounts = useCallback(async () => {
@@ -416,7 +429,7 @@ export default function LinkedAccountsScreen() {
               </Text>
               <TouchableOpacity
                 style={styles.primaryBtn}
-                onPress={() => router.push('/link-account')}
+                onPress={openLinkAccount}
                 activeOpacity={0.8}
                 accessibilityRole="button"
                 accessibilityLabel="Link Account"
@@ -469,7 +482,7 @@ export default function LinkedAccountsScreen() {
               {/* Link new account CTA (dashed) */}
               <TouchableOpacity
                 style={styles.ctaBtn}
-                onPress={() => router.push('/link-account')}
+                onPress={openLinkAccount}
                 activeOpacity={0.8}
                 accessibilityRole="button"
                 accessibilityLabel="Link New Account"

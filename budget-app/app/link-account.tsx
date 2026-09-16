@@ -20,6 +20,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
 import { WebView } from 'react-native-webview';
 import { api } from '@/utils/apiClient';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { atBankLimit } from '@/utils/entitlements';
 import { getCurrentUser } from '@/utils/storage';
 import { fetchLinkedAccounts, deleteLinkedAccount, syncAllBankAccounts, syncPlaidTransactions, syncPlaidInvestments, syncPlaidLiabilities, syncPlaidBalances } from '@/utils/api';
 import { BackButton } from '@/components/BackButton';
@@ -107,9 +109,9 @@ const providerLabel = (provider?: SelectedProvider | string): string =>
     ? PROVIDER_META[provider as ProviderKey].label
     : 'Plaid';
 
-/* ══════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Sub-component: provider badge (inline label pill)
-   ══════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 function LinkAccountProviderBadge({ provider }: { provider?: string }) {
   if (!provider) return null;
   const color = providerColor(provider);
@@ -121,9 +123,9 @@ function LinkAccountProviderBadge({ provider }: { provider?: string }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Sub-component: linked account row (shared list-row contract)
-   ══════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 function LinkAccountLinkedRow({
   account,
   isLast,
@@ -198,9 +200,9 @@ function LinkAccountLinkedRow({
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Sub-component: provider radio row (the CHOOSE A PROVIDER option)
-   ══════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 function LinkAccountProviderRow({
   provider,
   selected,
@@ -260,9 +262,9 @@ function LinkAccountProviderRow({
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Sub-component: connect CTA (primary gradient / secondary outline)
-   ══════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 function LinkAccountConnectCTA({
   variant = 'primary',
   label,
@@ -339,9 +341,9 @@ function LinkAccountConnectCTA({
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Sub-component: static intro card (the ONE floating card)
-   ══════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 function LinkAccountIntroCard() {
   return (
     <View style={styles.introCard}>
@@ -356,15 +358,17 @@ function LinkAccountIntroCard() {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Sub-component: group label (uppercase caption)
-   ══════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 function LinkAccountGroupLabel({ children }: { children: React.ReactNode }) {
   return <Text style={styles.groupLabel}>{children}</Text>;
 }
 
 export default function LinkAccountScreen() {
   const router = useRouter();
+  const { entitlements, loading: entitlementsLoading } = useEntitlements();
+  const bankLimited = atBankLimit(entitlements);
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [linkToken, setLinkToken] = useState<string | null>(null);
@@ -375,25 +379,25 @@ export default function LinkAccountScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  /* ── Provider selection state ────────────────────────────────── */
+  /* ── Provider selection state ─────────────────────────────────────── */
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<SelectedProvider>(null);
   const [showProviderSelection, setShowProviderSelection] = useState(false);
 
-  /* ── Flinks state ────────────────────────────────────────────── */
+  /* ── Flinks state ──────────────────────────────────────────────────── */
   const [flinksWebViewVisible, setFlinksWebViewVisible] = useState(false);
   const [flinksConnectUrl, setFlinksConnectUrl] = useState<string | null>(null);
   const [flinksLoading, setFlinksLoading] = useState(false);
 
-  /* ── Teller state ────────────────────────────────────────────── */
+  /* ── Teller state ──────────────────────────────────────────────────── */
   const [tellerWebViewVisible, setTellerWebViewVisible] = useState(false);
   const [tellerConnectUrl, setTellerConnectUrl] = useState<string | null>(null);
   const [simplefinModalVisible, setSimplefinModalVisible] = useState(false);
   const [simplefinToken, setSimplefinToken] = useState('');
   const [tellerLoading, setTellerLoading] = useState(false);
 
-  /* ── Check native SDK availability ────────────────────────── */
+  /* ── Check native SDK availability ─────────────────────────────────── */
   const plaidModule: any = PlaidLink;
   const nativeHook =
     plaidModule?.usePlaidLink ??
@@ -401,7 +405,7 @@ export default function LinkAccountScreen() {
     undefined;
   const nativeAvailable = typeof nativeHook === 'function';
 
-  /* ── Fetch available providers ──────────────────────────────── */
+  /* ── Fetch available providers ─────────────────────────────────────── */
   const fetchProviders = async () => {
     setLoadingProviders(true);
     try {
@@ -421,7 +425,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Load linked accounts ───────────────────────────────────── */
+  /* ── Load linked accounts ──────────────────────────────────────────── */
   const loadAccounts = useCallback(async () => {
     try {
       const data = await fetchLinkedAccounts();
@@ -433,7 +437,7 @@ export default function LinkAccountScreen() {
     }
   }, []);
 
-  /* ── Fetch link token ─────────────────────────────────────── */
+  /* ── Fetch link token ───────────────────────────────────────────────── */
   const fetchLinkToken = async () => {
     const user = await getCurrentUser();
     if (!user?.id) {
@@ -461,7 +465,7 @@ export default function LinkAccountScreen() {
     fetchProviders();
   }, []);
 
-  /* ── Retry (inline error card) ─────────────────────────────── */
+  /* ── Retry (inline error card) ─────────────────────────────────────── */
   const handleRetry = async () => {
     setError(null);
     setRefreshing(true);
@@ -472,7 +476,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Exchange public token with backend (Plaid) ──────────── */
+  /* ── Exchange public token with backend (Plaid) ─────────────────────── */
   const exchangeToken = async (
     publicToken: string,
     institutionName?: string,
@@ -520,7 +524,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Open Plaid Link via system browser ─────────────────────── */
+  /* ── Open Plaid Link via system browser ─────────────────────────────── */
   const openPlaidBrowser = async () => {
     if (!linkToken) return;
     setLinking(true);
@@ -553,7 +557,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Flinks Connect flow ────────────────────────────────────── */
+  /* ── Flinks Connect flow ───────────────────────────────────────────── */
   const openFlinksConnect = async () => {
     setFlinksLoading(true);
     try {
@@ -579,7 +583,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Extract query param from URL ──────────────────────────── */
+  /* ── Extract query param from URL ───────────────────────────────────── */
   const extractParam = (url: string, param: string): string | null => {
     try {
       // Handle both full URLs and deep-link URLs
@@ -593,7 +597,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Handle Flinks WebView navigation ──────────────────────── */
+  /* ── Handle Flinks WebView navigation ──────────────────────────────── */
   const handleFlinksNavigation = async (url: string): Promise<boolean> => {
     if (url.includes('loginId=') || url.includes('loginId%3D')) {
       const loginId = extractParam(url, 'loginId');
@@ -623,7 +627,7 @@ export default function LinkAccountScreen() {
     return true;
   };
 
-  /* ── Teller Connect flow ────────────────────────────────────── */
+  /* ── Teller Connect flow ───────────────────────────────────────────── */
   // enrollmentId is set when re-authenticating a disconnected enrollment —
   // Teller Connect skips the institution picker and goes straight to login.
   const openTellerConnect = (enrollmentId?: string) => {
@@ -642,7 +646,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Handle messages posted from the Teller Connect WebView ──── */
+  /* ── Handle messages posted from the Teller Connect WebView ─────────── */
   const handleTellerMessage = async (raw: string) => {
     let payload: any;
     try {
@@ -686,7 +690,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── SimpleFIN flow: user pastes a setup token from their bridge ── */
+  /* ── SimpleFIN flow: user pastes a setup token from their bridge ─────── */
   const handleSimplefinSubmit = async () => {
     const token = simplefinToken.trim();
     if (!token) return;
@@ -713,7 +717,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Handle Connect button press ───────────────────────────── */
+  /* ── Handle Connect button press ───────────────────────────────────── */
   const handleConnectPress = () => {
     if (selectedProvider === 'plaid') {
       openPlaidBrowser();
@@ -726,12 +730,12 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Reconnect a disconnected Teller enrollment ────────────── */
+  /* ── Reconnect a disconnected Teller enrollment ─────────────────────── */
   const handleReconnect = (item: LinkedAccount) => {
     openTellerConnect(item.item_id);
   };
 
-  /* ── Unlink an account ──────────────────────────────────────── */
+  /* ── Unlink an account ──────────────────────────────────────────────── */
   const handleUnlink = (acct: LinkedAccount) => {
     Alert.alert(
       'Unlink Account',
@@ -754,7 +758,7 @@ export default function LinkAccountScreen() {
     );
   };
 
-  /* ── Sync all data ──────────────────────────────────────────── */
+  /* ── Sync all data ──────────────────────────────────────────────────── */
   const handleSync = async () => {
     setSyncing(true);
     try {
@@ -812,7 +816,7 @@ export default function LinkAccountScreen() {
     }
   };
 
-  /* ── Derived: reauth accounts + availability gating ────────── */
+  /* ── Derived: reauth accounts + availability gating ─────────────────── */
   const reauthAccounts = accounts.filter((a) => a.item_status === 'login_required');
   const isFlinksAvailable = providers.some((p) => p.name === 'flinks');
   const isTellerAvailable = providers.some((p) => p.name === 'teller');
@@ -826,9 +830,9 @@ export default function LinkAccountScreen() {
     ...(isSimplefinAvailable ? (['simplefin'] as ProviderKey[]) : []),
   ];
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      Shared header
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
   const renderHeader = (showRefresh: boolean) => (
     <View style={styles.header}>
       <BackButton fallback="/accounts" color={colors.primary2} />
@@ -841,9 +845,9 @@ export default function LinkAccountScreen() {
     </View>
   );
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      Reconnect banner (AttentionCard visual pattern)
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
   const renderReconnectBanner = () => {
     if (reauthAccounts.length === 0) return null;
     return (
@@ -889,9 +893,9 @@ export default function LinkAccountScreen() {
     );
   };
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      Trust footer
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
   const renderTrustFooter = () => (
     <View style={styles.trustRow}>
       <Ionicons name="lock-closed-outline" size={14} color={colors.textMuted} />
@@ -899,9 +903,9 @@ export default function LinkAccountScreen() {
     </View>
   );
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      Loading skeleton body
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
   const renderSkeletonRow = (last = false) => (
     <View style={[styles.row, !last && styles.rowDivider]}>
       <Skeleton width={40} height={40} borderRadius={radius.md} />
@@ -930,9 +934,9 @@ export default function LinkAccountScreen() {
     </>
   );
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      Provider chooser + CTA
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
   const renderConnectSection = () => {
     // Direct-Plaid fallback (no choice worth showing).
     if (!showProviderSelection) {
@@ -993,9 +997,9 @@ export default function LinkAccountScreen() {
     );
   };
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      WebView modal (shared chrome for Flinks + Teller)
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
   const renderWebViewModal = (opts: {
     visible: boolean;
     provider: 'Flinks' | 'Teller';
@@ -1080,7 +1084,7 @@ export default function LinkAccountScreen() {
     },
   });
 
-  /* ── SimpleFIN setup-token modal (no WebView — just paste a token) ── */
+  /* ── SimpleFIN setup-token modal (no WebView — just paste a token) ─────── */
   const simplefinModal = (
     <Modal
       visible={simplefinModalVisible}
@@ -1143,9 +1147,43 @@ export default function LinkAccountScreen() {
     </Modal>
   );
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      Render: loading state (header + intro static, skeleton body)
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  // C032: Free household already at 1-bank cap — calm sheet, no Plaid start.
+  if (!entitlementsLoading && bankLimited) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#0f172a', padding: 24, justifyContent: 'center' }}>
+        <Text style={{ color: '#f8fafc', fontSize: 22, fontWeight: '800', marginBottom: 8 }}>
+          One linked account on Free
+        </Text>
+        <Text style={{ color: '#94a3b8', fontSize: 15, lineHeight: 22, marginBottom: 20 }}>
+          Free includes 1 linked account for the household. Plus unlocks multi-bank — still one plan for both of you.
+        </Text>
+        <TouchableOpacity
+          onPress={() => router.push('/paywall?reason=banks_limit')}
+          style={{ backgroundColor: '#7c3aed', borderRadius: 14, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Subscribe to Plus"
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Subscribe to Plus</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/linked-accounts');
+          }}
+          style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
+          accessibilityRole="button"
+          accessibilityLabel="Keep 1 account"
+        >
+          <Text style={{ color: '#94a3b8', fontWeight: '600' }}>Keep 1 account</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
   if (loadingAccounts || loadingProviders) {
     return (
       <GradientBackground variant="bgDarkPurple">
@@ -1163,7 +1201,9 @@ export default function LinkAccountScreen() {
     );
   }
 
-  /* ── Render: native SDK path (no linked accounts yet) ───────── */
+  /* ═══════════════════════════════════════════════════════════════════════════
+     Render: native SDK path (no linked accounts yet) 
+     ═══════════════════════════════════════════════════════════════════════════ */
   if (nativeAvailable && linkToken && accounts.length === 0 && !showProviderSelection) {
     return (
       <NativePlaidFlow
@@ -1175,12 +1215,14 @@ export default function LinkAccountScreen() {
     );
   }
 
-  /* ── Render: link-token / providers load error ──────────────── */
+  /* ═══════════════════════════════════════════════════════════════════════════
+     Render: link-token / providers load error 
+     ═══════════════════════════════════════════════════════════════════════════ */
   const hasLoadError = !!error && !linkToken;
 
-  /* ══════════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════════════════════════
      Render: main screen
-     ══════════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════════════════════════ */
   return (
     <GradientBackground variant="bgDarkPurple">
       <SafeAreaView style={styles.flex}>
@@ -1256,7 +1298,7 @@ export default function LinkAccountScreen() {
   );
 }
 
-/* ── Native Plaid Link wrapper (only rendered when SDK is available) ── */
+/* ── Native Plaid Link wrapper (only rendered when SDK is available) ──────── */
 function NativePlaidFlow({
   linkToken,
   exchangeToken,
@@ -1310,7 +1352,7 @@ function NativePlaidFlow({
   );
 }
 
-/* ── Styles ──────────────────────────────────────────────────── */
+/* ── Styles ──────────────────────────────────────────────────────────────── */
 const styles = StyleSheet.create({
   flex: { flex: 1 },
 
