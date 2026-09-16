@@ -230,7 +230,7 @@ export default function SettingsScreen() {
         <Ionicons name="people-outline" size={26} color={colors.textMuted} />
       </View>
       <Text style={styles.emptyTitle}>Set up your household</Text>
-      <Text style={styles.emptyBody>
+      <Text style={styles.emptyBody}>
         Invite your partner to share budgets, bills, and goals — or use CoupleFlow solo.
       </Text>
       <TouchableOpacity
