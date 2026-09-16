@@ -9,6 +9,7 @@ import (
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/ai"
+	"github.com/aboogie/budget-backend/internal/entitlements"
 	"github.com/aboogie/budget-backend/models"
 	"github.com/gofrs/uuid"
 	"github.com/gorilla/mux"
@@ -64,6 +65,12 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// C031: household Free AI message budget (rolling 7d) before spending tokens.
+	ent, ok := checkAIMessageAllowed(w, conn.Raw(), userID)
+	if !ok {
+		return
+	}
+
 	// Save the user's message
 	_, err = conn.Exec(`
 		INSERT INTO ai_messages (conversation_id, role, content)
@@ -116,7 +123,7 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:    4096,
 		System:       systemPrompt,
 		Messages:     messages,
-		Tools:        ai.GetToolDefinitions(),
+		Tools:        ai.GetToolDefinitionsForMode(ent.AIMode),
 		Thinking:     &models.ClaudeThinking{Type: "adaptive", Display: "summarized"},
 		OutputConfig: &models.ClaudeOutputConfig{Effort: "high"},
 	}
@@ -185,7 +192,9 @@ func SendAIMessage(w http.ResponseWriter, r *http.Request) {
 		var toolResults []map[string]interface{}
 		for _, tc := range result.ToolCalls {
 			var toolResult string
-			if ai.MutatingTools[tc.Name] {
+			if entitlements.IsLightAI(ent.Plan) && (ai.MutatingTools[tc.Name] || tc.Name == "web_search") {
+				toolResult = `{"error": "This action requires CoupleFlow Plus. Free AI is read-only."}`
+			} else if ai.MutatingTools[tc.Name] {
 				actionID := uuid.Must(uuid.NewV4()).String()
 				summary := ai.SummarizeAction(tc.Name, tc.Input)
 				if _, aerr := conn.Exec(`
