@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/entitlements"
+	"github.com/aboogie/budget-backend/middleware"
 )
 
 // GetEntitlements returns household Free|Plus entitlements for the caller.
@@ -41,10 +43,49 @@ func GetEntitlements(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ent)
 }
 
+// planOverrideEnabled reports whether PUT /auth/households/plan is allowed.
+// Dev/admin only — no billing rails. Off by default; set
+// COUPLEFLOW_ALLOW_PLAN_OVERRIDE=1 (or ENTITLEMENTS_DEV_PLAN_SET=1).
+func planOverrideEnabled() bool {
+	for _, key := range []string{"COUPLEFLOW_ALLOW_PLAN_OVERRIDE", "ENTITLEMENTS_DEV_PLAN_SET"} {
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") {
+			return true
+		}
+	}
+	return false
+}
+
+// authenticatedUserID returns the caller identity from JWT Bearer or session.
+// Never trust an arbitrary body/query user_id alone for privileged writes.
+func authenticatedUserID(w http.ResponseWriter, r *http.Request) string {
+	if uid, err := getUserIDFromRequest(r); err == nil && uid != "" {
+		return uid
+	}
+	if session, err := middleware.GetSession(w, r); err == nil {
+		if uid, ok := session.Values["user_id"].(string); ok && uid != "" {
+			return uid
+		}
+	}
+	return ""
+}
+
 // SetHouseholdPlan sets households.plan for the caller's household (dev/admin).
-// No Stripe/IAP — internal flag only. PUT /auth/households/plan
-// Body: { "user_id": "...", "plan": "free"|"plus" }
+// No Stripe/IAP — gated by COUPLEFLOW_ALLOW_PLAN_OVERRIDE (or ENTITLEMENTS_DEV_PLAN_SET).
+// PUT /auth/households/plan
+// Body: { "user_id": "...", "plan": "free"|"plus" } — user_id must match JWT/session.
 func SetHouseholdPlan(w http.ResponseWriter, r *http.Request) {
+	if !planOverrideEnabled() {
+		http.Error(w, "Plan override disabled", http.StatusForbidden)
+		return
+	}
+
+	callerID := authenticatedUserID(w, r)
+	if callerID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req struct {
 		UserID      string `json:"user_id"`
 		HouseholdID string `json:"household_id"`
@@ -54,11 +95,11 @@ func SetHouseholdPlan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
+	// Bind identity to JWT/session — do not trust an arbitrary body user_id.
 	if req.UserID == "" {
-		req.UserID, _ = getUserIDFromRequest(r)
-	}
-	if req.UserID == "" {
-		validationError(w, "user_id is required")
+		req.UserID = callerID
+	} else if req.UserID != callerID {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	if !entitlements.IsValidPlan(req.Plan) {
