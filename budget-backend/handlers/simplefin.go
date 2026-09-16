@@ -42,6 +42,10 @@ func SimpleFINConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	if !checkBankLinkAllowed(w, conn.Raw(), userID) {
+		return
+	}
+
 	// The setup token is ONE-TIME-USE: once claimed, a lost access URL means
 	// the user must generate a fresh token. So surface DB-side failures
 	// (constraints, connectivity) BEFORE claiming by inserting a placeholder
