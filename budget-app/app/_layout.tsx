@@ -6,7 +6,8 @@ import { findUserSession, clearUserSession } from '../utils/storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { registerForPushNotifications, setupNotificationHandlers } from '../utils/notifications';
 import { ThemeProvider } from '../utils/ThemeContext';
-import { onAuthFailure, ensureFreshToken } from '../utils/apiClient';
+import { onAuthFailure, ensureFreshToken, api } from '../utils/apiClient';
+import { persistOnboardingComplete } from '../utils/onboarding';
 import ErrorBoundary from '../components/ErrorBoundary';
 
 export default function AppLayout() {
@@ -48,11 +49,25 @@ export default function AppLayout() {
     if (session && isRootOrPublic) {
       if (pathname?.startsWith('/onboarding') || pathname?.startsWith('/household-setup')) {
         // Let them finish onboarding/setup — don't redirect
-      } else if (!session.onboarding_complete) {
-        router.replace('/onboarding');
-        setLoading(false);
-        return;
       } else {
+        // C026: prefer server onboarding_complete so cold start never re-enters wizard
+        let complete = !!session.onboarding_complete;
+        if (!complete && session.id) {
+          try {
+            const me = await api.get<any>('/auth/users/me', { user_id: session.id });
+            if (me?.onboarding_complete === true) {
+              complete = true;
+              await persistOnboardingComplete(true);
+            }
+          } catch {
+            // keep local flag
+          }
+        }
+        if (!complete) {
+          router.replace('/onboarding');
+          setLoading(false);
+          return;
+        }
         router.replace('/(tabs)/dashboard');
         setLoading(false);
         return;
