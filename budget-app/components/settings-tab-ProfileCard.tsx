@@ -11,6 +11,7 @@ export interface ProfileCardProps {
   avatarLabel: string;
   loading?: boolean;
   onEditPress?: () => void;
+  onPlanPress?: () => void;
 }
 
 /**
@@ -21,10 +22,11 @@ export interface ProfileCardProps {
 export function ProfileCard({
   name,
   email,
-  plan = 'Pro Plan',
+  plan = 'Free',
   avatarLabel,
   loading,
   onEditPress,
+  onPlanPress,
 }: ProfileCardProps) {
   if (loading) {
     return (
@@ -53,10 +55,17 @@ export function ProfileCard({
         <Text style={styles.email} numberOfLines={1}>
           {email}
         </Text>
-        <View style={styles.badge}>
+        <TouchableOpacity
+          style={styles.badge}
+          onPress={onPlanPress}
+          disabled={!onPlanPress}
+          activeOpacity={onPlanPress ? 0.7 : 1}
+          accessibilityRole={onPlanPress ? 'button' : undefined}
+          accessibilityLabel={onPlanPress ? `Plan: ${plan}. Open plan details` : undefined}
+        >
           <Ionicons name="star" size={11} color={colors.primary2} />
           <Text style={styles.badgeText}>{plan}</Text>
-        </View>
+        </TouchableOpacity>
       </View>
       <TouchableOpacity
         style={styles.editBtn}
