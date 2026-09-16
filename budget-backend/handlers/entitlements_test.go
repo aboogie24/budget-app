@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/aboogie/budget-backend/auth"
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/entitlements"
 )
@@ -100,7 +102,20 @@ func TestGetEntitlements_PlusHousehold(t *testing.T) {
 	}
 }
 
+func planOverrideTestToken(t *testing.T, userID string) string {
+	t.Helper()
+	if os.Getenv("JWT_SECRET") == "" {
+		t.Setenv("JWT_SECRET", "test-secret-key-for-testing-only")
+	}
+	tok, err := auth.GenerateToken(userID)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	return tok
+}
+
 func TestSetHouseholdPlan_DevFlag(t *testing.T) {
+	t.Setenv("COUPLEFLOW_ALLOW_PLAN_OVERRIDE", "1")
 	userID := "11111111-1111-1111-1111-111111111111"
 	hhID := "22222222-2222-2222-2222-222222222222"
 	withEntMockDB(t, func(mock sqlmock.Sqlmock) {
@@ -125,6 +140,7 @@ func TestSetHouseholdPlan_DevFlag(t *testing.T) {
 	body := `{"user_id":"` + userID + `","plan":"plus"}`
 	req := httptest.NewRequest(http.MethodPut, "/households/plan", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+planOverrideTestToken(t, userID))
 	rr := httptest.NewRecorder()
 	SetHouseholdPlan(rr, req)
 	if rr.Code != http.StatusOK {
@@ -134,6 +150,71 @@ func TestSetHouseholdPlan_DevFlag(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if resp["plan"] != "plus" {
 		t.Fatalf("resp=%v", resp)
+	}
+}
+
+func TestSetHouseholdPlan_FlagOff(t *testing.T) {
+	t.Setenv("COUPLEFLOW_ALLOW_PLAN_OVERRIDE", "")
+	t.Setenv("ENTITLEMENTS_DEV_PLAN_SET", "")
+	userID := "11111111-1111-1111-1111-111111111111"
+	body := `{"user_id":"` + userID + `","plan":"plus"}`
+	req := httptest.NewRequest(http.MethodPut, "/households/plan", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+planOverrideTestToken(t, userID))
+	rr := httptest.NewRecorder()
+	SetHouseholdPlan(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when flag off, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSetHouseholdPlan_RejectsMismatchedUserID(t *testing.T) {
+	t.Setenv("COUPLEFLOW_ALLOW_PLAN_OVERRIDE", "1")
+	caller := "11111111-1111-1111-1111-111111111111"
+	other := "99999999-9999-9999-9999-999999999999"
+	body := `{"user_id":"` + other + `","plan":"plus"}`
+	req := httptest.NewRequest(http.MethodPut, "/households/plan", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+planOverrideTestToken(t, caller))
+	rr := httptest.NewRecorder()
+	SetHouseholdPlan(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for mismatched user_id, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSetHouseholdPlan_AltEnvFlag(t *testing.T) {
+	t.Setenv("COUPLEFLOW_ALLOW_PLAN_OVERRIDE", "")
+	t.Setenv("ENTITLEMENTS_DEV_PLAN_SET", "1")
+	userID := "11111111-1111-1111-1111-111111111111"
+	hhID := "22222222-2222-2222-2222-222222222222"
+	withEntMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(hhID))
+		mock.ExpectExec(`UPDATE households SET plan`).
+			WithArgs("free", hhID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery(`SELECT COALESCE\(plan`).
+			WithArgs(hhID).
+			WillReturnRows(sqlmock.NewRows([]string{"plan"}).AddRow("free"))
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM linked_accounts`).
+			WithArgs(hhID).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM ai_messages`).
+			WithArgs(hhID, entitlements.FreeAIWindowDays).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	})
+
+	// Omit body user_id — must bind from JWT.
+	body := `{"plan":"free"}`
+	req := httptest.NewRequest(http.MethodPut, "/households/plan", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+planOverrideTestToken(t, userID))
+	rr := httptest.NewRecorder()
+	SetHouseholdPlan(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
