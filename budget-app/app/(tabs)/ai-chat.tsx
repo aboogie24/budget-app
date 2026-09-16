@@ -490,8 +490,7 @@ export default function AIChatScreen() {
                     size={14}
                     color={statusColor}
                   />
-                  <Text style={[styles.actionCardStatus, { color: statusColor }]}
->
+                  <Text style={[styles.actionCardStatus, { color: statusColor }]}> 
                     {a.status === 'approved' ? a.resultNote || 'Approved & done' : a.status === 'failed' ? a.resultNote || 'Failed' : 'Declined'}
                   </Text>
                 </View>
