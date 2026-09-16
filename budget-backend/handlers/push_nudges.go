@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/entitlements"
 	"github.com/aboogie/budget-backend/models"
 )
 
@@ -62,6 +64,19 @@ func PushNewNudges(conn *sql.DB, inserted []models.AINudge) {
 	}
 
 	for ownerID, n := range top {
+		// C031: Free = in-app nudge cards only; Plus may interrupt with push.
+		hhID := ""
+		if n.HouseholdID != nil {
+			hhID = *n.HouseholdID
+		}
+		if hhID == "" {
+			hhID = db.ResolveHouseholdID(conn, ownerID)
+		}
+		plan, _ := entitlements.GetHouseholdPlan(conn, hhID)
+		if !entitlements.AllowsPushNudges(plan) {
+			continue
+		}
+
 		data := map[string]string{"type": "nudge", "nudge_id": n.ID}
 		if n.ActionType != nil {
 			data["action_type"] = *n.ActionType
