@@ -1,0 +1,1140 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+  Animated,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
+import { api } from '../../utils/apiClient';
+import { colors, spacing, radius, typography, glassEffects } from '../../utils/design-system';
+import GradientBackground from '../../components/GradientBackground';
+import Markdown from 'react-native-markdown-display';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { atAiCap, aiCapCopy, isPlus, parseEntitlementErrorCode } from '@/utils/entitlements';
+
+// ─── Types ─────────────────────────────────────────────────────
+
+type Message = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  created_at: string;
+};
+
+type Conversation = {
+  id: string;
+  title: string;
+  conversation_type: string;
+  last_message?: string;
+  updated_at: string;
+};
+
+// A queued advisor action awaiting the user's Approve/Decline.
+type PendingAction = {
+  action_id: string;
+  tool_name: string;
+  summary: string;
+  status: 'pending' | 'approved' | 'declined' | 'failed';
+  resultNote?: string;
+};
+
+// Module scope: static styles + a memoized bubble. Streaming updates state on
+// every SSE chunk — without React.memo each chunk re-rendered EVERY markdown
+// bubble in the conversation (the VirtualizedList slow-update warning).
+const mdStyles = StyleSheet.create({
+  body: { color: colors.text, fontSize: 15, lineHeight: 22 },
+  heading1: { color: '#fff', fontSize: 20, fontWeight: '700' as const, marginTop: 12, marginBottom: 6 },
+  heading2: { color: '#fff', fontSize: 18, fontWeight: '700' as const, marginTop: 10, marginBottom: 4 },
+  heading3: { color: '#fff', fontSize: 16, fontWeight: '600' as const, marginTop: 8, marginBottom: 4 },
+  strong: { color: '#fff', fontWeight: '700' as const },
+  em: { color: colors.text, fontStyle: 'italic' as const },
+  bullet_list: { marginTop: 4, marginBottom: 4 },
+  ordered_list: { marginTop: 4, marginBottom: 4 },
+  list_item: { marginBottom: 4, flexDirection: 'row' as const },
+  bullet_list_icon: { color: colors.accent, fontSize: 14, marginRight: 6, marginTop: 2 },
+  ordered_list_icon: { color: colors.accent, fontSize: 14, marginRight: 6, marginTop: 2 },
+  code_inline: { backgroundColor: 'rgba(124,58,237,0.15)', color: colors.accent, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 },
+  fence: { backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 12, marginVertical: 8 },
+  code_block: { color: '#e0e0f0', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 },
+  blockquote: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: 12, marginVertical: 6, opacity: 0.9 },
+  hr: { backgroundColor: 'rgba(255,255,255,0.1)', height: 1, marginVertical: 12 },
+  table: { borderColor: 'rgba(255,255,255,0.1)' },
+  th: { backgroundColor: 'rgba(124,58,237,0.1)', padding: 8 },
+  td: { padding: 8, borderColor: 'rgba(255,255,255,0.08)' },
+  tr: { borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+  link: { color: colors.accent, textDecorationLine: 'underline' as const },
+  paragraph: { marginTop: 2, marginBottom: 6 },
+});
+
+const MessageBubble = React.memo(function MessageBubble({ item }: { item: Message }) {
+  const isUser = item.role === 'user';
+  return (
+    <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.aiBubble]}>
+      {!isUser && (
+        <View style={styles.aiAvatar}>
+          <Ionicons name="sparkles" size={14} color={colors.accent} />
+        </View>
+      )}
+      <View style={[styles.messageContent, isUser ? styles.userContent : styles.aiContent]}>
+        {isUser ? (
+          <Text style={[styles.messageText, styles.userText]}>{item.content}</Text>
+        ) : (
+          <Markdown style={mdStyles}>{item.content}</Markdown>
+        )}
+      </View>
+    </View>
+  );
+});
+
+// ─── Component ─────────────────────────────────────────────────
+
+export default function AIChatScreen() {
+  const router = useRouter();
+  const { entitlements, plan, refresh: refreshEntitlements } = useEntitlements();
+  // Soft Free-cap UI only — Plus soft ceiling must not show Free/Subscribe chrome (critic C032).
+  const aiCapped = !isPlus(plan) && atAiCap(entitlements);
+  const flatListRef = useRef<FlatList>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  // State
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [showConvoList, setShowConvoList] = useState(true);
+  const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
+  const [resolvingActionId, setResolvingActionId] = useState<string | null>(null);
+
+  // Animations
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  // Load conversations on focus
+  useFocusEffect(
+    useCallback(() => {
+      loadConversations();
+    }, [])
+  );
+
+  // If we arrived from a proactive nudge with a seed question, open a fresh
+  // conversation and send it automatically (once).
+  const params = useLocalSearchParams<{ seed?: string | string[] }>();
+  const seedConsumed = useRef(false);
+  useEffect(() => {
+    const seed = Array.isArray(params.seed) ? params.seed[0] : params.seed;
+    if (seed && !seedConsumed.current && !loading) {
+      seedConsumed.current = true;
+      setShowConvoList(false);
+      sendMessage(seed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.seed, loading]);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    if (messages.length > 0 || streamingText) {
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    }
+  }, [messages, streamingText]);
+
+  // ─── API Calls ─────────────────────────────────────────────
+
+  async function loadConversations() {
+    try {
+      setLoading(true);
+      const data = await api.get<Conversation[]>('/auth/ai/conversations');
+      setConversations(data || []);
+    } catch (err) {
+      console.error('Failed to load conversations:', err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadMessages(convoId: string) {
+    try {
+      const data = await api.get<{ messages: Message[] }>(`/auth/ai/conversations/${convoId}`);
+      setMessages(data?.messages || []);
+    } catch (err) {
+      console.error('Failed to load messages:', err);
+    }
+  }
+
+  async function createConversation(): Promise<string | null> {
+    try {
+      const data = await api.post<{ id: string }>('/auth/ai/conversations', {
+        title: 'New Conversation',
+        conversation_type: 'general',
+      });
+      return data?.id || null;
+    } catch (err) {
+      console.error('Failed to create conversation:', err);
+      return null;
+    }
+  }
+
+  async function deleteConversation(convoId: string) {
+    try {
+      await api.delete(`/auth/ai/conversations/${convoId}`);
+      setConversations(prev => prev.filter(c => c.id !== convoId));
+      if (activeConvoId === convoId) {
+        setActiveConvoId(null);
+        setMessages([]);
+        setShowConvoList(true);
+      }
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  }
+
+  // ─── Send Message with SSE Streaming ──────────────────────
+
+  async function sendMessage(overrideText?: string) {
+    // overrideText may be a seed string (from a tapped nudge). Guard against
+    // event objects passed by onPress/onSubmitEditing handlers.
+    const source = typeof overrideText === 'string' ? overrideText : inputText;
+    const text = source.trim();
+    if (!text || isStreaming) return;
+
+    if (!isPlus(plan) && atAiCap(entitlements)) {
+      // Soft Free cap — shared money stays open; nudge to household Plus.
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `temp-${Date.now()}`,
+          role: 'user',
+          content: text,
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: `cap-${Date.now()}`,
+          role: 'assistant',
+          content:
+            "You've used this week's Free advisor messages. Upgrade to Plus for full AI with tools & approvals — still one household plan for both of you.",
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      setInputText('');
+      return;
+    }
+
+    setInputText('');
+
+    // Create conversation if needed
+    let convoId = activeConvoId;
+    if (!convoId) {
+      convoId = await createConversation();
+      if (!convoId) return;
+      setActiveConvoId(convoId);
+      setShowConvoList(false);
+    }
+
+    // Add user message to UI immediately
+    const userMsg: Message = {
+      id: `temp-${Date.now()}`,
+      role: 'user',
+      content: text,
+      created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setIsStreaming(true);
+    setStreamingText('');
+
+    const baseUrl = api.getBaseUrl();
+    const session = await getAuthToken();
+
+    // Use XMLHttpRequest for SSE — more reliable in React Native than fetch ReadableStream
+    const xhr = new XMLHttpRequest();
+    let accumulated = '';
+    let lastProcessedIndex = 0;
+
+    const promise = new Promise<void>((resolve, reject) => {
+      xhr.open('POST', `${baseUrl}/auth/ai/conversations/${convoId}/messages`);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('Authorization', `Bearer ${session}`);
+
+      xhr.onprogress = () => {
+        const newData = xhr.responseText.substring(lastProcessedIndex);
+        lastProcessedIndex = xhr.responseText.length;
+
+        const lines = newData.split('\n');
+        let hasNewText = false;
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          try {
+            const event = JSON.parse(data);
+            if (event.type === 'text') {
+              accumulated += event.text;
+              hasNewText = true;
+            } else if (event.type === 'pending_action') {
+              // The advisor queued a write — render the approval card.
+              setPendingActions((prev) =>
+                prev.some((a) => a.action_id === event.action_id)
+                  ? prev
+                  : [
+                      ...prev,
+                      {
+                        action_id: event.action_id,
+                        tool_name: event.tool_name,
+                        summary: event.summary,
+                        status: 'pending',
+                      },
+                    ],
+              );
+            } else if (event.type === 'error') {
+              console.error('Stream error:', event.error);
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+
+        if (hasNewText) {
+          setStreamingText(accumulated);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 400) {
+          const body = xhr.responseText || `HTTP ${xhr.status}`;
+          reject(new Error(body));
+          return;
+        }
+        resolve();
+      };
+
+      xhr.onerror = () => reject(new Error('Network error'));
+      xhr.send(JSON.stringify({ content: text }));
+    });
+
+    try {
+      await promise;
+
+      // Add assistant message to the list
+      if (accumulated) {
+        const assistantMsg: Message = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: accumulated,
+          created_at: new Date().toISOString(),
+        };
+        setMessages(prev => [...prev, assistantMsg]);
+      }
+
+      // Refresh conversation list to update titles
+      loadConversations();
+    } catch (err: any) {
+      console.error('Send message error:', err);
+      const code =
+        parseEntitlementErrorCode(err?.message) ||
+        (typeof err?.message === 'string' && err.message.includes('403')
+          ? null
+          : null);
+      const capped =
+        code === 'ai_message_budget' ||
+        (typeof err?.message === 'string' && err.message.includes('ai_message_budget'));
+      if (capped) {
+        refreshEntitlements();
+      }
+      const freeCapCopy =
+        "You've used this week's Free advisor messages. Upgrade to Plus for full AI — shared budgets stay open.";
+      const plusSoftCopy =
+        "You've hit this period's advisor message limit. Shared budgets stay open — try again when the window resets.";
+      const errorMsg: Message = {
+        id: `error-${Date.now()}`,
+        role: 'assistant',
+        content: capped
+          ? isPlus(plan)
+            ? plusSoftCopy
+            : freeCapCopy
+          : 'Sorry, I had trouble connecting. Please try again.',
+        created_at: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsStreaming(false);
+      setStreamingText('');
+    }
+  }
+
+  // ─── Helpers ──────────────────────────────────────────────
+
+  async function getAuthToken(): Promise<string> {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    const json = await AsyncStorage.getItem('budgetAppSession');
+    if (json) {
+      const session = JSON.parse(json);
+      return session?.token || '';
+    }
+    return '';
+  }
+
+  function openConversation(convoId: string) {
+    setActiveConvoId(convoId);
+    setShowConvoList(false);
+    setPendingActions([]);
+    loadMessages(convoId);
+    loadPendingActions(convoId);
+  }
+
+  function startNewChat() {
+    setActiveConvoId(null);
+    setMessages([]);
+    setPendingActions([]);
+    setShowConvoList(false);
+    setTimeout(() => inputRef.current?.focus(), 300);
+  }
+
+  // Unresolved approvals survive app restarts — reload them with the convo.
+  async function loadPendingActions(convoId: string) {
+    try {
+      const res = await api.get<{ actions: any[] }>('/auth/ai/actions', { status: 'pending' });
+      const forConvo = (res?.actions || []).filter((a) => a.conversation_id === convoId);
+      setPendingActions(
+        forConvo.map((a) => ({
+          action_id: a.id,
+          tool_name: a.tool_name,
+          summary: a.summary,
+          status: 'pending' as const,
+        })),
+      );
+    } catch (e) {
+      console.log('Pending actions load failed (non-blocking):', e);
+    }
+  }
+
+  async function resolveAction(action: PendingAction, approve: boolean) {
+    if (resolvingActionId) return;
+    setResolvingActionId(action.action_id);
+    try {
+      const res: any = await api.post(
+        `/auth/ai/actions/${action.action_id}/${approve ? 'approve' : 'decline'}`,
+        undefined,
+      );
+      setPendingActions((prev) =>
+        prev.map((a) =>
+          a.action_id === action.action_id
+            ? {
+                ...a,
+                status: approve ? (res?.status === 'failed' ? 'failed' : 'approved') : 'declined',
+                resultNote: res?.result?.visible_at
+                  ? `Done — see ${res.result.visible_at}`
+                  : undefined,
+              }
+            : a,
+        ),
+      );
+    } catch (e: any) {
+      setPendingActions((prev) =>
+        prev.map((a) =>
+          a.action_id === action.action_id
+            ? { ...a, status: 'failed', resultNote: e?.message || 'Failed' }
+            : a,
+        ),
+      );
+    } finally {
+      setResolvingActionId(null);
+    }
+  }
+
+  // ─── Render Functions ─────────────────────────────────────
+
+  const renderMessage = useCallback(
+    ({ item }: { item: Message }) => <MessageBubble item={item} />,
+    [],
+  );
+
+  // Approval cards for actions the advisor queued — rendered under the
+  // messages so they read as part of the conversation.
+  function renderActionCards() {
+    if (pendingActions.length === 0) return null;
+    return (
+      <View style={{ gap: 8, marginTop: 8 }}>
+        {pendingActions.map((a) => {
+          const resolved = a.status !== 'pending';
+          const isResolving = resolvingActionId === a.action_id;
+          const statusColor =
+            a.status === 'approved' ? colors.success : a.status === 'failed' ? colors.error : colors.textMuted;
+          return (
+            <View key={a.action_id} style={styles.actionCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="construct-outline" size={14} color={colors.primary2} />
+                <Text style={styles.actionCardLabel}>Advisor wants to:</Text>
+              </View>
+              <Text style={styles.actionCardSummary}>{a.summary}</Text>
+              {resolved ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons
+                    name={a.status === 'approved' ? 'checkmark-circle' : a.status === 'failed' ? 'warning' : 'close-circle'}
+                    size={14}
+                    color={statusColor}
+                  />
+                  <Text style={[styles.actionCardStatus, { color: statusColor }]}>
+                    {a.status === 'approved' ? a.resultNote || 'Approved & done' : a.status === 'failed' ? a.resultNote || 'Failed' : 'Declined'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={styles.actionApprove}
+                    onPress={() => resolveAction(a, true)}
+                    disabled={isResolving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Approve: ${a.summary}`}
+                  >
+                    {isResolving ? (
+                      <ActivityIndicator size="small" color={colors.text} />
+                    ) : (
+                      <Text style={styles.actionApproveText}>Approve</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.actionDecline}
+                    onPress={() => resolveAction(a, false)}
+                    disabled={isResolving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Decline: ${a.summary}`}
+                  >
+                    <Text style={styles.actionDeclineText}>Decline</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
+  function renderStreamingMessage() {
+    if (!isStreaming || !streamingText) return null;
+    return (
+      <View style={[styles.messageBubble, styles.aiBubble]}>
+        <View style={styles.aiAvatar}>
+          <Ionicons name="sparkles" size={14} color={colors.accent} />
+        </View>
+        <View style={[styles.messageContent, styles.aiContent]}>
+          <Markdown style={mdStyles}>{streamingText}</Markdown>
+          <View style={styles.typingDots}>
+            <ActivityIndicator size="small" color={colors.accent} />
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  function renderConversationItem({ item }: { item: Conversation }) {
+    return (
+      <TouchableOpacity
+        style={styles.convoItem}
+        onPress={() => openConversation(item.id)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.convoIcon}>
+          <Ionicons
+            name={item.conversation_type === 'planning' ? 'map' : 'chatbubbles'}
+            size={20}
+            color={colors.accent}
+          />
+        </View>
+        <View style={styles.convoInfo}>
+          <Text style={styles.convoTitle} numberOfLines={1}>{item.title}</Text>
+          {item.last_message && (
+            <Text style={styles.convoPreview} numberOfLines={1}>{item.last_message}</Text>
+          )}
+        </View>
+        <TouchableOpacity
+          onPress={() => deleteConversation(item.id)}
+          style={styles.deleteBtn}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  }
+
+  // ─── Conversation List View ───────────────────────────────
+
+  if (showConvoList && !activeConvoId) {
+    return (
+      <GradientBackground variant="bgDarkPurple">
+        <SafeAreaView style={styles.container}>
+          <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
+            <View>
+              <Text style={styles.headerTitle}>CoupleFlow AI</Text>
+              <Text style={styles.headerSubtitle}>Your financial co-pilot</Text>
+            </View>
+            <TouchableOpacity style={styles.newChatBtn} onPress={startNewChat}>
+              <Ionicons name="add" size={22} color={colors.text} />
+              <Text style={styles.newChatText}>New Chat</Text>
+            </TouchableOpacity>
+          </Animated.View>
+
+          {/* Quick Actions */}
+          <View style={styles.quickActions}>
+            {[
+              { icon: 'trending-down' as const, label: 'Pay off debt', type: 'planning' },
+              { icon: 'shield-checkmark' as const, label: 'Emergency fund', type: 'planning' },
+              { icon: 'airplane' as const, label: 'Plan a trip', type: 'planning' },
+              { icon: 'help-circle' as const, label: 'Ask anything', type: 'general' },
+            ].map((action, i) => (
+              <TouchableOpacity
+                key={i}
+                style={styles.quickAction}
+                onPress={() => {
+                  startNewChat();
+                  setTimeout(() => setInputText(action.label === 'Ask anything' ? '' : `Help us ${action.label.toLowerCase()}`), 300);
+                }}
+              >
+                <Ionicons name={action.icon} size={20} color={colors.accent} />
+                <Text style={styles.quickActionText}>{action.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Conversation History */}
+          <View style={styles.convoListHeader}>
+            <Text style={styles.sectionTitle}>Recent Conversations</Text>
+          </View>
+
+          {loading ? (
+            <ActivityIndicator size="large" color={colors.accent} style={{ marginTop: 40 }} />
+          ) : conversations.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="chatbubble-ellipses-outline" size={48} color={colors.textMuted} />
+              <Text style={styles.emptyTitle}>No conversations yet</Text>
+              <Text style={styles.emptyDesc}>
+                Start a new chat to get personalized financial advice for you and your partner.
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={conversations}
+              keyExtractor={(item) => item.id}
+              renderItem={renderConversationItem}
+              contentContainerStyle={styles.convoList}
+              showsVerticalScrollIndicator={false}
+            />
+          )}
+        </SafeAreaView>
+      </GradientBackground>
+    );
+  }
+
+  // ─── Chat View ────────────────────────────────────────────
+
+  return (
+    <GradientBackground variant="bgDarkPurple">
+      <SafeAreaView style={styles.container}>
+        <KeyboardAvoidingView
+          style={styles.chatContainer}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+          {/* Chat Header */}
+          <View style={styles.chatHeader}>
+            <TouchableOpacity
+              onPress={() => {
+                setShowConvoList(true);
+                setActiveConvoId(null);
+                setMessages([]);
+                loadConversations();
+              }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="chevron-back" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <View style={styles.chatHeaderInfo}>
+              <Ionicons name="sparkles" size={16} color={colors.accent} />
+              <Text style={styles.chatHeaderTitle}>CoupleFlow AI</Text>
+            </View>
+            <TouchableOpacity onPress={startNewChat}>
+              <Ionicons name="add-circle-outline" size={24} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Messages */}
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item) => item.id}
+            renderItem={renderMessage}
+            contentContainerStyle={styles.messageList}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.welcomeState}>
+                <View style={styles.welcomeIcon}>
+                  <Ionicons name="sparkles" size={32} color={colors.accent} />
+                </View>
+                <Text style={styles.welcomeTitle}>What can I help with?</Text>
+                <Text style={styles.welcomeDesc}>
+                  Ask me about your budget, debt payoff plans, savings goals, or anything financial.
+                </Text>
+              </View>
+            }
+            // Element, not an inline component: a new function identity per
+            // render makes FlatList unmount/remount the whole footer subtree
+            // on every streaming chunk.
+            ListFooterComponent={
+              <>
+                {renderStreamingMessage()}
+                {renderActionCards()}
+              </>
+            }
+          />
+
+          {/* Streaming indicator */}
+          {isStreaming && !streamingText && (
+            <View style={styles.thinkingBar}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={styles.thinkingText}>Thinking...</Text>
+            </View>
+          )}
+
+          {aiCapped ? (
+            <View style={styles.capBanner} accessibilityRole="summary">
+              <Text style={styles.capBannerTitle}>Free advisor this week</Text>
+              <Text style={styles.capBannerBody}>{aiCapCopy(entitlements)}</Text>
+              <TouchableOpacity
+                style={styles.capBannerCta}
+                onPress={() => router.push('/paywall?reason=ai_message_budget')}
+                accessibilityRole="button"
+                accessibilityLabel="Subscribe to Plus"
+              >
+                <Text style={styles.capBannerCtaText}>Subscribe to Plus</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/(tabs)')}
+                accessibilityRole="button"
+                accessibilityLabel="Back to shared money"
+              >
+                <Text style={styles.capBannerLink}>Back to shared money</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {/* Input Bar */}
+          <View style={styles.inputBar}>
+            <TextInput
+              ref={inputRef}
+              style={styles.textInput}
+              placeholder="Ask CoupleFlow AI..."
+              placeholderTextColor={colors.textDark}
+              value={inputText}
+              onChangeText={setInputText}
+              multiline
+              maxLength={2000}
+              editable={!isStreaming && !aiCapped}
+              onSubmitEditing={() => sendMessage()}
+              blurOnSubmit={false}
+            />
+            <TouchableOpacity
+              style={[styles.sendBtn, (!inputText.trim() || isStreaming || aiCapped) && styles.sendBtnDisabled]}
+              onPress={() => sendMessage()}
+              disabled={!inputText.trim() || isStreaming || aiCapped}
+            >
+              <Ionicons
+                name="arrow-up-circle"
+                size={32}
+                color={inputText.trim() && !isStreaming && !aiCapped ? colors.accent : colors.textDark}
+              />
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </GradientBackground>
+  );
+}
+
+// ─── Styles ────────────────────────────────────────────────────
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  chatContainer: {
+    flex: 1,
+  },
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.lg,
+  },
+  headerTitle: {
+    ...typography.h3, fontWeight: '800',
+    color: colors.text,
+  },
+  headerSubtitle: {
+    ...typography.small,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  newChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.glassMedium,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+  },
+  newChatText: {
+    ...typography.smallBold,
+    color: colors.text,
+  },
+
+  // Quick Actions
+  quickActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  quickAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.glassLight,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+  },
+  quickActionText: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+
+  // Conversation List
+  convoListHeader: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {
+    ...typography.smallBold,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  convoList: {
+    paddingHorizontal: spacing.lg,
+  },
+  convoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.glassLight,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+    borderRadius: radius.lg,
+    padding: 14,
+    marginBottom: 8,
+  },
+  convoIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(124, 58, 237, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  convoInfo: {
+    flex: 1,
+  },
+  convoTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  convoPreview: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  deleteBtn: {
+    padding: 6,
+  },
+
+  // Empty State
+  emptyState: {
+    alignItems: 'center',
+    paddingTop: 60,
+    paddingHorizontal: 40,
+  },
+  emptyTitle: {
+    ...typography.h3,
+    color: colors.textMuted,
+    marginTop: spacing.lg,
+  },
+  emptyDesc: {
+    ...typography.body,
+    color: colors.textDark,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    lineHeight: 22,
+  },
+
+  // Chat Header
+  chatHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  chatHeaderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  chatHeaderTitle: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+
+  // Messages
+  messageList: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  messageBubble: {
+    flexDirection: 'row',
+    marginBottom: spacing.md,
+    gap: 8,
+  },
+  userBubble: {
+    justifyContent: 'flex-end',
+  },
+  aiBubble: {
+    justifyContent: 'flex-start',
+  },
+  aiAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(124, 58, 237, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  messageContent: {
+    maxWidth: '80%',
+    borderRadius: radius.lg,
+    padding: 14,
+  },
+  userContent: {
+    backgroundColor: colors.primary,
+    borderBottomRightRadius: 4,
+    marginLeft: 'auto',
+  },
+  aiContent: {
+    backgroundColor: colors.glassStrong,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+    borderBottomLeftRadius: 4,
+  },
+  messageText: {
+    ...typography.body,
+    color: colors.text,
+    lineHeight: 22,
+  },
+  userText: {
+    color: '#fff',
+  },
+  typingDots: {
+    marginTop: 6,
+    alignItems: 'flex-start',
+  },
+
+  // Welcome State
+  welcomeState: {
+    alignItems: 'center',
+    paddingTop: 80,
+    paddingHorizontal: 32,
+  },
+  welcomeIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(124, 58, 237, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  welcomeTitle: {
+    ...typography.h3,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  welcomeDesc: {
+    ...typography.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+
+  // Thinking indicator
+  thinkingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+  },
+  thinkingText: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+
+  // Advisor action approval cards
+  actionCard: {
+    ...glassEffects.glass,
+    borderColor: `${colors.primary2}44`,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  actionCardLabel: {
+    ...typography.caption,
+    color: colors.primary2,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    fontSize: 10,
+  },
+  actionCardSummary: {
+    ...typography.small,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  actionCardStatus: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+  actionApprove: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionApproveText: {
+    ...typography.smallBold,
+    color: colors.text,
+  },
+  actionDecline: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radius.md,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionDeclineText: {
+    ...typography.smallBold,
+    color: colors.textMuted,
+  },
+
+  // Input Bar
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+  },
+  textInput: {
+    flex: 1,
+    ...typography.body,
+    color: colors.text,
+    backgroundColor: colors.glassMedium,
+    borderWidth: 1,
+    borderColor: colors.borderGlass,
+    borderRadius: radius.xl,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    maxHeight: 120,
+    minHeight: 42,
+  },
+  sendBtn: {
+    padding: 4,
+    marginBottom: 1,
+  },
+  sendBtnDisabled: {
+    opacity: 0.5,
+  },
+
+  capBanner: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.glassStrong,
+    borderWidth: 1,
+    borderColor: `${colors.warning}55`,
+    gap: spacing.sm,
+  },
+  capBannerTitle: {
+    ...typography.smallBold,
+    color: colors.warning,
+  },
+  capBannerBody: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  capBannerCta: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  capBannerCtaText: {
+    ...typography.smallBold,
+    color: colors.text,
+  },
+  capBannerLink: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+});
