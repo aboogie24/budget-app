@@ -172,6 +172,9 @@ func TellerConnect(w http.ResponseWriter, r *http.Request) {
 		}
 		status = "relinked"
 	} else {
+		if !checkBankLinkAllowed(w, dbClient.Raw(), userID) {
+			return
+		}
 		accountID = uuid.Must(uuid.NewV4()).String()
 		institution := req.Institution
 		if institution == "" {
