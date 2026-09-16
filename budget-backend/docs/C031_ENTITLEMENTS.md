@@ -55,13 +55,24 @@ Plus example differences: `"plan":"plus"`, `"banks_limit": null`, `"banks_unlimi
 ### Dev / admin: set plan (no payment)
 
 `PUT /auth/households/plan`  
-Auth required. Body:
+Auth required. **Env-gated** — off by default.
+
+| Env | Values that enable |
+|---|---|
+| `COUPLEFLOW_ALLOW_PLAN_OVERRIDE` | `1` / `true` / `yes` |
+| `ENTITLEMENTS_DEV_PLAN_SET` | same (alias) |
+
+Without the flag → **HTTP 403** (`Plan override disabled`).
+
+Identity binding: caller is taken from JWT Bearer (or session). Body `user_id` is optional; if present it **must equal** the authenticated user (otherwise **403**). Do not trust an arbitrary body `user_id`.
+
+Body:
 
 ```json
 { "user_id": "<uuid>", "plan": "plus" }
 ```
 
-Optional `household_id` (must be a household the user belongs to). If omitted, uses / creates the caller’s household via `EnsureHouseholdForUser`.
+Optional `household_id` (must be a household the authenticated user belongs to). If omitted, uses / creates the caller’s household via `EnsureHouseholdForUser`.
 
 Response:
 
@@ -77,10 +88,11 @@ Response:
 **How to set Plus in dev**
 
 ```bash
+export COUPLEFLOW_ALLOW_PLAN_OVERRIDE=1
 curl -X PUT "$API/auth/households/plan" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"YOUR_USER_UUID","plan":"plus"}'
+  -d '{"plan":"plus"}'
 ```
 
 Flip back with `"plan":"free"`.
