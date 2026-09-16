@@ -19,6 +19,10 @@ func TestGetCurrentUser_ReturnsOnboardingFlag(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{
 				"id", "email", "full_name", "onboarding_complete", "monthly_budget_goal",
 			}).AddRow(userID, "a@example.com", "Ada", true, 3000.0))
+		// entitlements soft-attach (no household → free defaults)
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs(userID).
+			WillReturnError(sql.ErrNoRows)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/users/me?user_id="+userID, nil)

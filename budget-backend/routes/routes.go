@@ -151,8 +151,8 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/budgets/{id}", handlers.DeleteBudget).Methods("DELETE")
 
 	// Plaid (behind auth)
-	authRoutes.HandleFunc("/link_token", handlers.CreateLinkToken(plaid)).Methods("GET")
-	authRoutes.HandleFunc("/exchange_token", handlers.ExchangeToken(plaid)).Methods("POST")
+	authRoutes.HandleFunc("/link_token", handlers.WithBankLinkGate(handlers.CreateLinkToken(plaid))).Methods("GET")
+	authRoutes.HandleFunc("/exchange_token", handlers.WithBankLinkGate(handlers.ExchangeToken(plaid))).Methods("POST")
 	authRoutes.HandleFunc("/linked-accounts/status", handlers.GetLinkedAccountStatus).Methods("GET")
 	authRoutes.HandleFunc("/plaid/update-link-token", handlers.CreateUpdateLinkToken(plaid)).Methods("POST")
 	authRoutes.HandleFunc("/linked-accounts/{id}/reset", handlers.ResetItemError).Methods("PUT")
