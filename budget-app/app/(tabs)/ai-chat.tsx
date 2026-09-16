@@ -19,7 +19,7 @@ import { colors, spacing, radius, typography, glassEffects } from '../../utils/d
 import GradientBackground from '../../components/GradientBackground';
 import Markdown from 'react-native-markdown-display';
 import { useEntitlements } from '@/hooks/useEntitlements';
-import { atAiCap, aiCapCopy, parseEntitlementErrorCode } from '@/utils/entitlements';
+import { atAiCap, aiCapCopy, isPlus, parseEntitlementErrorCode } from '@/utils/entitlements';
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -99,8 +99,9 @@ const MessageBubble = React.memo(function MessageBubble({ item }: { item: Messag
 
 export default function AIChatScreen() {
   const router = useRouter();
-  const { entitlements, refresh: refreshEntitlements } = useEntitlements();
-  const aiCapped = atAiCap(entitlements);
+  const { entitlements, plan, refresh: refreshEntitlements } = useEntitlements();
+  // Soft Free-cap UI only — Plus soft ceiling must not show Free/Subscribe chrome (critic C032).
+  const aiCapped = !isPlus(plan) && atAiCap(entitlements);
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
 
@@ -214,7 +215,7 @@ export default function AIChatScreen() {
     const text = source.trim();
     if (!text || isStreaming) return;
 
-    if (atAiCap(entitlements)) {
+    if (!isPlus(plan) && atAiCap(entitlements)) {
       // Soft Free cap — shared money stays open; nudge to household Plus.
       setMessages((prev) => [
         ...prev,
@@ -356,11 +357,17 @@ export default function AIChatScreen() {
       if (capped) {
         refreshEntitlements();
       }
+      const freeCapCopy =
+        "You've used this week's Free advisor messages. Upgrade to Plus for full AI — shared budgets stay open.";
+      const plusSoftCopy =
+        "You've hit this period's advisor message limit. Shared budgets stay open — try again when the window resets.";
       const errorMsg: Message = {
         id: `error-${Date.now()}`,
         role: 'assistant',
         content: capped
-          ? "You've used this week's Free advisor messages. Upgrade to Plus for full AI — shared budgets stay open."
+          ? isPlus(plan)
+            ? plusSoftCopy
+            : freeCapCopy
           : 'Sorry, I had trouble connecting. Please try again.',
         created_at: new Date().toISOString(),
       };
@@ -483,8 +490,7 @@ export default function AIChatScreen() {
                     size={14}
                     color={statusColor}
                   />
-                  <Text style={[styles.actionCardStatus, { color: statusColor }]}>
-                    {a.status === 'approved' ? a.resultNote || 'Approved & done' : a.status === 'failed' ? a.resultNote || 'Failed' : 'Declined'}
+                  <Text style={[styles.actionCardStatus, { color: statusColor }]}>\n                    {a.status === 'approved' ? a.resultNote || 'Approved & done' : a.status === 'failed' ? a.resultNote || 'Failed' : 'Declined'}
                   </Text>
                 </View>
               ) : (
