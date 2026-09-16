@@ -101,6 +101,9 @@ func FlinksConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a new linked account
+	if !checkBankLinkAllowed(w, dbClient.Raw(), userID) {
+		return
+	}
 	accountID := uuid.Must(uuid.NewV4()).String()
 	institution := req.Institution
 	if institution == "" {
