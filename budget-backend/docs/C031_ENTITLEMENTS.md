@@ -89,7 +89,7 @@ Flip back with `"plan":"free"`.
 
 | Gate | Where | Free behavior |
 |---|---|---|
-| Bank link | Plaid `link_token` + `exchange_token`, SimpleFIN / Teller / Flinks connect (new links only; relinks OK) | HTTP **403** `code=banks_limit` when household already has 1 linked account |
+| Bank link | Plaid `link_token` + `exchange_token` (via `WithBankLinkGate`), SimpleFIN / Teller / Flinks connect (new links only; relinks OK) | HTTP **403** `code=banks_limit` when household already has 1 linked account |
 | AI chat | `POST /auth/ai/conversations/{id}/messages` | HTTP **403** `code=ai_message_budget` at 10/7d; tool list is light; mutating / `web_search` blocked even if requested |
 | Push nudges | `PushNewNudges` | Skips push on Free (in-app nudge rows still created) |
 
