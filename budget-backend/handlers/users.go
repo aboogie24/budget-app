@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/entitlements"
 	"github.com/aboogie/budget-backend/models"
 )
 
@@ -106,14 +107,22 @@ func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"id":                  id,
 		"email":               email,
 		"full_name":           fullName,
 		"onboarding_complete": onboardingComplete,
 		"monthly_budget_goal": monthlyBudgetGoal,
-	})
+	}
+	if ent, err := entitlements.ResolveForUser(conn.Raw(), userID); err == nil {
+		resp["entitlements"] = ent
+		resp["plan"] = ent.Plan
+	} else {
+		log.Printf("GetCurrentUser entitlements: %v", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func RegisterUser(w http.ResponseWriter, r *http.Request) {
