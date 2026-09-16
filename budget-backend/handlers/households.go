@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/entitlements"
 	"github.com/gofrs/uuid"
 )
 
@@ -34,13 +35,14 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			h.id,
 			h.name,
+			COALESCE(h.plan, 'free') AS plan,
 			json_agg(json_build_object('user_id', am.user_id, 'role', am.role, 'email', u.email, 'full_name', COALESCE(u.full_name, u.email))) AS members
 		FROM household_members hm
 		JOIN households h ON hm.household_id = h.id
 		JOIN household_members am ON am.household_id = h.id
 		LEFT JOIN users u ON am.user_id = u.id
 		WHERE hm.user_id = $1
-		GROUP BY h.id, h.name
+		GROUP BY h.id, h.name, h.plan
 	`, userID)
 	if err != nil {
 		log.Printf("GetHouseholdForUser query error for user %s: %v", userID, err)
@@ -53,16 +55,25 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 	if rows.Next() {
 		var hhID uuid.UUID
 		var name *string
+		var plan string
 		var members json.RawMessage
-		if err := rows.Scan(&hhID, &name, &members); err != nil {
+		if err := rows.Scan(&hhID, &name, &plan, &members); err != nil {
 			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		plan = entitlements.NormalizePlan(plan)
+		resp := map[string]any{
 			"household_id": hhID,
 			"name":         name,
+			"plan":         plan,
 			"members":      members,
-		})
+		}
+		if ent, err := entitlements.ResolveForHousehold(client.Raw(), hhID.String()); err == nil {
+			resp["entitlements"] = ent
+		} else {
+			log.Printf("GetHouseholdForUser entitlements: %v", err)
+		}
+		json.NewEncoder(w).Encode(resp)
 		return
 	}
 
@@ -70,7 +81,9 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"household_id": nil,
 		"name":         nil,
+		"plan":         entitlements.PlanFree,
 		"members":      []any{},
+		"entitlements": entitlements.Build(entitlements.PlanFree, "", 0, 0),
 	})
 }
 
