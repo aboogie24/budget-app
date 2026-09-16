@@ -573,4 +573,4 @@ const styles = StyleSheet.create({
     ...typography.smallBold,
     color: colors.text,
   },
-}
+});
