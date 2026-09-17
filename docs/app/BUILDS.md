@@ -41,7 +41,7 @@ npx eas-cli build --profile development-simulator --platform ios   # local dev c
 npx eas-cli build --profile preview --platform all                 # internal testers
 npx eas-cli build --profile production --platform all              # store build
 npx eas-cli submit --platform ios                                  # after production build
-npx eas-cli update --channel preview                               # OTA update to testers
+npx eas-cli update --channel preview --environment preview         # OTA update to testers (SDK 55+ requires --environment)
 ```
 
 ## OTA updates

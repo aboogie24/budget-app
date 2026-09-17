@@ -13,7 +13,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "budgetapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.github.aboogie.budgetapp"
@@ -23,7 +22,6 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
       "package": "com.github.aboogie.budgetapp"
     },
     "web": {
@@ -46,11 +44,7 @@
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "15.1"
-          },
-          "android": {
-            "compileSdkVersion": 34,
-            "minSdkVersion": 24
+            "deploymentTarget": "16.4"
           }
         }
       ],

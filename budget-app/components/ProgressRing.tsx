@@ -44,7 +44,7 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
   return (
     <View style={{ alignItems: 'center', justifyContent: 'center' }}>
       <View style={{ position: 'relative', width: size, height: size }}>
-        <Svg width={size} height={size} style={StyleSheet.absoluteFillObject}>
+        <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
           {/* Background circle */}
           <Circle
             cx={centerX}
@@ -71,7 +71,7 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
         {/* Center text */}
         <View
           style={[
-            StyleSheet.absoluteFillObject,
+            StyleSheet.absoluteFill,
             { alignItems: 'center', justifyContent: 'center' },
           ]}
         >
