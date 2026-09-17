@@ -726,7 +726,7 @@ export default function AIChatScreen() {
                 <Text style={styles.capBannerCtaText}>Subscribe to Plus</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => router.push('/(tabs)')}
+                onPress={() => router.push('/(tabs)/dashboard')}
                 accessibilityRole="button"
                 accessibilityLabel="Back to shared money"
               >

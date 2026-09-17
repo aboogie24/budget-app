@@ -9,7 +9,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: './assets/images/icon.png',
   scheme: 'budgetapp',
   userInterfaceStyle: 'automatic',
-  newArchEnabled: true,
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'com.github.aboogie.budgetapp',
@@ -20,7 +19,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       foregroundImage: './assets/images/adaptive-icon.png',
       backgroundColor: '#ffffff',
     },
-    edgeToEdgeEnabled: true,
     package: 'com.github.aboogie.budgetapp',
   },
   web: {
@@ -42,8 +40,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       'expo-build-properties',
       {
-        ios: { deploymentTarget: '15.1' },
-        android: { compileSdkVersion: 34, minSdkVersion: 24 },
+        ios: { deploymentTarget: '16.4' },
       },
     ],
     'expo-font',

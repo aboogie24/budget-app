@@ -4,7 +4,8 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { api } from './apiClient';
-import type { Router } from 'expo-router';
+import { router as expoRouter } from 'expo-router';
+type Router = typeof expoRouter;
 
 const PUSH_TOKEN_KEY = 'expoPushToken';
 

@@ -854,7 +854,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   swipeBg: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     // Deep green surface + bright green icon: the saturated hue lives on the
     // small mark, not the whole slab (design-system successDeep note).
     backgroundColor: colors.successDeep,

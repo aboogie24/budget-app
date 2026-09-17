@@ -343,7 +343,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   swipeBg: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
