@@ -10,6 +10,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   scheme: 'budgetapp',
   userInterfaceStyle: 'automatic',
   ios: {
+    appleTeamId: 'X7735PS4KS',
     supportsTablet: true,
     bundleIdentifier: 'com.github.aboogie.budgetapp',
     usesAppleSignIn: true,
@@ -40,7 +41,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       'expo-build-properties',
       {
-        ios: { deploymentTarget: '16.4' },
+        ios: {
+    appleTeamId: 'X7735PS4KS', deploymentTarget: '16.4' },
       },
     ],
     'expo-font',
