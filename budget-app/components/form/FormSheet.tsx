@@ -12,8 +12,9 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, radius, typography } from '@/utils/design-system';
+import { colors, spacing, typography } from '@/utils/design-system';
 import { lightHaptic } from '@/utils/haptics';
+import { formTokens } from './formTokens';
 
 type Props = {
   visible: boolean;
@@ -26,11 +27,9 @@ type Props = {
 };
 
 /**
- * Shared bottom-sheet form wrapper: dark backdrop, glass sheet with pinned
- * header (title + close), keyboard-avoiding scrollable body, and a sticky
- * footer slot. Consumers MUST render this from module scope (not a component
- * defined inside a screen's render) so TextInput children keep a stable
- * identity across re-renders — otherwise the keyboard dismisses per keystroke.
+ * Bottom-sheet form wrapper (C033 v2): frosted surface, 28px top radius,
+ * thin grabber, sticky CTA footer. Mount from module scope so TextInputs
+ * keep identity across re-renders.
  */
 export function FormSheet({ visible, title, onClose, children, footer, maxHeightPct = 0.85 }: Props) {
   const handleClose = () => {
@@ -47,6 +46,7 @@ export function FormSheet({ visible, title, onClose, children, footer, maxHeight
         <View style={styles.backdrop}>
           <Pressable style={{ flex: 1 }} onPress={handleClose} accessibilityLabel="Dismiss form" />
           <View style={[styles.sheet, { maxHeight: Dimensions.get('window').height * maxHeightPct }]}>
+            <View style={styles.grabber} accessibilityElementsHidden />
             <View style={styles.header}>
               <Text style={styles.title}>{title}</Text>
               <TouchableOpacity
@@ -62,7 +62,7 @@ export function FormSheet({ visible, title, onClose, children, footer, maxHeight
             <ScrollView
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: spacing.lg }}
+              contentContainerStyle={{ paddingBottom: spacing.lg, gap: 2 }}
             >
               {children}
             </ScrollView>
@@ -81,13 +81,20 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: colors.surfaceDark,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    borderBottomWidth: 0,
+    backgroundColor: formTokens.surface,
+    borderTopLeftRadius: formTokens.radiusSheet,
+    borderTopRightRadius: formTokens.radiusSheet,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.lg,
+    paddingTop: spacing.sm,
+  },
+  grabber: {
+    alignSelf: 'center',
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    marginBottom: spacing.md,
   },
   header: {
     flexDirection: 'row',
@@ -98,20 +105,23 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     ...typography.h3,
-    fontWeight: '800',
+    fontWeight: '700',
+    flex: 1,
+    paddingRight: spacing.sm,
   },
   closeBtn: {
     width: 36,
     height: 36,
-    borderRadius: radius.md,
-    backgroundColor: colors.glassMedium,
+    borderRadius: formTokens.radiusPill,
+    backgroundColor: formTokens.surfaceRaised,
     alignItems: 'center',
     justifyContent: 'center',
   },
   footer: {
     paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+    paddingBottom: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: formTokens.hairline,
     gap: spacing.sm,
   },
 });

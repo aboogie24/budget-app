@@ -2,7 +2,8 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { colors, spacing, radius, typography } from '@/utils/design-system';
+import { spacing, typography } from '@/utils/design-system';
+import { formTokens } from './formTokens';
 
 type Props = {
   value: Date;
@@ -19,13 +20,7 @@ function formatDate(d: Date): string {
   return d.toLocaleDateString('default', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-/**
- * Reveal-on-tap date field. Collapsed it reads like a picker row: a glass
- * inset with a calendar glyph, the formatted date, and a chevron that rotates
- * up while open. On iOS the spinner mounts only while open, inside a glass
- * inset beneath the field; on Android tapping opens the native calendar
- * dialog with no inline spinner.
- */
+/** Quiet-fill date field with reveal-on-tap picker (C033 v2). */
 export function FormDateField({
   value,
   onChange,
@@ -39,7 +34,6 @@ export function FormDateField({
 
   const handleChange = (_event: unknown, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
-      // Android dismisses itself; collapse the reveal flag too.
       if (open) onToggle();
     }
     if (selectedDate) onChange(selectedDate);
@@ -48,20 +42,20 @@ export function FormDateField({
   return (
     <View>
       <TouchableOpacity
-        style={styles.field}
+        style={[styles.field, open && styles.fieldOpen]}
         onPress={onToggle}
         activeOpacity={0.75}
         accessibilityRole="button"
         accessibilityLabel={`${accessibilityLabel}, ${label}, opens date picker`}
       >
-        <Ionicons name="calendar-outline" size={18} color={colors.textMuted} style={styles.leadingIcon} />
+        <Ionicons name="calendar-outline" size={18} color={formTokens.quiet} style={styles.leadingIcon} />
         <Text style={styles.value} numberOfLines={1}>
           {label}
         </Text>
         <Ionicons
           name={open ? 'chevron-up' : 'chevron-forward'}
           size={18}
-          color={colors.textDark}
+          color={formTokens.quiet}
           style={styles.chevron}
         />
       </TouchableOpacity>
@@ -99,12 +93,15 @@ const styles = StyleSheet.create({
   field: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 48,
-    backgroundColor: colors.glassMedium,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
+    minHeight: formTokens.fieldMinHeight,
+    backgroundColor: formTokens.surfaceRaised,
+    borderRadius: formTokens.radiusField,
+    borderWidth: formTokens.focusBorderWidth,
+    borderColor: 'transparent',
+    paddingHorizontal: 16,
+  },
+  fieldOpen: {
+    borderColor: formTokens.primary2,
   },
   leadingIcon: {
     marginRight: spacing.sm,
@@ -112,7 +109,7 @@ const styles = StyleSheet.create({
   value: {
     flex: 1,
     ...typography.body,
-    color: colors.text,
+    color: formTokens.text,
   },
   chevron: {
     flexShrink: 0,
@@ -120,8 +117,8 @@ const styles = StyleSheet.create({
   },
   pickerInset: {
     marginTop: spacing.sm,
-    backgroundColor: colors.glassLight,
-    borderRadius: radius.md,
+    backgroundColor: formTokens.surfaceRaised,
+    borderRadius: formTokens.radiusField,
     overflow: 'hidden',
   },
   spinner: {

@@ -1,42 +1,30 @@
 import React from 'react';
 import { Text, TouchableOpacity, ActivityIndicator, StyleSheet, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, radius, typography, gradients } from '@/utils/design-system';
+import { spacing, typography } from '@/utils/design-system';
+import { formTokens } from './formTokens';
 
 type Props = {
   label: string;
   onPress: () => void;
-  variant?: 'primary' | 'destructive' | 'secondary';
+  variant?: 'primary' | 'destructive' | 'secondary' | 'ghost';
   disabled?: boolean;
   loading?: boolean;
   /** Trailing icon, e.g. "arrow-forward". Hidden while loading. */
   icon?: keyof typeof Ionicons.glyphMap;
 };
 
-/** Standard form CTA: gradient primary, glass destructive/secondary, spinner while saving. */
+/** Solid pill CTA (C033 v2) — no gradient chrome. */
 export function FormButton({ label, onPress, variant = 'primary', disabled, loading, icon }: Props) {
   const blocked = disabled || loading;
-
-  const content = (
-    <>
-      {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? '#fff' : colors.text} size="small" />
-      ) : null}
-      <Text
-        style={[
-          styles.label,
-          variant === 'destructive' && styles.labelDestructive,
-          variant === 'secondary' && styles.labelSecondary,
-        ]}
-      >
-        {label}
-      </Text>
-      {icon && !loading ? (
-        <Ionicons name={icon} size={18} color={variant === 'primary' ? '#fff' : colors.text} />
-      ) : null}
-    </>
-  );
+  const labelColor =
+    variant === 'primary'
+      ? '#fff'
+      : variant === 'destructive'
+        ? formTokens.error
+        : variant === 'ghost'
+          ? formTokens.primary2
+          : formTokens.text;
 
   return (
     <TouchableOpacity
@@ -46,59 +34,61 @@ export function FormButton({ label, onPress, variant = 'primary', disabled, load
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !!blocked, busy: !!loading }}
-      style={disabled && !loading ? styles.dimmed : undefined}
+      style={[blocked && !loading ? styles.dimmed : undefined, variant === 'primary' && styles.primaryGlow]}
     >
-      {variant === 'primary' ? (
-        <LinearGradient
-          colors={[...gradients.primaryGradient]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.inner}
-        >
-          {content}
-        </LinearGradient>
-      ) : (
-        <View style={[styles.inner, variant === 'destructive' ? styles.destructive : styles.secondary]}>
-          {content}
-        </View>
-      )}
+      <View
+        style={[
+          styles.inner,
+          variant === 'primary' && styles.primary,
+          variant === 'destructive' && styles.destructive,
+          variant === 'secondary' && styles.secondary,
+          variant === 'ghost' && styles.ghost,
+        ]}
+      >
+        {loading ? <ActivityIndicator color={labelColor} size="small" /> : null}
+        <Text style={[styles.label, { color: labelColor }]}>{label}</Text>
+        {icon && !loading ? <Ionicons name={icon} size={18} color={labelColor} /> : null}
+      </View>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
+  primaryGlow: {
+    shadowColor: formTokens.primary,
+    shadowOpacity: 0.35,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 12,
+    elevation: 4,
+  },
   inner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    minHeight: 48,
+    minHeight: formTokens.ctaMinHeight,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
-    borderRadius: radius.lg,
+    borderRadius: formTokens.radiusPill,
+  },
+  primary: {
+    backgroundColor: formTokens.primary,
   },
   destructive: {
-    backgroundColor: 'rgba(239,68,68,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.35)',
+    backgroundColor: 'rgba(239,68,68,0.14)',
   },
   secondary: {
-    backgroundColor: colors.glassMedium,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
+    backgroundColor: formTokens.surfaceRaised,
+  },
+  ghost: {
+    backgroundColor: 'transparent',
   },
   label: {
     ...typography.button,
-    color: '#fff',
-  },
-  labelDestructive: {
-    color: colors.error,
-  },
-  labelSecondary: {
-    color: colors.text,
+    fontWeight: '600',
   },
   dimmed: {
-    opacity: 0.5,
+    opacity: 0.45,
   },
 });
 

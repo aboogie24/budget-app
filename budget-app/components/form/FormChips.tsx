@@ -1,8 +1,9 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, radius, typography } from '@/utils/design-system';
+import { spacing, typography } from '@/utils/design-system';
 import { lightHaptic } from '@/utils/haptics';
+import { formTokens } from './formTokens';
 
 export type ChipOption<T extends string> = {
   value: T;
@@ -16,10 +17,10 @@ type Props<T extends string> = {
   onChange: (v: T) => void;
 };
 
-/** Generic chip radio row (frequency, type, term…). Wraps on narrow screens. */
+/** Capsule segmented chips — muted track, selected thumb (C033 v2). */
 export function FormChips<T extends string>({ options, value, onChange }: Props<T>) {
   return (
-    <View style={styles.row} accessibilityRole="radiogroup">
+    <View style={styles.track} accessibilityRole="radiogroup">
       {options.map((opt) => {
         const selected = value === opt.value;
         return (
@@ -30,7 +31,7 @@ export function FormChips<T extends string>({ options, value, onChange }: Props<
               lightHaptic();
               onChange(opt.value);
             }}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
             accessibilityRole="radio"
             accessibilityState={{ checked: selected }}
             accessibilityLabel={opt.label}
@@ -39,7 +40,7 @@ export function FormChips<T extends string>({ options, value, onChange }: Props<
               <Ionicons
                 name={opt.icon}
                 size={14}
-                color={selected ? colors.accent : colors.textMuted}
+                color={selected ? '#fff' : formTokens.muted}
               />
             ) : null}
             <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{opt.label}</Text>
@@ -51,34 +52,35 @@ export function FormChips<T extends string>({ options, value, onChange }: Props<
 }
 
 const styles = StyleSheet.create({
-  row: {
+  track: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.sm,
+    gap: 4,
+    backgroundColor: formTokens.surfaceRaised,
+    borderRadius: formTokens.radiusPill,
+    padding: 4,
   },
   chip: {
-    minHeight: 44,
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.xs,
-    backgroundColor: colors.glassMedium,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    borderRadius: radius.md,
+    borderRadius: formTokens.radiusPill,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
   },
   chipSelected: {
-    backgroundColor: 'rgba(168,85,247,0.18)',
-    borderColor: 'rgba(168,85,247,0.7)',
+    backgroundColor: formTokens.primary,
   },
   chipText: {
     ...typography.small,
-    color: colors.text,
+    color: formTokens.muted,
+    fontWeight: '500',
   },
   chipTextSelected: {
-    fontWeight: '700',
+    color: '#fff',
+    fontWeight: '600',
   },
 });
 

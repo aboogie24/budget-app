@@ -1,11 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
-import { colors, spacing, radius, typography, glassEffects } from '@/utils/design-system';
+import { spacing, typography } from '@/utils/design-system';
+import {
+  errorHelperStyle,
+  fieldError,
+  fieldFocused,
+  fieldIdle,
+  formTokens,
+  labelStyle,
+} from './formTokens';
 
 type Props = {
   value: string;
   onChangeText: (v: string) => void;
-  /** Uppercase caption above the hero row (hero variant only). */
+  /** Sentence-case caption above the hero digits (hero variant only). */
   label?: string;
   /** Leading +/− glyph; null hides it. */
   sign?: '+' | '-' | null;
@@ -23,16 +31,16 @@ type Props = {
 };
 
 /**
- * Currency amount entry. Hero variant is the large floating card used by
- * add-budget/add-transaction; compact is a $-prefixed glass row for bottom
- * sheets (bills, debts, savings…).
+ * Currency amount entry (C033 v2).
+ * Hero = oversized tabular type + hairline (not a glass card).
+ * Compact = quiet-fill row with $ prefix.
  */
 export function AmountInput({
   value,
   onChangeText,
-  label = 'AMOUNT',
+  label = 'Amount',
   sign = null,
-  color = colors.text,
+  color = formTokens.text,
   echo,
   compact,
   onBlur,
@@ -41,18 +49,30 @@ export function AmountInput({
   placeholder = '0.00',
   accessibilityLabel = 'Amount',
 }: Props) {
+  const [focused, setFocused] = useState(false);
+
   if (compact) {
     return (
-      <View style={[styles.compactRow, !!error && styles.compactRowError]}>
+      <View
+        style={[
+          styles.compactRow,
+          focused && !error && styles.compactFocused,
+          !!error && styles.compactRowError,
+        ]}
+      >
         <Text style={[styles.compactCurrency, { color }]}>$</Text>
         <TextInput
           style={styles.compactInput}
           value={value}
           onChangeText={onChangeText}
-          onBlur={onBlur}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
           keyboardType="decimal-pad"
           placeholder={placeholder}
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={formTokens.quiet}
           autoFocus={autoFocus}
           accessibilityLabel={accessibilityLabel}
           numberOfLines={1}
@@ -62,8 +82,8 @@ export function AmountInput({
   }
 
   return (
-    <View style={styles.heroCard}>
-      <Text style={styles.heroLabel}>{label}</Text>
+    <View style={styles.heroWrap}>
+      {label ? <Text style={styles.heroLabel}>{label}</Text> : null}
       <View style={styles.heroRow}>
         {sign ? <Text style={[styles.heroSign, { color }]}>{sign === '-' ? '−' : '+'}</Text> : null}
         <Text style={[styles.heroCurrency, { color }]}>$</Text>
@@ -71,79 +91,106 @@ export function AmountInput({
           style={[styles.heroInput, { color }]}
           value={value}
           onChangeText={onChangeText}
-          onBlur={onBlur}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
           keyboardType="decimal-pad"
           placeholder={placeholder}
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={formTokens.quiet}
           autoFocus={autoFocus}
           accessibilityLabel={accessibilityLabel}
           numberOfLines={1}
         />
       </View>
+      <View
+        style={[
+          styles.hairline,
+          focused && !error && styles.hairlineFocused,
+          !!error && styles.hairlineError,
+        ]}
+      />
       {echo ? <Text style={styles.heroEcho}>{echo}</Text> : null}
-      {error ? (
-        <View style={styles.hintRow}>
-          <Text style={styles.hintText}>{error}</Text>
-        </View>
-      ) : null}
+      {error ? <Text style={styles.hintText}>{error}</Text> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // Hero variant
-  heroCard: {
-    ...glassEffects.glassFloating,
-    padding: spacing.xl,
+  heroWrap: {
     alignItems: 'center',
+    paddingVertical: spacing.md,
   },
   heroLabel: {
-    ...typography.caption,
-    color: colors.textMuted,
-    letterSpacing: 1,
-    fontWeight: '600',
+    ...labelStyle,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   heroRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.sm,
     maxWidth: '100%',
   },
-  heroSign: { ...typography.h1 },
-  heroCurrency: { ...typography.h1, marginLeft: 2 },
+  heroSign: {
+    fontSize: 36,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    lineHeight: 44,
+  },
+  heroCurrency: {
+    fontSize: 36,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    lineHeight: 44,
+    marginLeft: 2,
+  },
   heroInput: {
-    ...typography.h1,
+    fontSize: 36,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    lineHeight: 44,
     minWidth: 40,
     marginLeft: 2,
     padding: 0,
     textAlign: 'left',
   },
+  hairline: {
+    alignSelf: 'stretch',
+    height: StyleSheet.hairlineWidth * 2,
+    backgroundColor: formTokens.hairline,
+    marginTop: spacing.sm,
+    marginHorizontal: spacing.xl,
+  },
+  hairlineFocused: {
+    backgroundColor: formTokens.primary2,
+    height: 2,
+    shadowColor: formTokens.primary2,
+    shadowOpacity: 0.4,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 4,
+  },
+  hairlineError: {
+    backgroundColor: formTokens.error,
+    height: 2,
+  },
   heroEcho: {
     ...typography.caption,
-    color: colors.textMuted,
+    color: formTokens.muted,
     marginTop: spacing.xs,
   },
-  hintRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-  },
-  hintText: { ...typography.caption, color: colors.error },
+  hintText: { ...errorHelperStyle, textAlign: 'center' },
 
-  // Compact variant
   compactRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 48,
-    backgroundColor: colors.glassMedium,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
+    ...fieldIdle,
+  },
+  compactFocused: {
+    ...fieldFocused,
   },
   compactRowError: {
-    borderColor: colors.error,
+    ...fieldError,
   },
   compactCurrency: {
     ...typography.bodyBold,
@@ -152,7 +199,8 @@ const styles = StyleSheet.create({
   compactInput: {
     flex: 1,
     ...typography.body,
-    color: colors.text,
+    color: formTokens.text,
+    fontVariant: ['tabular-nums'],
     padding: 0,
     paddingVertical: spacing.md,
   },
