@@ -20,10 +20,7 @@ export const formTokens = {
   fieldMinHeight: 52,
   ctaMinHeight: 52,
   focusBorderWidth: 1.5,
-  focusGlow: 'rgba(168,85,247,0.28)',
-  errorGlow: 'rgba(239,68,68,0.22)',
   hairline: colors.borderLight,
-  fieldGap: 18,
 } as const;
 
 export const labelStyle: TextStyle = {

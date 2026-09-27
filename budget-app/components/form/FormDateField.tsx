@@ -102,6 +102,11 @@ const styles = StyleSheet.create({
   },
   fieldOpen: {
     borderColor: formTokens.primary2,
+    shadowColor: formTokens.primary2,
+    shadowOpacity: 0.35,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 6,
+    elevation: 2,
   },
   leadingIcon: {
     marginRight: spacing.sm,

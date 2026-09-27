@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '@/utils/design-system';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { lightHaptic } from '@/utils/haptics';
 import { formTokens } from './formTokens';
 
@@ -32,6 +33,9 @@ type Props = {
  * keep identity across re-renders.
  */
 export function FormSheet({ visible, title, onClose, children, footer, maxHeightPct = 0.85 }: Props) {
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, spacing.sm) + spacing.sm;
+
   const handleClose = () => {
     lightHaptic();
     onClose();
@@ -45,7 +49,15 @@ export function FormSheet({ visible, title, onClose, children, footer, maxHeight
       >
         <View style={styles.backdrop}>
           <Pressable style={{ flex: 1 }} onPress={handleClose} accessibilityLabel="Dismiss form" />
-          <View style={[styles.sheet, { maxHeight: Dimensions.get('window').height * maxHeightPct }]}>
+          <View
+            style={[
+              styles.sheet,
+              {
+                maxHeight: Dimensions.get('window').height * maxHeightPct,
+                paddingBottom: footer ? spacing.sm : bottomPad,
+              },
+            ]}
+          >
             <View style={styles.grabber} accessibilityElementsHidden />
             <View style={styles.header}>
               <Text style={styles.title}>{title}</Text>
@@ -66,7 +78,9 @@ export function FormSheet({ visible, title, onClose, children, footer, maxHeight
             >
               {children}
             </ScrollView>
-            {footer ? <View style={styles.footer}>{footer}</View> : null}
+            {footer ? (
+              <View style={[styles.footer, { paddingBottom: bottomPad }]}>{footer}</View>
+            ) : null}
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -85,7 +99,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: formTokens.radiusSheet,
     borderTopRightRadius: formTokens.radiusSheet,
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.lg,
     paddingTop: spacing.sm,
   },
   grabber: {
@@ -119,7 +132,6 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: formTokens.hairline,
     gap: spacing.sm,
