@@ -1,7 +1,8 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useState } from 'react';
 import { View, TextInput, TextInputProps, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, radius, typography } from '@/utils/design-system';
+import { spacing, typography } from '@/utils/design-system';
+import { fieldError, fieldFocused, fieldIdle, formTokens } from './formTokens';
 
 type Props = TextInputProps & {
   icon?: keyof typeof Ionicons.glyphMap;
@@ -9,21 +10,40 @@ type Props = TextInputProps & {
   error?: boolean;
 };
 
-/** Glass text input with optional leading icon. Pair with FormField for label + error. */
+/** Quiet-fill text input with soft focus glow. Pair with FormField for label + error. */
 export const FormInput = forwardRef<TextInput, Props>(function FormInput(
-  { icon, error, style, multiline, ...inputProps },
+  { icon, error, style, multiline, onFocus, onBlur, editable = true, ...inputProps },
   ref,
 ) {
+  const [focused, setFocused] = useState(false);
+
   return (
-    <View style={[styles.row, multiline && styles.rowMultiline, error && styles.rowError]}>
+    <View
+      style={[
+        styles.row,
+        multiline && styles.rowMultiline,
+        focused && !error && editable && styles.rowFocused,
+        error && styles.rowError,
+        !editable && styles.rowDisabled,
+      ]}
+    >
       {icon ? (
-        <Ionicons name={icon} size={18} color={colors.textMuted} style={styles.leadingIcon} />
+        <Ionicons name={icon} size={18} color={formTokens.quiet} style={styles.leadingIcon} />
       ) : null}
       <TextInput
         ref={ref}
         style={[styles.input, multiline && styles.inputMultiline, style]}
-        placeholderTextColor={colors.textMuted}
+        placeholderTextColor={formTokens.quiet}
         multiline={multiline}
+        editable={editable}
+        onFocus={(e) => {
+          setFocused(true);
+          onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          onBlur?.(e);
+        }}
         {...inputProps}
       />
     </View>
@@ -34,19 +54,20 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 48,
-    backgroundColor: colors.glassMedium,
-    borderWidth: 1,
-    borderColor: colors.borderGlass,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
+    ...fieldIdle,
   },
   rowMultiline: {
     alignItems: 'flex-start',
     paddingVertical: spacing.md,
   },
+  rowFocused: {
+    ...fieldFocused,
+  },
   rowError: {
-    borderColor: colors.error,
+    ...fieldError,
+  },
+  rowDisabled: {
+    opacity: 0.45,
   },
   leadingIcon: {
     marginRight: spacing.sm,
@@ -54,7 +75,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     ...typography.body,
-    color: colors.text,
+    color: formTokens.text,
     padding: 0,
     paddingVertical: spacing.md,
   },
