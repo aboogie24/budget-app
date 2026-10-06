@@ -187,6 +187,7 @@ func SetupRoutes(r *mux.Router) {
 	authRoutes.HandleFunc("/households/invite", handlers.CreateHouseholdInvite).Methods("POST")
 	authRoutes.HandleFunc("/households/accept", handlers.AcceptHouseholdInvite).Methods("POST")
 	authRoutes.HandleFunc("/households/invites", handlers.ListHouseholdInvites).Methods("GET")
+	authRoutes.HandleFunc("/households/invites/sent", handlers.ListSentHouseholdInvites).Methods("GET")
 	authRoutes.HandleFunc("/households/me", handlers.GetHouseholdForUser).Methods("GET")
 	authRoutes.HandleFunc("/households/summary", handlers.GetHouseholdSummary).Methods("GET")
 
