@@ -82,3 +82,23 @@ Login / OAuth already return `user.onboarding_complete`. Register returns `onboa
 3. OB2 create → `POST /auth/budgets/bootstrap` **or** skip (no call)  
 4. OB3 bank defer (existing providers)  
 5. OB4 finish → `POST /auth/onboarding/complete` → store `onboarding_complete: true` from response or refresh via `GET /auth/users/me`
+
+## C038 — Accept invite when user already has a solo household
+
+After OB1, every user has a household. `POST /auth/households/accept` therefore must handle an existing solo:
+
+Body: `{ "code", "user_id", "confirm_migrate"?: boolean }`
+
+| Current state | Behavior |
+|---|---|
+| No membership | Join as before (200) |
+| Already on target | Idempotent 200 (`already_member: true`) |
+| Empty solo (starter budgets only / no txns, banks, debts, savings, bills, properties) | Discard starters, hard-delete solo, join target as `member` (200). `confirm_migrate` ignored. |
+| Non-empty solo without `confirm_migrate: true` | **409** `migrate_confirmation_required` + `accept_preview` |
+| Non-empty solo with `confirm_migrate: true` | Migrate `household_id` on rows → target, move membership, delete solo (200) |
+| Free+Free bank-cap would exceed 1 after merge | **409** `banks_limit_conflict` (even with confirm) |
+| Multi-member current household | **409** `blocked_multi_member` |
+
+Plan after join = `max(solo, target)` (Plus wins). Response includes refreshed `entitlements`.
+
+`GET /auth/households/invites?user_id=` continues to return invites for users who already have a household, and each invite includes `accept_preview` (`discard_solo` \| `migrate_solo` \| `join` \| `already_member` \| `blocked_*`).
