@@ -217,9 +217,30 @@ export async function ensureFreshToken(): Promise<void> {
 
 export class ApiError extends Error {
   status: number;
+  /** Parsed JSON body when the server returned JSON; otherwise undefined. */
+  body?: any;
+  /** Server `code` or `error` field when present (e.g. banks_limit_conflict). */
+  code?: string;
   constructor(status: number, message: string) {
-    super(message);
+    let body: any;
+    let display = message;
+    let code: string | undefined;
+    const trimmed = (message || '').trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        body = JSON.parse(trimmed);
+        if (body && typeof body === 'object') {
+          display = String(body.message || body.error || message);
+          code = body.code || body.error;
+        }
+      } catch {
+        // keep raw message
+      }
+    }
+    super(display);
     this.status = status;
+    this.body = body;
+    this.code = typeof code === 'string' ? code : undefined;
     this.name = 'ApiError';
   }
 }

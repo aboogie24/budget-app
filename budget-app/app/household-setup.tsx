@@ -31,27 +31,41 @@ import {
   glassEffects,
   gradients,
 } from '@/utils/design-system';
+import { FormButton } from '@/components/form';
+import { MigrateConsentPanel } from '@/components/household/MigrateConsentPanel';
+import { InviteEdgeSheet } from '@/components/household/InviteEdgeSheet';
+import {
+  type HouseholdInvite,
+  fetchIncomingInvites,
+  acceptHouseholdInvite,
+  settingsRowCtaForAction,
+  requiresMigrateConsent,
+  edgeCopyForAcceptError,
+  edgeCopyForBlockedAction,
+  invitePreviewLine,
+  householdDisplayName,
+  isInviteExpired,
+  acceptPreviewFromError,
+} from '@/utils/householdInvites';
 
 // ── Types ──
 
 type Member = { user_id: string; email: string; role?: string };
-type Invite = {
-  code: string;
-  invitee_email: string;
-  expires_at: string;
-  household_id: string;
-  household_name?: string;
-  inviter_email?: string;
+type Invite = HouseholdInvite & {
+  invitee_email?: string;
+  expires_at?: string;
 };
 
 // ── Helpers ──
 
-const isExpired = (iso: string) => {
+const isExpired = (iso?: string) => {
+  if (!iso) return false;
   const t = new Date(iso).getTime();
   return !isNaN(t) && t < Date.now();
 };
 
-const formatDate = (iso: string) => {
+const formatDate = (iso?: string) => {
+  if (!iso) return '';
   const d = new Date(iso);
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 };
@@ -138,7 +152,11 @@ export default function HouseholdManagement() {
   const [householdId, setHouseholdId] = useState<string | null>(null);
   const [householdName, setHouseholdName] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
-  const [pendingInvites, setPendingInvites] = useState<Invite[]>([]);
+  const [sentInvites, setSentInvites] = useState<Invite[]>([]);
+  const [incomingInvites, setIncomingInvites] = useState<Invite[]>([]);
+  const [migrateInvite, setMigrateInvite] = useState<Invite | null>(null);
+  const [edgeVisible, setEdgeVisible] = useState(false);
+  const [edgeMessage, setEdgeMessage] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [userId, setUserId] = useState('');
 
@@ -169,16 +187,25 @@ export default function HouseholdManagement() {
         setHouseholdName(data.name || 'My Household');
         setMembers(Array.isArray(data.members) ? data.members : []);
 
-        // Fetch sent invites for this household.
+        // Sent (outbound) invites for this household.
         try {
           const invData = await api.get<Invite[]>(`/auth/households/invites/sent`, {
             user_id: user.id,
             household_id: data.household_id || data.id,
           });
-          setPendingInvites(Array.isArray(invData) ? invData : []);
+          setSentInvites(Array.isArray(invData) ? invData : []);
         } catch (e) {
           console.error('Failed to load sent invites:', e);
-          setPendingInvites([]);
+          setSentInvites([]);
+        }
+
+        // C039: always load incoming invites — do not gate on !householdId.
+        try {
+          const incoming = await fetchIncomingInvites(user.id);
+          setIncomingInvites(Array.isArray(incoming) ? incoming : []);
+        } catch (e) {
+          console.error('Failed to load incoming invites:', e);
+          setIncomingInvites([]);
         }
       } catch (e: any) {
         // Distinguish "no household" (404) from a genuine load failure.
@@ -193,17 +220,15 @@ export default function HouseholdManagement() {
         setHouseholdId(null);
         setHouseholdName('');
         setMembers([]);
+        setSentInvites([]);
 
         if (isNoHousehold) {
-          // Mode B — check for an incoming invite so we can show it prominently.
           try {
-            const invData = await api.get<Invite[]>(`/auth/households/invites`, {
-              user_id: user.id,
-            });
-            setPendingInvites(Array.isArray(invData) ? invData : []);
+            const incoming = await fetchIncomingInvites(user.id);
+            setIncomingInvites(Array.isArray(incoming) ? incoming : []);
           } catch (e2) {
             console.error('Failed to load pending invites:', e2);
-            setPendingInvites([]);
+            setIncomingInvites([]);
           }
         } else {
           console.error('Failed to load household:', e);
@@ -300,43 +325,60 @@ export default function HouseholdManagement() {
     }
   };
 
-  const handleAcceptInvite = async (code: string, name: string) => {
-    Alert.alert(
-      'Accept Invite',
-      `Join "${name}"? You can only be in one household at a time.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Join',
-          onPress: async () => {
-            setAcceptingCode(code);
-            try {
-              const user = await getCurrentUser();
-              if (!user?.id) return;
-              const headers: any = { 'Content-Type': 'application/json' };
-              if (user.token) headers.Authorization = `Bearer ${user.token}`;
+  const showEdge = (message: string) => {
+    setEdgeMessage(message);
+    setEdgeVisible(true);
+  };
 
-              const res = await fetch(`${api.getBaseUrl()}/auth/households/accept`, {
-                method: 'POST',
-                headers,
-                credentials: 'include',
-                body: JSON.stringify({ code, user_id: user.id }),
-              });
-              if (!res.ok) {
-                const text = await res.text();
-                throw new Error(text);
-              }
-              Alert.alert('Joined!', `You are now a member of "${name}".`);
-              await loadData();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Could not accept invite.');
-            } finally {
-              setAcceptingCode(null);
-            }
-          },
-        },
-      ]
-    );
+  const runAccept = async (invite: Invite, confirmMigrate?: boolean) => {
+    setAcceptingCode(invite.code);
+    try {
+      const user = await getCurrentUser();
+      if (!user?.id) return;
+      await acceptHouseholdInvite({
+        code: invite.code,
+        userId: user.id,
+        confirmMigrate,
+      });
+      const name = householdDisplayName(invite);
+      Alert.alert('Joined!', `You're in ${name}.`);
+      setMigrateInvite(null);
+      await loadData();
+    } catch (e: any) {
+      const preview = acceptPreviewFromError(e);
+      if (preview && requiresMigrateConsent(preview)) {
+        setMigrateInvite({ ...invite, accept_preview: preview });
+        return;
+      }
+      if (preview?.action === 'blocked_banks_limit' || preview?.action === 'blocked_multi_member') {
+        showEdge(edgeCopyForBlockedAction(preview.action));
+        return;
+      }
+      showEdge(edgeCopyForAcceptError(e));
+    } finally {
+      setAcceptingCode(null);
+    }
+  };
+
+  const handleIncomingCta = async (invite: Invite) => {
+    const action = invite.accept_preview?.action;
+    const cta = settingsRowCtaForAction(action);
+    if (cta.kind === 'fix_banks' || cta.kind === 'cant_join') {
+      showEdge(edgeCopyForBlockedAction(action));
+      return;
+    }
+    if (cta.kind === 'review' || requiresMigrateConsent(invite.accept_preview)) {
+      setMigrateInvite(invite);
+      return;
+    }
+    await runAccept(invite, false);
+  };
+
+  const handleAcceptInvite = async (code: string, name: string) => {
+    const invite =
+      incomingInvites.find((i) => i.code === code) ||
+      ({ code, household_id: '', household_name: name } as Invite);
+    await handleIncomingCta(invite);
   };
 
   const handleLeave = () => {
@@ -357,7 +399,7 @@ export default function HouseholdManagement() {
 
   const showSkeleton = loading && !loadedOnce;
   const backgroundRefreshing = loading && loadedOnce;
-  const hasIncomingInvite = !householdId && pendingInvites.length > 0;
+  const hasIncomingInvite = incomingInvites.length > 0;
 
   // ── Sub-renders ──
 
@@ -441,11 +483,11 @@ export default function HouseholdManagement() {
   );
 
   const renderSentInvites = () =>
-    pendingInvites.length > 0 && (
+    sentInvites.length > 0 && (
       <View>
         <GroupLabel>PENDING INVITES</GroupLabel>
         <View style={styles.card}>
-          {pendingInvites.map((inv, i) => {
+          {sentInvites.map((inv, i) => {
             const expired = isExpired(inv.expires_at);
             return (
               <View
@@ -522,50 +564,109 @@ export default function HouseholdManagement() {
     </View>
   );
 
-  const renderIncomingInvite = () => (
-    <View>
-      <GroupLabel>YOU'RE INVITED</GroupLabel>
-      {pendingInvites.map((inv) => {
-        const expired = isExpired(inv.expires_at);
-        const isAccepting = acceptingCode === inv.code;
-        const name = inv.household_name || 'Household';
-        return (
-          <View key={inv.code} style={[styles.heroFloating, styles.inviteHero]}>
-            <View style={styles.inviteHeaderRow}>
-              <View style={styles.inviteIconChip}>
-                <Ionicons name="home" size={20} color={colors.primary2} />
+  const renderIncomingInvitesList = (hero: boolean) => {
+    if (incomingInvites.length === 0) {
+      if (hero) return null;
+      return (
+        <View>
+          <GroupLabel>INCOMING INVITES</GroupLabel>
+          <View style={styles.card}>
+            <Text style={styles.fieldDesc}>
+              When someone invites you, it'll show up here.
+            </Text>
+          </View>
+        </View>
+      );
+    }
+    return (
+      <View>
+        <GroupLabel>{hero ? "YOU'RE INVITED" : 'INCOMING INVITES'}</GroupLabel>
+        {incomingInvites.map((inv) => {
+          const expired = isExpired(inv.expires_at) || isInviteExpired(inv);
+          const isAccepting = acceptingCode === inv.code;
+          const name = householdDisplayName(inv);
+          const cta = settingsRowCtaForAction(inv.accept_preview?.action);
+          if (hero) {
+            return (
+              <View key={inv.code} style={[styles.heroFloating, styles.inviteHero]}>
+                <View style={styles.inviteHeaderRow}>
+                  <View style={styles.inviteIconChip}>
+                    <Ionicons name="home" size={20} color={colors.primary2} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.inviteHeroName} numberOfLines={2}>
+                      {invitePreviewLine(inv)}
+                    </Text>
+                    {!!inv.inviter_email && (
+                      <Text style={styles.subtle} numberOfLines={1}>
+                        Invited by {inv.inviter_email}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+                {expired ? (
+                  <View style={styles.expiredRow}>
+                    <Ionicons name="hourglass-outline" size={16} color={colors.textMuted} />
+                    <Text style={styles.expiredText}>This invite has expired</Text>
+                  </View>
+                ) : (
+                  <FormButton
+                    label={cta.label}
+                    loading={isAccepting}
+                    disabled={cta.disabled || cta.kind === 'cant_join'}
+                    onPress={() => handleIncomingCta(inv)}
+                  />
+                )}
               </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.inviteHeroName} numberOfLines={1}>
-                  {name}
-                </Text>
-                {!!inv.inviter_email && (
-                  <Text style={styles.subtle} numberOfLines={1}>
-                    Invited by {inv.inviter_email}
+            );
+          }
+          return (
+            <View key={inv.code} style={[styles.card, { marginBottom: spacing.md }]}>
+              <View style={styles.inviteRow}>
+                <Ionicons name="mail-unread-outline" size={16} color={colors.primary2} />
+                <View style={{ flex: 1, minWidth: 0, marginLeft: spacing.sm }}>
+                  <Text style={styles.memberEmail} numberOfLines={2}>
+                    {invitePreviewLine(inv)}
                   </Text>
+                  <Text style={styles.subtle}>{name}</Text>
+                </View>
+                {expired ? (
+                  <StatusChip icon="close-circle-outline" label="Expired" color={colors.error} />
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => handleIncomingCta(inv)}
+                    disabled={isAccepting || cta.disabled}
+                    style={{ opacity: cta.disabled ? 0.45 : 1 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={cta.label}
+                  >
+                    {isAccepting ? (
+                      <ActivityIndicator size="small" color={colors.primary2} />
+                    ) : (
+                      <Text
+                        style={{
+                          color:
+                            cta.kind === 'fix_banks' || cta.kind === 'cant_join'
+                              ? colors.textMuted
+                              : colors.primary2,
+                          fontWeight: '600',
+                          fontSize: 14,
+                        }}
+                      >
+                        {cta.label}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
                 )}
               </View>
             </View>
-            {expired ? (
-              <View style={styles.expiredRow}>
-                <Ionicons name="hourglass-outline" size={16} color={colors.textMuted} />
-                <Text style={styles.expiredText}>This invite has expired</Text>
-              </View>
-            ) : (
-              <PrimaryGradientButton
-                icon="checkmark-circle-outline"
-                label="Accept & Join"
-                loading={isAccepting}
-                onPress={() => handleAcceptInvite(inv.code, name)}
-                accessibilityLabel={`Accept and join ${name}`}
-                accessibilityHint="Joins this household. You can only be in one household at a time."
-              />
-            )}
-          </View>
-        );
-      })}
-    </View>
-  );
+          );
+        })}
+      </View>
+    );
+  };
+
+  const renderIncomingInvite = () => renderIncomingInvitesList(true);
 
   const renderCreateForm = (hero: boolean) => {
     const disabled = submitting || !createName.trim();
@@ -705,6 +806,7 @@ export default function HouseholdManagement() {
         </View>
 
         {renderMembers()}
+        {renderIncomingInvitesList(false)}
         {renderInvitePartner()}
         {renderSentInvites()}
         {renderManage()}
@@ -757,6 +859,24 @@ export default function HouseholdManagement() {
             {body}
           </ScrollView>
         </KeyboardAvoidingView>
+
+        {migrateInvite ? (
+          <View style={styles.migrateOverlay}>
+            <View style={styles.migrateCard}>
+              <MigrateConsentPanel
+                invite={migrateInvite}
+                busy={acceptingCode === migrateInvite.code}
+                onConfirm={() => runAccept(migrateInvite, true)}
+                onCancel={() => setMigrateInvite(null)}
+              />
+            </View>
+          </View>
+        ) : null}
+        <InviteEdgeSheet
+          visible={edgeVisible}
+          message={edgeMessage}
+          onClose={() => setEdgeVisible(false)}
+        />
       </SafeAreaView>
     </GradientBackground>
   );
@@ -1034,4 +1154,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   noticeAction: { color: colors.primary2, ...typography.smallBold, fontWeight: '700', marginTop: spacing.xs },
+  migrateOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'flex-end',
+    padding: spacing.lg,
+  },
+  migrateCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+  },
 });

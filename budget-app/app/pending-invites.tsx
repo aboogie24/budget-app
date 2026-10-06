@@ -25,21 +25,28 @@ import {
   glassEffects,
   gradients,
 } from '@/utils/design-system';
+import { FormButton } from '@/components/form';
+import { MigrateConsentPanel } from '@/components/household/MigrateConsentPanel';
+import { InviteEdgeSheet } from '@/components/household/InviteEdgeSheet';
+import {
+  type HouseholdInvite,
+  acceptHouseholdInvite,
+  primaryCtaForAction,
+  requiresMigrateConsent,
+  edgeCopyForAcceptError,
+  edgeCopyForBlockedAction,
+  invitePreviewLine,
+  householdDisplayName,
+  acceptPreviewFromError,
+} from '@/utils/householdInvites';
 
-type Invite = {
-  code: string;
-  household_id: string;
-  household_name: string;
-  created_by: string;
-  inviter_email?: string;
-  expires_at: string;
-  invitee_email?: string;
-};
+type Invite = HouseholdInvite;
 
 // ── Expiry math ──
 // Returns the number of whole (ceil) days until `expires_at`. Negative/zero
 // means expired. `≤ 1 && !expired` escalates the status chip to "urgent".
-const daysUntil = (dateStr: string) => {
+const daysUntil = (dateStr?: string) => {
+  if (!dateStr) return 999;
   const diff = new Date(dateStr).getTime() - Date.now();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 };
@@ -47,7 +54,7 @@ const daysUntil = (dateStr: string) => {
 type ChipCase = 'active' | 'urgent' | 'expired';
 
 const chipFor = (
-  expiresAt: string,
+  expiresAt: string | undefined,
   expired: boolean,
 ): { kase: ChipCase; icon: React.ComponentProps<typeof Ionicons>['name']; label: string; color: string } => {
   if (expired) {
@@ -66,7 +73,7 @@ const chipFor = (
 };
 
 // ── Status chip (icon + word + color; never color alone) ──
-function StatusChip({ expiresAt, expired }: { expiresAt: string; expired: boolean }) {
+function StatusChip({ expiresAt, expired }: { expiresAt?: string; expired: boolean }) {
   const { icon, label, color } = chipFor(expiresAt, expired);
   return (
     <View
@@ -125,8 +132,10 @@ function InviteCard({
   accepting: boolean;
   onAccept: (code: string, householdName: string) => void;
 }) {
-  const expired = new Date(invite.expires_at).getTime() < Date.now();
-  const { label: statusWord } = chipFor(invite.expires_at, expired);
+  const expired = invite.expires_at
+    ? new Date(invite.expires_at).getTime() < Date.now()
+    : !!invite.expired;
+  const { label: statusWord } = chipFor(invite.expires_at || '', expired);
   const householdName = invite.household_name || 'Household';
 
   const a11yLabel = invite.inviter_email
@@ -140,8 +149,8 @@ function InviteCard({
           <Ionicons name="home" size={20} color={colors.primary2} />
         </View>
         <View style={styles.identity}>
-          <Text style={styles.householdName} numberOfLines={1}>
-            {householdName}
+          <Text style={styles.householdName} numberOfLines={2}>
+            {invitePreviewLine(invite)}
           </Text>
           {invite.inviter_email ? (
             <Text style={styles.inviterText} numberOfLines={1}>
@@ -160,11 +169,17 @@ function InviteCard({
           <Text style={styles.ghostText}>This invite has expired</Text>
         </View>
       ) : (
-        <AcceptButton
-          householdName={householdName}
-          accepting={accepting}
-          onPress={() => onAccept(invite.code, householdName)}
-        />
+        (() => {
+          const cta = primaryCtaForAction(invite.accept_preview?.action);
+          return (
+            <FormButton
+              label={cta.label}
+              loading={accepting}
+              disabled={cta.disabled}
+              onPress={() => onAccept(invite.code, householdName)}
+            />
+          );
+        })()
       )}
     </View>
   );
@@ -192,6 +207,9 @@ export default function PendingInvitesScreen() {
   const [errored, setErrored] = useState(false);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [accepting, setAccepting] = useState<string | null>(null);
+  const [migrateInvite, setMigrateInvite] = useState<Invite | null>(null);
+  const [edgeVisible, setEdgeVisible] = useState(false);
+  const [edgeMessage, setEdgeMessage] = useState('');
 
   const loadInvites = useCallback(async () => {
     setLoading(true);
@@ -225,33 +243,56 @@ export default function PendingInvitesScreen() {
     }, [loadInvites]),
   );
 
-  const handleAccept = (code: string, householdName: string) => {
-    Alert.alert(
-      'Accept Invite',
-      `Join "${householdName}"? You can only be in one household at a time.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Join',
-          onPress: async () => {
-            setAccepting(code);
-            try {
-              const user = await getCurrentUser();
-              if (!user?.id) return;
-
-              await api.post(`/auth/households/accept`, { code, user_id: user.id });
-              Alert.alert('Joined!', `You are now a member of "${householdName}".`);
-              await loadInvites();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Could not accept invite.');
-            } finally {
-              setAccepting(null);
-            }
-          },
-        },
-      ],
-    );
+  const showEdge = (message: string) => {
+    setEdgeMessage(message);
+    setEdgeVisible(true);
   };
+
+  const runAccept = async (invite: Invite, confirmMigrate?: boolean) => {
+    setAccepting(invite.code);
+    try {
+      const user = await getCurrentUser();
+      if (!user?.id) return;
+      await acceptHouseholdInvite({
+        code: invite.code,
+        userId: user.id,
+        confirmMigrate,
+      });
+      Alert.alert('Joined!', `You're in ${householdDisplayName(invite)}.`);
+      setMigrateInvite(null);
+      await loadInvites();
+    } catch (e: any) {
+      const preview = acceptPreviewFromError(e);
+      if (preview && requiresMigrateConsent(preview)) {
+        setMigrateInvite({ ...invite, accept_preview: preview });
+        return;
+      }
+      if (preview?.action === 'blocked_banks_limit' || preview?.action === 'blocked_multi_member') {
+        showEdge(edgeCopyForBlockedAction(preview.action));
+        return;
+      }
+      showEdge(edgeCopyForAcceptError(e));
+    } finally {
+      setAccepting(null);
+    }
+  };
+
+  const handleAccept = (code: string, _householdName: string) => {
+    const invite = invites.find((i) => i.code === code);
+    if (!invite) return;
+    const action = invite.accept_preview?.action;
+    const cta = primaryCtaForAction(action);
+    if (cta.kind === 'fix_banks' || cta.kind === 'cant_join') {
+      showEdge(edgeCopyForBlockedAction(action));
+      return;
+    }
+    if (cta.kind === 'review' || requiresMigrateConsent(invite.accept_preview)) {
+      setMigrateInvite(invite);
+      return;
+    }
+    void runAccept(invite, false);
+  };
+
 
   const firstLoad = loading && !loadedOnce;
   const backgroundRefresh = loading && loadedOnce;
@@ -324,7 +365,25 @@ export default function PendingInvitesScreen() {
             </>
           )}
         </ScrollView>
-      </SafeAreaView>
+      
+      {migrateInvite ? (
+        <View style={styles.migrateOverlay}>
+          <View style={styles.migrateCard}>
+            <MigrateConsentPanel
+              invite={migrateInvite}
+              busy={accepting === migrateInvite.code}
+              onConfirm={() => runAccept(migrateInvite, true)}
+              onCancel={() => setMigrateInvite(null)}
+            />
+          </View>
+        </View>
+      ) : null}
+      <InviteEdgeSheet
+        visible={edgeVisible}
+        message={edgeMessage}
+        onClose={() => setEdgeVisible(false)}
+      />
+</SafeAreaView>
     </GradientBackground>
   );
 }
@@ -487,5 +546,16 @@ const styles = StyleSheet.create({
     ...typography.small,
     color: colors.textMuted,
     textAlign: 'center',
+  },
+  migrateOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'flex-end',
+    padding: spacing.lg,
+  },
+  migrateCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: radius.xl,
+    padding: spacing.lg,
   },
 });

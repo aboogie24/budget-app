@@ -9,7 +9,7 @@ import { api } from './apiClient';
 type PostFn = <T = unknown>(path: string, body?: unknown) => Promise<T>;
 type GetFn = <T = unknown>(path: string, params?: Record<string, string | number>) => Promise<T>;
 
-export const TOTAL_ONBOARDING_STEPS = 5;
+export const TOTAL_ONBOARDING_STEPS = 6;
 export const SPLASH_DURATION_MS = 1200;
 export const SPLASH_BG = '#0f172a';
 export const WORDMARK = {
@@ -103,8 +103,8 @@ export type EnsureHouseholdResult = {
 };
 
 /**
- * OB1: always POST /auth/households (idempotent). Optional invite afterwards.
- * Never leave the user without attempting household create.
+ * OB2 (after join-or-start): always POST /auth/households (idempotent). Optional invite afterwards.
+ * Do NOT call before the user chooses "start a new household" on OB1 (C039).
  */
 export async function ensureHouseholdAlways(opts: {
   userId: string;
@@ -166,7 +166,7 @@ export type BootstrapResult = {
   skipped: boolean;
 };
 
-/** OB2: call bootstrap only on create; skip is client-side only. */
+/** OB3: call bootstrap only on create; skip is client-side only. */
 export async function bootstrapStarterBudgets(opts: {
   userId: string;
   action: 'create' | 'skip';
@@ -194,7 +194,7 @@ export type CompleteOnboardingResult = {
 };
 
 /**
- * OB4 finish: POST complete, then persist flag from response and/or GET /auth/users/me
+ * OB5 finish: POST complete, then persist flag from response and/or GET /auth/users/me
  * so cold start does not bounce back into the wizard.
  */
 export async function completeOnboardingAndPersist(opts: {

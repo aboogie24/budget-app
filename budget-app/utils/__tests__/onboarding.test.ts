@@ -13,11 +13,11 @@ import {
 } from '../onboarding';
 
 describe('C026 onboarding helpers', () => {
-  it('uses a 5-step wizard (OB0–OB4)', () => {
-    expect(TOTAL_ONBOARDING_STEPS).toBe(5);
+  it('uses a 6-step wizard (OB0–OB5, with join-or-start)', () => {
+    expect(TOTAL_ONBOARDING_STEPS).toBe(6);
   });
 
-  describe('household always (OB1)', () => {
+  describe('household always (OB2 after join-or-start)', () => {
     it('always POSTs /auth/households even without invite', async () => {
       const post = jest.fn().mockResolvedValue({ household_id: 'hh-1', created: true });
       const result = await ensureHouseholdAlways({
