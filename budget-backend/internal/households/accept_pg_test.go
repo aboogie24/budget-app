@@ -5,6 +5,7 @@ package households
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -162,42 +163,61 @@ func TestPG_ReAcceptAfterSuccess(t *testing.T) {
 	}
 }
 
+// outcome renders an AcceptInvite result as "<http status>:<detail>" (5xx = server error).
+func outcome(r *AcceptResult, c *AcceptConflict, e error) string {
+	switch {
+	case e != nil:
+		return fmt.Sprintf("%d:%v", StatusForAcceptError(e), e)
+	case c != nil:
+		return "409:" + c.Code
+	default:
+		return "200:" + r.Action
+	}
+}
+
+func is5xx(s string) bool { return strings.HasPrefix(s, "5") }
+
 func TestPG_ParallelDoubleAccept(t *testing.T) {
 	db := openPG(t)
-	f := setupPG(t, db)
-	var wg sync.WaitGroup
-	out := make([]string, 2)
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			r, c, e := AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B})
-			switch {
-			case e != nil:
-				out[i] = "err:" + e.Error()
-			case c != nil:
-				out[i] = "409:" + c.Code
-			default:
-				out[i] = "200:" + r.Action
-			}
-		}(i)
-	}
-	wg.Wait()
-	ok := 0
-	for _, s := range out {
-		if s == "200:discard_solo" || s == "200:already_member" {
-			ok++
+	for iter := 0; iter < 10; iter++ {
+		f := setupPG(t, db)
+		var wg sync.WaitGroup
+		out := make([]string, 2)
+		for i := 0; i < 2; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				out[i] = outcome(AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B}))
+			}(i)
 		}
-	}
-	if ok != 2 {
-		t.Fatalf("results=%v want both 200", out)
+		wg.Wait()
+		for _, s := range out {
+			if is5xx(s) {
+				t.Fatalf("iter %d: 5xx in results=%v", iter, out)
+			}
+		}
+		// Spec: one wins (discard_solo), the other is idempotent already_member.
+		won, idem := 0, 0
+		for _, s := range out {
+			switch s {
+			case "200:discard_solo":
+				won++
+			case "200:already_member":
+				idem++
+			}
+		}
+		if won != 1 || idem != 1 {
+			t.Fatalf("iter %d: results=%v want one discard_solo + one already_member", iter, out)
+		}
+		if n := cntPG(t, db, `SELECT COUNT(*) FROM household_members WHERE user_id=$1 AND household_id=$2`, f.B, f.hhA); n != 1 {
+			t.Fatalf("iter %d: membership rows on target=%d", iter, n)
+		}
 	}
 }
 
 func TestPG_CrossInviteNoDeadlock(t *testing.T) {
 	db := openPG(t)
-	deadlocks := 0
-	for iter := 0; iter < 10; iter++ {
+	for iter := 0; iter < 20; iter++ {
 		f := setupPG(t, db)
 		code2 := nid()
 		if _, err := db.Exec(`INSERT INTO household_invites(code,household_id,created_by,expires_at,invitee_email) VALUES($1,$2,$3,$4,$5)`,
@@ -205,19 +225,134 @@ func TestPG_CrossInviteNoDeadlock(t *testing.T) {
 			t.Fatal(err)
 		}
 		var wg sync.WaitGroup
-		var e1, e2 error
+		out := make([]string, 2)
 		wg.Add(2)
-		go func() { defer wg.Done(); _, _, e1 = AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B}) }()
-		go func() { defer wg.Done(); _, _, e2 = AcceptInvite(db, AcceptRequest{Code: code2, UserID: f.A}) }()
+		go func() { defer wg.Done(); out[0] = outcome(AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B})) }()
+		go func() { defer wg.Done(); out[1] = outcome(AcceptInvite(db, AcceptRequest{Code: code2, UserID: f.A})) }()
 		wg.Wait()
-		for _, e := range []error{e1, e2} {
-			if e != nil && (containsFold(e.Error(), "deadlock") || containsFold(e.Error(), "40P01")) {
-				deadlocks++
+		ok := 0
+		for _, s := range out {
+			if is5xx(s) || containsFold(s, "deadlock") || containsFold(s, "40P01") {
+				t.Fatalf("iter %d: server error in results=%v", iter, out)
+			}
+			if strings.HasPrefix(s, "200:") {
+				ok++
 			}
 		}
+		// First commit wins; the other invite died with the deleted solo → 400 invalid.
+		if ok != 1 {
+			t.Fatalf("iter %d: results=%v want exactly one 200", iter, out)
+		}
 	}
-	if deadlocks > 0 {
-		t.Fatalf("deadlocks=%d", deadlocks)
+}
+
+// N2: an unknown code is 400 even for a user who is a member of some household.
+func TestPG_UnknownCodeForMember400(t *testing.T) {
+	db := openPG(t)
+	f := setupPG(t, db)
+	if _, _, err := AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B}); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{nid(), "not-a-uuid", "' OR 1=1 --"} {
+		got := outcome(AcceptInvite(db, AcceptRequest{Code: code, UserID: f.B}))
+		if !strings.HasPrefix(got, "400:") {
+			t.Fatalf("code %q: got %s want 400", code, got)
+		}
+	}
+	// Owner A is a member of hhA too; a random code must not echo already_member.
+	if got := outcome(AcceptInvite(db, AcceptRequest{Code: nid(), UserID: f.A})); !strings.HasPrefix(got, "400:") {
+		t.Fatalf("owner random code: %s", got)
+	}
+}
+
+// N2: a consumed (tombstoned) code only yields already_member for members of its household.
+func TestPG_ConsumedCodeOtherUser400(t *testing.T) {
+	db := openPG(t)
+	f := setupPG(t, db)
+	if _, _, err := AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B}); err != nil {
+		t.Fatal(err)
+	}
+	if cntPG(t, db, `SELECT COUNT(*) FROM household_invites WHERE code=$1 AND accepted_at IS NOT NULL AND accepted_by=$2`, f.code, f.B) != 1 {
+		t.Fatal("consumed invite should be tombstoned with accepted_at/accepted_by")
+	}
+	// Third user C with their own solo (not a member of hhA) replays B's consumed code.
+	c, hhC := nid(), nid()
+	if _, err := db.Exec(`INSERT INTO users(id,email) VALUES($1,$2)`, c, c+"@c.x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO households(id,name) VALUES($1,'C')`, hhC); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO household_members(household_id,user_id,role) VALUES($1,$2,'owner')`, hhC, c); err != nil {
+		t.Fatal(err)
+	}
+	if got := outcome(AcceptInvite(db, AcceptRequest{Code: f.code, UserID: c})); !strings.HasPrefix(got, "400:") {
+		t.Fatalf("replayed consumed code by non-member: %s want 400", got)
+	}
+	if cntPG(t, db, `SELECT COUNT(*) FROM household_members WHERE user_id=$1 AND household_id=$2`, c, f.hhA) != 0 {
+		t.Fatal("non-member must not join via consumed code")
+	}
+}
+
+// N3: memories and mapping rules are real data → confirm_migrate, never silent cascade.
+func TestPG_MemoriesAndRulesRequireConfirm(t *testing.T) {
+	db := openPG(t)
+	f := setupPG(t, db)
+	var sysCat string
+	if err := db.QueryRow(`SELECT id FROM categories WHERE household_id IS NULL AND user_id IS NULL LIMIT 1`).Scan(&sysCat); err != nil {
+		sysCat = nid()
+		if _, err := db.Exec(`INSERT INTO categories(id,name,type) VALUES($1,'SysCat','expense')`, sysCat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO advisor_memories(household_id,user_id,scope,fact) VALUES($1,$2,'shared','Saving for a house')`, f.hhB, f.B); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO category_mapping_rules(user_id,household_id,rule_type,match_value,category_id) VALUES($1,$2,'merchant','starbucks',$3)`, f.B, f.hhB, sysCat); err != nil {
+		t.Fatal(err)
+	}
+	pv, err := BuildAcceptPreview(db, f.B, f.hhA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv.Action != ActionMigrateSolo || pv.Blockers.AdvisorMemories != 1 || pv.Blockers.CategoryMappingRules != 1 {
+		t.Fatalf("preview=%+v", pv)
+	}
+	if got := outcome(AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B})); got != "409:migrate_confirmation_required" {
+		t.Fatalf("without confirm: %s", got)
+	}
+	if got := outcome(AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B, ConfirmMigrate: true})); got != "200:migrate_solo" {
+		t.Fatalf("with confirm: %s", got)
+	}
+	if cntPG(t, db, `SELECT COUNT(*) FROM advisor_memories WHERE user_id=$1 AND household_id=$2`, f.B, f.hhA) != 1 ||
+		cntPG(t, db, `SELECT COUNT(*) FROM category_mapping_rules WHERE user_id=$1 AND household_id=$2`, f.B, f.hhA) != 1 {
+		t.Fatal("memories/rules should be on target after confirmed migrate")
+	}
+}
+
+// N4: migrate keeps alerts on real (non-starter) budgets and re-points them.
+func TestPG_MigrateKeepsRealBudgetAlert(t *testing.T) {
+	db := openPG(t)
+	f := setupPG(t, db)
+	var starter string
+	if err := db.QueryRow(`SELECT id FROM budgets WHERE user_id=$1`, f.B).Scan(&starter); err != nil {
+		t.Fatal(err)
+	}
+	vacation := nid()
+	if _, err := db.Exec(`INSERT INTO budgets(id,user_id,household_id,name,amount,type) VALUES($1,$2,$3,'Vacation fund',500,'expense')`, vacation, f.B, f.hhB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO spending_alerts(household_id,budget_id) VALUES($1,$2),($1,$3)`, f.hhB, vacation, starter); err != nil {
+		t.Fatal(err)
+	}
+	if got := outcome(AcceptInvite(db, AcceptRequest{Code: f.code, UserID: f.B, ConfirmMigrate: true})); got != "200:migrate_solo" {
+		t.Fatalf("got %s", got)
+	}
+	if n := cntPG(t, db, `SELECT COUNT(*) FROM spending_alerts WHERE budget_id=$1 AND household_id=$2`, vacation, f.hhA); n != 1 {
+		t.Fatalf("real-budget alert on target=%d want 1", n)
+	}
+	if n := cntPG(t, db, `SELECT COUNT(*) FROM spending_alerts WHERE budget_id=$1`, starter); n != 0 {
+		t.Fatalf("starter alert should be discarded, got %d", n)
 	}
 }
 

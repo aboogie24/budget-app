@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/internal/entitlements"
+	"github.com/gofrs/uuid"
 )
 
 // Accept errors / outcomes.
@@ -63,12 +64,99 @@ func alreadyMemberResult(tx *sql.Tx, householdID string) (*AcceptResult, *Accept
 	}, nil, nil
 }
 
-// AcceptInvite runs the full C038 accept flow in one transaction.
-func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict, error) {
-	if req.Code == "" || req.UserID == "" {
+// errAcceptRestart signals that state read before the household locks went stale
+// (a concurrent accept committed first). The whole accept is retried from scratch.
+var errAcceptRestart = errors.New("accept: concurrent update, restart")
+
+// maxAcceptAttempts bounds restarts after ErrHouseholdGone / stale membership (N5).
+const maxAcceptAttempts = 3
+
+// StatusForAcceptError maps an AcceptInvite error to an HTTP status (400/403/500).
+func StatusForAcceptError(err error) int {
+	switch {
+	case errors.Is(err, ErrInvalidInvite), errors.Is(err, ErrInviteExpired), errors.Is(err, ErrUserNotFound):
+		return 400
+	case errors.Is(err, ErrInviteWrongEmail):
+		return 403
+	default:
+		return 500
+	}
+}
+
+// inviteRow is a household_invites row as seen by accept.
+type inviteRow struct {
+	HouseholdID  string
+	Expires      time.Time
+	InviteeEmail sql.NullString
+	AcceptedAt   sql.NullTime
+}
+
+func readInvite(tx *sql.Tx, code string, forUpdate bool) (inviteRow, error) {
+	var inv inviteRow
+	var expires sql.NullTime
+	query := `
+		SELECT household_id, expires_at, invitee_email, accepted_at
+		FROM household_invites
+		WHERE code = $1`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	err := tx.QueryRow(query, code).Scan(&inv.HouseholdID, &expires, &inv.InviteeEmail, &inv.AcceptedAt)
+	if expires.Valid {
+		inv.Expires = expires.Time
+	}
+	return inv, err
+}
+
+// isMemberOf reports whether userID is a member of householdID.
+func isMemberOf(q Querier, userID, householdID string) (bool, error) {
+	var ok bool
+	err := q.QueryRow(`
+		SELECT EXISTS(SELECT 1 FROM household_members WHERE user_id = $1 AND household_id = $2)
+	`, userID, householdID).Scan(&ok)
+	return ok, err
+}
+
+// resolveConsumedInvite answers a re-accept of an already-accepted (tombstoned) invite:
+// 200 already_member only if the user is a member of that invite's household, else 400.
+func resolveConsumedInvite(tx *sql.Tx, userID string, inv inviteRow) (*AcceptResult, *AcceptConflict, error) {
+	ok, err := isMemberOf(tx, userID, inv.HouseholdID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
 		return nil, nil, ErrInvalidInvite
 	}
+	return alreadyMemberResult(tx, inv.HouseholdID)
+}
 
+// AcceptInvite runs the full C038 accept flow in one transaction. If a concurrent accept
+// commits first (household row deleted under us, or membership moved), the flow restarts
+// with fresh reads instead of surfacing a 500 (N5).
+func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict, error) {
+	if strings.TrimSpace(req.Code) == "" || req.UserID == "" {
+		return nil, nil, ErrInvalidInvite
+	}
+	// N2: household_invites.code is UUID; a non-UUID code is simply an invalid invite (400),
+	// never a pq "invalid input syntax for type uuid" 500.
+	parsed, err := uuid.FromString(strings.TrimSpace(req.Code))
+	if err != nil {
+		return nil, nil, ErrInvalidInvite
+	}
+	req.Code = parsed.String()
+
+	for attempt := 1; attempt <= maxAcceptAttempts; attempt++ {
+		res, conflict, err := acceptOnce(db, req)
+		if errors.Is(err, errAcceptRestart) {
+			continue
+		}
+		return res, conflict, err
+	}
+	// Still racing after several fresh attempts: the invite is no longer acceptable as-is.
+	return nil, nil, ErrInvalidInvite
+}
+
+func acceptOnce(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, nil, err
@@ -76,28 +164,19 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 	defer func() { _ = tx.Rollback() }()
 
 	// Soft-read invite (no lock yet) so we can lock households in UUID order first (M5).
-	var targetID string
-	var expires time.Time
-	var inviteeEmail sql.NullString
-	err = tx.QueryRow(`
-		SELECT household_id, expires_at, invitee_email
-		FROM household_invites
-		WHERE code = $1
-	`, req.Code).Scan(&targetID, &expires, &inviteeEmail)
+	inv, err := readInvite(tx, req.Code, false)
 	if err == sql.ErrNoRows {
-		// M4: invite missing/consumed — idempotent if user is already a member (role=member).
-		mem, mErr := LookupMembership(tx, req.UserID, true)
-		if mErr != nil {
-			return nil, nil, mErr
-		}
-		if mem.HouseholdID != "" && strings.EqualFold(mem.Role, "member") {
-			return alreadyMemberResult(tx, mem.HouseholdID)
-		}
+		// N2: unknown, revoked, or cascade-deleted code → 400. Never infer already_member
+		// from whatever household the user happens to be in.
 		return nil, nil, ErrInvalidInvite
 	}
 	if err != nil {
 		return nil, nil, err
 	}
+	if inv.AcceptedAt.Valid {
+		return resolveConsumedInvite(tx, req.UserID, inv)
+	}
+	targetID := inv.HouseholdID
 
 	// Peek membership so we can lock solo + target in fixed order before invite FOR UPDATE.
 	memPeek, err := LookupMembership(tx, req.UserID, false)
@@ -105,36 +184,32 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 		return nil, nil, err
 	}
 	if err := LockHouseholdsForUpdate(tx, targetID, memPeek.HouseholdID); err != nil {
+		if errors.Is(err, ErrHouseholdGone) {
+			// A concurrent accept deleted the solo (or the target went away). Re-read all.
+			return nil, nil, errAcceptRestart
+		}
 		return nil, nil, err
 	}
 
 	// Re-lock invite row now that household locks are held.
-	err = tx.QueryRow(`
-		SELECT household_id, expires_at, invitee_email
-		FROM household_invites
-		WHERE code = $1
-		FOR UPDATE
-	`, req.Code).Scan(&targetID, &expires, &inviteeEmail)
+	inv, err = readInvite(tx, req.Code, true)
 	if err == sql.ErrNoRows {
-		// Race: invite consumed between soft-read and lock (parallel double-accept).
-		mem, mErr := LookupMembership(tx, req.UserID, true)
-		if mErr != nil {
-			return nil, nil, mErr
-		}
-		if mem.HouseholdID != "" && strings.EqualFold(mem.Role, "member") {
-			return alreadyMemberResult(tx, mem.HouseholdID)
-		}
 		return nil, nil, ErrInvalidInvite
 	}
 	if err != nil {
 		return nil, nil, err
 	}
-	if !expires.IsZero() && expires.Before(time.Now()) {
+	if inv.AcceptedAt.Valid {
+		// Race: invite consumed between soft-read and lock (parallel double-accept).
+		return resolveConsumedInvite(tx, req.UserID, inv)
+	}
+	targetID = inv.HouseholdID
+	if !inv.Expires.IsZero() && inv.Expires.Before(time.Now()) {
 		return nil, nil, ErrInviteExpired
 	}
 
 	// Email match when set
-	if inviteeEmail.Valid && strings.TrimSpace(inviteeEmail.String) != "" {
+	if inv.InviteeEmail.Valid && strings.TrimSpace(inv.InviteeEmail.String) != "" {
 		var userEmail string
 		if err := tx.QueryRow(`SELECT email FROM users WHERE id = $1`, req.UserID).Scan(&userEmail); err != nil {
 			if err == sql.ErrNoRows {
@@ -142,7 +217,7 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 			}
 			return nil, nil, err
 		}
-		if strings.ToLower(userEmail) != strings.ToLower(inviteeEmail.String) {
+		if strings.ToLower(userEmail) != strings.ToLower(inv.InviteeEmail.String) {
 			return nil, nil, ErrInviteWrongEmail
 		}
 	}
@@ -151,10 +226,14 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 	if err != nil {
 		return nil, nil, err
 	}
+	if mem.HouseholdID != memPeek.HouseholdID {
+		// Membership moved after the unlocked peek: our household locks cover the wrong rows.
+		return nil, nil, errAcceptRestart
+	}
 
 	// Already on target — idempotent
 	if mem.HouseholdID != "" && mem.HouseholdID == targetID {
-		if err := DeleteInviteByCode(tx, req.Code); err != nil {
+		if err := ConsumeInvite(tx, req.Code, req.UserID); err != nil {
 			return nil, nil, err
 		}
 		return alreadyMemberResult(tx, targetID)
@@ -246,8 +325,11 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 			return nil, nil, err
 		}
 	case ActionDiscardSolo:
-		if err := DiscardSpendingAlertsForStarters(tx, req.UserID, soloID); err != nil {
+		if err := DiscardSpendingAlertsForStarters(tx, req.UserID); err != nil {
 			return nil, nil, fmt.Errorf("discard spending alerts: %w", err)
+		}
+		if err := DiscardSoloSpendingAlerts(tx, soloID); err != nil {
+			return nil, nil, fmt.Errorf("discard solo spending alerts: %w", err)
 		}
 		if err := DiscardStarterBudgets(tx, req.UserID); err != nil {
 			return nil, nil, fmt.Errorf("discard starters: %w", err)
@@ -265,7 +347,8 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 			return nil, nil, err
 		}
 	case ActionMigrateSolo:
-		if err := DiscardSpendingAlertsForStarters(tx, req.UserID, soloID); err != nil {
+		// N4: only starter-budget alerts; real-budget alerts are re-pointed by the migrate.
+		if err := DiscardSpendingAlertsForStarters(tx, req.UserID); err != nil {
 			return nil, nil, fmt.Errorf("discard spending alerts: %w", err)
 		}
 		if err := DiscardStarterBudgets(tx, req.UserID); err != nil {
@@ -295,7 +378,7 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 		}
 	}
 
-	if err := DeleteInviteByCode(tx, req.Code); err != nil {
+	if err := ConsumeInvite(tx, req.Code, req.UserID); err != nil {
 		return nil, nil, err
 	}
 

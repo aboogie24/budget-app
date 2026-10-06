@@ -43,6 +43,7 @@ func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
 		JOIN households h ON h.id = i.household_id
 		LEFT JOIN users u ON u.id = i.created_by
 		WHERE LOWER(TRIM(i.invitee_email)) = LOWER(TRIM($1))
+		  AND i.accepted_at IS NULL
 		  AND (i.expires_at IS NULL OR i.expires_at > NOW())
 	`, email)
 	if err != nil {
@@ -91,14 +92,13 @@ func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /auth/households/summary
-// Returns combined financial summary for all members of a household
-// Accepts either user_id (resolves household) or household_id directly
+// Returns combined financial summary for all members of the caller's household.
+// C038 N1: user_id (optional) must match the session/JWT user; household_id (optional)
+// must be a household the caller belongs to (else 403).
 func GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {
 	householdID := r.URL.Query().Get("household_id")
-	userID := r.URL.Query().Get("user_id")
-
-	if householdID == "" && userID == "" {
-		http.Error(w, `{"error": "Missing household_id or user_id"}`, http.StatusBadRequest)
+	userID, ok := resolveSessionActor(w, r, r.URL.Query().Get("user_id"))
+	if !ok {
 		return
 	}
 
@@ -109,8 +109,15 @@ func GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	// If only user_id provided, resolve the household_id
-	if householdID == "" && userID != "" {
+	if householdID != "" {
+		if _, err := uuid.FromString(householdID); err != nil {
+			http.Error(w, `{"error": "Invalid household_id"}`, http.StatusBadRequest)
+			return
+		}
+		if !requireHouseholdMember(w, client.Raw(), householdID, userID) {
+			return
+		}
+	} else {
 		resolved := db.ResolveHouseholdID(client.Raw(), userID)
 		if resolved == "" {
 			// User has no household; return personal-only summary

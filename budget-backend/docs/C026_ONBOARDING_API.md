@@ -89,13 +89,15 @@ After OB1, every user has a household. `POST /auth/households/accept` therefore 
 
 Body: `{ "code", "user_id"?, "confirm_migrate"?: boolean }`
 
-**Auth binding (C038 / helm):** for `POST /households/invite`, `POST /households/accept`, and `GET /households/invites`, the actor `user_id` comes from the authenticated session/JWT only. A body/query `user_id` that does not match the authenticated user returns **403**. Invitee email on accept must still match the authenticated user when set on the invite.
+**Auth binding (C038 / helm):** for every household-scoped route — `POST /households`, `GET /households/me`, `GET /households/summary`, `POST /households/invite`, `POST /households/accept`, `GET /households/invites`, `GET /entitlements`, `GET|POST /sharing-preferences`, `POST /budgets/bootstrap` — the actor `user_id` comes from the authenticated session/JWT only (`user_id` in body/query is optional). A body/query `user_id` that does not match the authenticated user returns **403**. A client-supplied `household_id` (invite, summary, sharing-preferences) must be a household the caller belongs to, else **403** (invite: an unknown/stale `household_id` falls back to the caller's own household). Invitee email on accept must still match the authenticated user when set on the invite.
+
+**Invite codes:** consumed invites are kept as tombstones (`accepted_at`, `accepted_by`; migration `20261005220000`) and hidden from the invites list. Re-accepting a consumed code returns 200 `already_member` only if the caller is a member of *that invite's* household; unknown, revoked, or non-UUID codes return **400**. Concurrent accepts that lose a race restart once with fresh reads (never 5xx).
 
 | Current state | Behavior |
 |---|---|
 | No membership | Join as before (200) |
 | Already on target | Idempotent 200 (`already_member: true`) |
-| Empty solo (starter budgets only / no txns, banks, debts, savings, bills, properties) | Discard starters, hard-delete solo, join target as `member` (200). `confirm_migrate` ignored. |
+| Empty solo (starter budgets only — no txns, banks, budgets, debts, savings, bills, properties, custom categories, priorities, trips, plans, advisor memories, category mapping rules, holdings, liabilities) | Discard starters, hard-delete solo, join target as `member` (200). `confirm_migrate` ignored. |
 | Non-empty solo without `confirm_migrate: true` | **409** `migrate_confirmation_required` + `accept_preview` |
 | Non-empty solo with `confirm_migrate: true` | Migrate `household_id` on rows → target, move membership, delete solo (200) |
 | Free+Free bank-cap would exceed 1 after merge | **409** `banks_limit_conflict` (even with confirm) |

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -16,11 +18,11 @@ var householdDBFactory = func() (db.DBTX, error) {
 	return db.New()
 }
 
-// GET /households/me?user_id=
+// GET /households/me[?user_id=]
+// C038 N1: always the authenticated user's household; user_id (optional, legacy) must match.
 func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
+	userID, ok := resolveSessionActor(w, r, r.URL.Query().Get("user_id"))
+	if !ok {
 		return
 	}
 
@@ -88,15 +90,22 @@ func GetHouseholdForUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /households
+// C038 N1: creates (or returns) the authenticated user's household; body user_id is
+// optional and must match the session/JWT user.
 func CreateHousehold(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name   string `json:"name"`
 		UserID string `json:"user_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.UserID == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
 		return
 	}
+	actor, ok := resolveSessionActor(w, r, body.UserID)
+	if !ok {
+		return
+	}
+	body.UserID = actor
 
 	client, err := householdDBFactory()
 	if err != nil {

@@ -46,10 +46,12 @@ func BootstrapBudgets(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.UserID == "" {
-		validationError(w, "user_id is required")
+	// C038 N1: write only into the authenticated user's household; body user_id must match.
+	actor, ok := resolveSessionActor(w, r, req.UserID)
+	if !ok {
 		return
 	}
+	req.UserID = actor
 
 	hasIncome := req.Income != nil && *req.Income > 0
 	expenses := make([]bootstrapExpenseItem, 0, len(req.Expenses))

@@ -1,25 +1,36 @@
 package households
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/lib/pq"
 )
 
-// DiscardSpendingAlertsForStarters removes alerts tied to starter budgets or the solo household
-// before starter budgets / the solo household are deleted (spending_alerts has no ON DELETE CASCADE).
-func DiscardSpendingAlertsForStarters(q Querier, userID, soloID string) error {
+// DiscardSpendingAlertsForStarters removes alerts tied to the user's starter budgets only
+// (spending_alerts.budget_id has no ON DELETE CASCADE, so they must go before the budgets).
+// N4: never delete by household here — on the migrate path the solo's real-budget alerts
+// (e.g. "Vacation fund") must survive and be re-pointed by MigrateSoloToHousehold.
+func DiscardSpendingAlertsForStarters(q Querier, userID string) error {
 	_, err := q.Exec(`
 		DELETE FROM spending_alerts
-		WHERE household_id = $1
-		   OR budget_id IN (
+		WHERE budget_id IN (
 		        SELECT id FROM budgets
-		        WHERE user_id = $2
+		        WHERE user_id = $1
 		          AND category_id IS NULL
-		          AND LOWER(TRIM(name)) = ANY($3)
+		          AND LOWER(TRIM(name)) = ANY($2)
 		   )
-	`, soloID, userID, pq.Array(StarterBudgetNameList()))
+	`, userID, pq.Array(StarterBudgetNameList()))
+	return err
+}
+
+// DiscardSoloSpendingAlerts removes any remaining alerts scoped to the solo household.
+// Discard path only (solo is empty, so these can only reference starter/system budgets);
+// required because spending_alerts.household_id has no ON DELETE CASCADE.
+func DiscardSoloSpendingAlerts(q Querier, soloID string) error {
+	_, err := q.Exec(`DELETE FROM spending_alerts WHERE household_id = $1`, soloID)
 	return err
 }
 
@@ -120,6 +131,10 @@ func MigrateSoloToHousehold(q Querier, userID, soloID, targetID string) error {
 	return nil
 }
 
+// ErrHouseholdGone is returned by LockHouseholdsForUpdate when a household row no longer
+// exists (deleted by a concurrent, already-committed accept). Callers restart the accept.
+var ErrHouseholdGone = errors.New("household no longer exists")
+
 // LockHouseholdsForUpdate locks household rows in ascending UUID order to avoid deadlocks.
 func LockHouseholdsForUpdate(q Querier, ids ...string) error {
 	seen := map[string]struct{}{}
@@ -138,6 +153,9 @@ func LockHouseholdsForUpdate(q Querier, ids ...string) error {
 	for _, id := range uniq {
 		var locked string
 		if err := q.QueryRow(`SELECT id FROM households WHERE id = $1 FOR UPDATE`, id).Scan(&locked); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("lock household %s: %w", id, ErrHouseholdGone)
+			}
 			return fmt.Errorf("lock household %s: %w", id, err)
 		}
 	}
@@ -187,8 +205,14 @@ func JoinAsMember(q Querier, userID, targetID string) error {
 	return err
 }
 
-// DeleteInviteByCode removes the consumed invite.
-func DeleteInviteByCode(q Querier, code string) error {
-	_, err := q.Exec(`DELETE FROM household_invites WHERE code = $1`, code)
+// ConsumeInvite tombstones the invite (accepted_at/accepted_by) instead of deleting it, so a
+// later re-accept of the same code can be answered idempotently only for that invite's
+// household (N2). Tombstones are removed with their household (ON DELETE CASCADE).
+func ConsumeInvite(q Querier, code, userID string) error {
+	_, err := q.Exec(`
+		UPDATE household_invites
+		SET accepted_at = NOW(), accepted_by = $2
+		WHERE code = $1
+	`, code, userID)
 	return err
 }

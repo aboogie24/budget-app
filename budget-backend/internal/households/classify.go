@@ -19,13 +19,21 @@ type DataBlockers struct {
 	FinancialPriorities int `json:"financial_priorities"`
 	Trips               int `json:"trips"`
 	FinancialPlans      int `json:"financial_plans"`
+	// N3: these would otherwise be silently cascaded away on discard; moving them into
+	// the partner household is sharing, so they require confirm_migrate.
+	AdvisorMemories      int `json:"advisor_memories"`
+	CategoryMappingRules int `json:"category_mapping_rules"`
+	// RESTRICT FKs to households: a manual row (no linked_account_id) would 500 on discard.
+	InvestmentHoldings int `json:"investment_holdings"`
+	Liabilities        int `json:"liabilities"`
 }
 
 // Total returns the sum of blocker counts (starters excluded).
 func (b DataBlockers) Total() int {
 	return b.LinkedAccounts + b.Transactions + b.NonStarterBudgets +
 		b.Debts + b.SavingsGoals + b.Bills + b.Properties +
-		b.Categories + b.FinancialPriorities + b.Trips + b.FinancialPlans
+		b.Categories + b.FinancialPriorities + b.Trips + b.FinancialPlans +
+		b.AdvisorMemories + b.CategoryMappingRules + b.InvestmentHoldings + b.Liabilities
 }
 
 // IsEmpty is true when there is no real user data (starter budgets alone OK).
@@ -114,6 +122,18 @@ func ClassifySoloEmptiness(q Querier, userID, soloID string) (DataBlockers, erro
 		{&b.FinancialPlans, `
 			SELECT COUNT(*) FROM financial_plans
 			WHERE household_id = $1 OR created_by = $2`, []any{soloID, userID}},
+		{&b.AdvisorMemories, `
+			SELECT COUNT(*) FROM advisor_memories
+			WHERE user_id = $1 OR household_id = $2`, []any{userID, soloID}},
+		{&b.CategoryMappingRules, `
+			SELECT COUNT(*) FROM category_mapping_rules
+			WHERE user_id = $1 OR household_id = $2`, []any{userID, soloID}},
+		{&b.InvestmentHoldings, `
+			SELECT COUNT(*) FROM investment_holdings
+			WHERE user_id = $1 OR household_id = $2`, []any{userID, soloID}},
+		{&b.Liabilities, `
+			SELECT COUNT(*) FROM liabilities
+			WHERE user_id = $1 OR household_id = $2`, []any{userID, soloID}},
 	}
 	for _, cq := range queries {
 		if err := q.QueryRow(cq.sql, cq.args...).Scan(cq.dest); err != nil {

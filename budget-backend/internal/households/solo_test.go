@@ -79,7 +79,7 @@ func TestClassifySoloEmptiness_Empty(t *testing.T) {
 	defer db.Close()
 
 	userID, soloID := "u1", "solo1"
-	for i := 0; i < 11; i++ {
+	for i := 0; i < emptinessQueryCount; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -105,7 +105,7 @@ func TestClassifySoloEmptiness_HasTxn(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM transactions`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	for i := 0; i < 10; i++ {
+	for i := 0; i < emptinessQueryCount-1; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -119,8 +119,11 @@ func TestClassifySoloEmptiness_HasTxn(t *testing.T) {
 	}
 }
 
+// emptinessQueryCount is the number of COUNT(*) queries ClassifySoloEmptiness issues.
+const emptinessQueryCount = 15
+
 func expectEmptinessAllZero(mock sqlmock.Sqlmock) {
-	for i := 0; i < 11; i++ {
+	for i := 0; i < emptinessQueryCount; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -131,7 +134,7 @@ func expectEmptinessWithBanks(mock sqlmock.Sqlmock, banks int) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM linked_accounts`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(banks))
-	for i := 0; i < 9; i++ {
+	for i := 0; i < emptinessQueryCount-2; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -140,7 +143,7 @@ func expectEmptinessWithBanks(mock sqlmock.Sqlmock, banks int) {
 func expectEmptinessWithTxns(mock sqlmock.Sqlmock, txns int) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM transactions`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(txns))
-	for i := 0; i < 10; i++ {
+	for i := 0; i < emptinessQueryCount-1; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -326,8 +329,8 @@ func expectAcceptInviteLockSequenceOpts(mock sqlmock.Sqlmock, code, targetID, us
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
 		WithArgs(code).
-		WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-			AddRow(targetID, expires, inviteeEmail))
+		WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email", "accepted_at"}).
+			AddRow(targetID, expires, inviteeEmail, nil))
 	if memHH == "" {
 		mock.ExpectQuery(`SELECT household_id`).
 			WithArgs(userID).
@@ -344,8 +347,8 @@ func expectAcceptInviteLockSequenceOpts(mock sqlmock.Sqlmock, code, targetID, us
 	}
 	mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
 		WithArgs(code).
-		WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-			AddRow(targetID, expires, inviteeEmail))
+		WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email", "accepted_at"}).
+			AddRow(targetID, expires, inviteeEmail, nil))
 	if !lockMember {
 		return
 	}
@@ -409,7 +412,11 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectQuery(`SELECT COALESCE\(plan`).WithArgs(targetID).
 					WillReturnRows(sqlmock.NewRows([]string{"plan"}).AddRow("free"))
 				expectEmptinessAllZero(mock)
-				mock.ExpectExec(`DELETE FROM spending_alerts`).
+				mock.ExpectExec(`DELETE FROM spending_alerts\s+WHERE budget_id IN`).
+					WithArgs(userID, pq.Array(StarterBudgetNameList())).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`DELETE FROM spending_alerts WHERE household_id = \$1`).
+					WithArgs(soloID).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`DELETE FROM budgets`).
 					WithArgs(userID, pq.Array(StarterBudgetNameList())).
@@ -429,8 +436,8 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectExec(`DELETE FROM households`).
 					WithArgs(soloID).
 					WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec(`DELETE FROM household_invites WHERE code`).
-					WithArgs(code).
+				mock.ExpectExec(`UPDATE household_invites\s+SET accepted_at = NOW\(\), accepted_by = \$2`).
+					WithArgs(code, userID).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit()
 			},
@@ -463,7 +470,9 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM linked_accounts la`).
 					WithArgs(targetID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-				mock.ExpectExec(`DELETE FROM spending_alerts`).
+				// N4: migrate deletes starter-budget alerts only (by budget id, never by household).
+				mock.ExpectExec(`DELETE FROM spending_alerts\s+WHERE budget_id IN`).
+					WithArgs(userID, pq.Array(StarterBudgetNameList())).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`DELETE FROM budgets`).
 					WillReturnResult(sqlmock.NewResult(0, 0))
@@ -485,7 +494,7 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectExec(`UPDATE households SET plan`).
 					WithArgs(entitlements.PlanPlus, targetID).
 					WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec(`DELETE FROM household_invites WHERE code`).
+				mock.ExpectExec(`UPDATE household_invites\s+SET accepted_at`).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit()
 			},
@@ -557,8 +566,8 @@ func TestAcceptInvite_Table(t *testing.T) {
 			name: "already_member",
 			setup: func(mock sqlmock.Sqlmock) {
 				expectAcceptInviteLockSequence(mock, code, targetID, userID, targetID, "member", 2, expires, nil)
-				mock.ExpectExec(`DELETE FROM household_invites WHERE code`).
-					WithArgs(code).
+				mock.ExpectExec(`UPDATE household_invites\s+SET accepted_at = NOW\(\), accepted_by = \$2`).
+					WithArgs(code, userID).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT COALESCE\(plan`).WithArgs(targetID).
 					WillReturnRows(sqlmock.NewRows([]string{"plan"}).AddRow("free"))
@@ -591,8 +600,17 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
 					WithArgs(code).
 					WillReturnError(sql.ErrNoRows)
-				mock.ExpectQuery(`SELECT household_id`).
-					WithArgs(userID).
+				mock.ExpectRollback()
+			},
+			want: want{errIs: ErrInvalidInvite},
+		},
+		{
+			// N2: unknown code must be 400 even for a user who is a member somewhere.
+			name: "unknown_code_member_elsewhere_400",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+					WithArgs(code).
 					WillReturnError(sql.ErrNoRows)
 				mock.ExpectRollback()
 			},
@@ -604,15 +622,63 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectBegin()
 				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
 					WithArgs(code).
-					WillReturnError(sql.ErrNoRows)
-				mock.ExpectQuery(`SELECT household_id`).
-					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(targetID, "member"))
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
-					WithArgs(targetID).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email", "accepted_at"}).
+						AddRow(targetID, expires, nil, time.Now()))
+				mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM household_members WHERE user_id = \$1 AND household_id = \$2\)`).
+					WithArgs(userID, targetID).
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 				mock.ExpectQuery(`SELECT COALESCE\(plan`).WithArgs(targetID).
 					WillReturnRows(sqlmock.NewRows([]string{"plan"}).AddRow("plus"))
+				mock.ExpectCommit()
+			},
+			want: want{statusOK: true, alreadyMember: true, action: ActionAlreadyMember},
+		},
+		{
+			// N2: a consumed code only proves membership of *its* household.
+			name: "reaccept_consumed_invite_not_member_400",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+					WithArgs(code).
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email", "accepted_at"}).
+						AddRow(targetID, expires, nil, time.Now()))
+				mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM household_members WHERE user_id = \$1 AND household_id = \$2\)`).
+					WithArgs(userID, targetID).
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				mock.ExpectRollback()
+			},
+			want: want{errIs: ErrInvalidInvite},
+		},
+		{
+			// N5: solo deleted by a concurrent committed accept → restart, then idempotent 200.
+			name: "lock_household_gone_restarts",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+					WithArgs(code).
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email", "accepted_at"}).
+						AddRow(targetID, expires, nil, nil))
+				mock.ExpectQuery(`SELECT household_id`).
+					WithArgs(userID).
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
+				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
+					WithArgs(soloID).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+				mock.ExpectQuery(`SELECT id FROM households WHERE id`).
+					WithArgs(soloID).
+					WillReturnError(sql.ErrNoRows)
+				mock.ExpectRollback()
+				// attempt 2: invite is now a tombstone; user is on target
+				mock.ExpectBegin()
+				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+					WithArgs(code).
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email", "accepted_at"}).
+						AddRow(targetID, expires, nil, time.Now()))
+				mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM household_members WHERE user_id = \$1 AND household_id = \$2\)`).
+					WithArgs(userID, targetID).
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				mock.ExpectQuery(`SELECT COALESCE\(plan`).WithArgs(targetID).
+					WillReturnRows(sqlmock.NewRows([]string{"plan"}).AddRow("free"))
 				mock.ExpectCommit()
 			},
 			want: want{statusOK: true, alreadyMember: true, action: ActionAlreadyMember},
@@ -689,6 +755,52 @@ func TestAcceptInvite_Table(t *testing.T) {
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// N2: a non-UUID code is rejected before touching the DB (400, never a pq 500).
+func TestAcceptInvite_NonUUIDCode(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _, err = AcceptInvite(db, AcceptRequest{Code: "not-a-uuid", UserID: "11111111-1111-1111-1111-111111111111"})
+	if !errors.Is(err, ErrInvalidInvite) {
+		t.Fatalf("err=%v want ErrInvalidInvite", err)
+	}
+	if StatusForAcceptError(err) != 400 {
+		t.Fatalf("status=%d want 400", StatusForAcceptError(err))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// N3: memories / mapping rules / manual holdings / liabilities make a solo non-empty.
+func TestClassifySoloEmptiness_MemoriesAndRulesBlock(t *testing.T) {
+	for _, table := range []string{"advisor_memories", "category_mapping_rules", "investment_holdings", "liabilities"} {
+		t.Run(table, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.MatchExpectationsInOrder(false)
+			mock.ExpectQuery(`SELECT COUNT\(\*\) FROM ` + table + `\s`).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			for i := 0; i < emptinessQueryCount-1; i++ {
+				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM (?:transactions|linked_accounts|budgets|debt_accounts|savings_goals|bills|properties|categories|financial_priorities|trips|financial_plans|advisor_memories|category_mapping_rules|investment_holdings|liabilities)\s`).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			}
+			b, err := ClassifySoloEmptiness(db, "u1", "solo1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if b.IsEmpty() {
+				t.Fatalf("%s row should make solo non-empty: %+v", table, b)
 			}
 		})
 	}

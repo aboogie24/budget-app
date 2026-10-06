@@ -10,24 +10,8 @@ import (
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/entitlements"
 	"github.com/aboogie/budget-backend/internal/households"
-	"github.com/aboogie/budget-backend/middleware"
 	"github.com/gofrs/uuid"
 )
-
-// resolveInviteActor binds household-invite routes to the authenticated session/JWT user.
-// Body/query user_id is never trusted: mismatch → 403; missing auth → 401.
-func resolveInviteActor(w http.ResponseWriter, r *http.Request, claimedUserID string) (string, bool) {
-	authUID := middleware.AuthenticatedUserID(r)
-	if authUID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return "", false
-	}
-	if claimedUserID != "" && claimedUserID != authUID {
-		http.Error(w, "user_id does not match authenticated user", http.StatusForbidden)
-		return "", false
-	}
-	return authUID, true
-}
 
 // POST /households/{id}/invites
 func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
@@ -66,14 +50,24 @@ func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	// Creator must already be in a household if none provided
+	// N1: the invite's household is the caller's own household. A client-supplied
+	// household_id is only honored if the caller is a member of it; if it names an existing
+	// household the caller does not belong to → 403. A stale/unknown id (e.g. a solo deleted
+	// by a C038 accept) falls back to the caller's session membership.
 	var householdUUID uuid.UUID
 	if hhID != "" {
-		parsed, err := uuid.FromString(hhID)
-		if err == nil {
+		if parsed, err := uuid.FromString(hhID); err == nil {
 			var exists bool
-			_ = client.Raw().QueryRow(`SELECT EXISTS(SELECT 1 FROM households WHERE id=$1)`, parsed).Scan(&exists)
+			if err := client.Raw().QueryRow(`SELECT EXISTS(SELECT 1 FROM households WHERE id=$1)`, parsed).Scan(&exists); err != nil {
+				log.Printf("CreateHouseholdInvite household lookup error: %v", err)
+				http.Error(w, "Failed to create invite", http.StatusInternalServerError)
+				return
+			}
 			if exists {
+				if !requireHouseholdMember(w, client.Raw(), parsed.String(), userID) {
+					log.Printf("CreateHouseholdInvite forbidden: user=%s not member of household=%s", userID, parsed)
+					return
+				}
 				householdUUID = parsed
 			}
 		}
@@ -215,6 +209,6 @@ func writeAcceptError(w http.ResponseWriter, err error) {
 		http.Error(w, "User not found", http.StatusBadRequest)
 	default:
 		log.Printf("AcceptHouseholdInvite: %v", err)
-		http.Error(w, "Failed to join household", http.StatusInternalServerError)
+		http.Error(w, "Failed to join household", households.StatusForAcceptError(err))
 	}
 }

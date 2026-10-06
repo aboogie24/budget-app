@@ -49,6 +49,9 @@ func TestCreateHouseholdInviteSuccess(t *testing.T) {
 		mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM households WHERE id=\$1\)`).
 			WithArgs("11111111-1111-1111-1111-111111111111").
 			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+		mock.ExpectQuery(`SELECT EXISTS\(\s*SELECT 1 FROM household_members WHERE household_id = \$1 AND user_id = \$2`).
+			WithArgs("11111111-1111-1111-1111-111111111111", "u1").
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 		mock.ExpectExec(`INSERT INTO household_invites`).
 			WithArgs(sqlmock.AnyArg(), "11111111-1111-1111-1111-111111111111", "u1", sqlmock.AnyArg(), "friend@example.com").
@@ -124,5 +127,51 @@ func TestCreateHouseholdInvite_UserIDMismatchForbidden(t *testing.T) {
 	CreateHouseholdInvite(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// C038 N1: caller may not invite into a household they do not belong to.
+func TestCreateHouseholdInvite_NonMemberHouseholdForbidden(t *testing.T) {
+	victimHH := "99999999-9999-9999-9999-999999999999"
+	body := `{"household_id":"` + victimHH + `","invitee_email":"attacker@example.com"}`
+	withHHMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM households WHERE id=\$1\)`).
+			WithArgs(victimHH).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+		mock.ExpectQuery(`SELECT EXISTS\(\s*SELECT 1 FROM household_members WHERE household_id = \$1 AND user_id = \$2`).
+			WithArgs(victimHH, "attacker").
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	})
+	req := httptest.NewRequest(http.MethodPost, "/households/invite", strings.NewReader(body))
+	req = middleware.WithAuthenticatedUserID(req, "attacker")
+	rr := httptest.NewRecorder()
+	CreateHouseholdInvite(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// Stale/unknown household_id falls back to the caller's own (session) household.
+func TestCreateHouseholdInvite_UnknownHouseholdFallsBackToSession(t *testing.T) {
+	stale := "88888888-8888-8888-8888-888888888888"
+	own := "22222222-2222-2222-2222-222222222222"
+	body := `{"household_id":"` + stale + `","invitee_email":"friend@example.com"}`
+	withHHMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM households WHERE id=\$1\)`).
+			WithArgs(stale).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+		mock.ExpectQuery(`SELECT household_id FROM household_members`).
+			WithArgs("u1").
+			WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(own))
+		mock.ExpectExec(`INSERT INTO household_invites`).
+			WithArgs(sqlmock.AnyArg(), own, "u1", sqlmock.AnyArg(), "friend@example.com").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+	})
+	req := httptest.NewRequest(http.MethodPost, "/households/invite", strings.NewReader(body))
+	req = middleware.WithAuthenticatedUserID(req, "u1")
+	rr := httptest.NewRecorder()
+	CreateHouseholdInvite(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
