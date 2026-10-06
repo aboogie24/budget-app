@@ -47,7 +47,7 @@ func TestGetEntitlements_FreeHousehold(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/entitlements?user_id="+userID, nil)
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/entitlements?user_id="+userID, nil), userID)
 	rr := httptest.NewRecorder()
 	GetEntitlements(rr, req)
 	if rr.Code != http.StatusOK {
@@ -86,7 +86,7 @@ func TestGetEntitlements_PlusHousehold(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/entitlements?user_id="+userID, nil)
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/entitlements?user_id="+userID, nil), userID)
 	rr := httptest.NewRecorder()
 	GetEntitlements(rr, req)
 	if rr.Code != http.StatusOK {

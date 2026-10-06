@@ -14,14 +14,11 @@ import (
 )
 
 // GetEntitlements returns household Free|Plus entitlements for the caller.
-// GET /auth/entitlements?user_id=
+// GET /auth/entitlements[?user_id=] — C038 N1: actor is the session/JWT user; a
+// query user_id must match it (403 otherwise).
 func GetEntitlements(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		userID, _ = getUserIDFromRequest(r)
-	}
-	if userID == "" {
-		validationError(w, "user_id is required")
+	userID, ok := resolveSessionActor(w, r, r.URL.Query().Get("user_id"))
+	if !ok {
 		return
 	}
 

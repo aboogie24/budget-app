@@ -8,14 +8,17 @@ import (
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/households"
 	"github.com/gofrs/uuid"
 )
 
 // GET /households/invites?user_id=
+// C038: keep returning invites for users who already have a household; enrich
+// each with accept_preview so C037 can render discard/migrate/blocked states.
 func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
+	claimed := r.URL.Query().Get("user_id")
+	userID, ok := resolveInviteActor(w, r, claimed)
+	if !ok {
 		return
 	}
 
@@ -40,6 +43,7 @@ func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
 		JOIN households h ON h.id = i.household_id
 		LEFT JOIN users u ON u.id = i.created_by
 		WHERE LOWER(TRIM(i.invitee_email)) = LOWER(TRIM($1))
+		  AND i.accepted_at IS NULL
 		  AND (i.expires_at IS NULL OR i.expires_at > NOW())
 	`, email)
 	if err != nil {
@@ -74,22 +78,27 @@ func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
 		if createdBy.Valid {
 			inv["created_by"] = createdBy.String
 		}
+		if preview, err := households.BuildAcceptPreview(client.Raw(), userID, householdID.String()); err == nil {
+			inv["accept_preview"] = preview
+		} else {
+			log.Printf("ListHouseholdInvites: accept_preview error user=%s target=%s err=%v", userID, householdID, err)
+		}
 		invites = append(invites, inv)
 	}
 	log.Printf("ListHouseholdInvites: found %d invites for email=%s", len(invites), email)
 
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(invites)
 }
 
 // GET /auth/households/summary
-// Returns combined financial summary for all members of a household
-// Accepts either user_id (resolves household) or household_id directly
+// Returns combined financial summary for all members of the caller's household.
+// C038 N1: user_id (optional) must match the session/JWT user; household_id (optional)
+// must be a household the caller belongs to (else 403).
 func GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {
 	householdID := r.URL.Query().Get("household_id")
-	userID := r.URL.Query().Get("user_id")
-
-	if householdID == "" && userID == "" {
-		http.Error(w, `{"error": "Missing household_id or user_id"}`, http.StatusBadRequest)
+	userID, ok := resolveSessionActor(w, r, r.URL.Query().Get("user_id"))
+	if !ok {
 		return
 	}
 
@@ -100,23 +109,30 @@ func GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	// If only user_id provided, resolve the household_id
-	if householdID == "" && userID != "" {
+	if householdID != "" {
+		if _, err := uuid.FromString(householdID); err != nil {
+			http.Error(w, `{"error": "Invalid household_id"}`, http.StatusBadRequest)
+			return
+		}
+		if !requireHouseholdMember(w, client.Raw(), householdID, userID) {
+			return
+		}
+	} else {
 		resolved := db.ResolveHouseholdID(client.Raw(), userID)
 		if resolved == "" {
 			// User has no household; return personal-only summary
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
-				"household_id":           nil,
-				"household_name":         "Personal",
-				"member_count":           1,
-				"total_income":           0.0,
-				"total_expenses":         0.0,
-				"net_cash_flow":          0.0,
-				"total_debt":             0.0,
-				"total_savings_target":   0.0,
-				"total_savings_current":  0.0,
-				"savings_progress":       0.0,
+				"household_id":          nil,
+				"household_name":        "Personal",
+				"member_count":          1,
+				"total_income":          0.0,
+				"total_expenses":        0.0,
+				"net_cash_flow":         0.0,
+				"total_debt":            0.0,
+				"total_savings_target":  0.0,
+				"total_savings_current": 0.0,
+				"savings_progress":      0.0,
 			})
 			return
 		}
@@ -159,16 +175,16 @@ func GetHouseholdSummary(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"household_id":           householdID,
-		"household_name":         hhName,
-		"member_count":           memberCount,
-		"total_income":           totalIncome,
-		"total_expenses":         totalExpenses,
-		"net_cash_flow":          totalIncome - totalExpenses,
-		"total_debt":             totalDebt,
-		"total_savings_target":   totalSavingsTarget,
-		"total_savings_current":  totalSavingsCurrent,
-		"savings_progress":       calculateSavingsProgress(totalSavingsCurrent, totalSavingsTarget),
+		"household_id":          householdID,
+		"household_name":        hhName,
+		"member_count":          memberCount,
+		"total_income":          totalIncome,
+		"total_expenses":        totalExpenses,
+		"net_cash_flow":         totalIncome - totalExpenses,
+		"total_debt":            totalDebt,
+		"total_savings_target":  totalSavingsTarget,
+		"total_savings_current": totalSavingsCurrent,
+		"savings_progress":      calculateSavingsProgress(totalSavingsCurrent, totalSavingsTarget),
 	})
 }
 

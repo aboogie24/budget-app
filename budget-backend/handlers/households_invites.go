@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/internal/entitlements"
+	"github.com/aboogie/budget-backend/internal/households"
 	"github.com/gofrs/uuid"
 )
 
@@ -29,13 +31,17 @@ func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 	if body.InviteeEmail == "" {
 		body.InviteeEmail = r.URL.Query().Get("invitee_email")
 	}
-	if body.UserID == "" || body.InviteeEmail == "" {
-		log.Printf("CreateHouseholdInvite missing fields user_id=%s invitee=%s", body.UserID, body.InviteeEmail)
-		http.Error(w, "Missing user_id or invitee_email", http.StatusBadRequest)
+
+	userID, ok := resolveInviteActor(w, r, body.UserID)
+	if !ok {
+		return
+	}
+	if body.InviteeEmail == "" {
+		log.Printf("CreateHouseholdInvite missing invitee_email user_id=%s", userID)
+		http.Error(w, "Missing invitee_email", http.StatusBadRequest)
 		return
 	}
 	hhID := body.HouseholdID
-	userID := body.UserID
 
 	client, err := householdDBFactory()
 	if err != nil {
@@ -44,14 +50,24 @@ func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	// Creator must already be in a household if none provided
+	// N1: the invite's household is the caller's own household. A client-supplied
+	// household_id is only honored if the caller is a member of it; if it names an existing
+	// household the caller does not belong to → 403. A stale/unknown id (e.g. a solo deleted
+	// by a C038 accept) falls back to the caller's session membership.
 	var householdUUID uuid.UUID
 	if hhID != "" {
-		parsed, err := uuid.FromString(hhID)
-		if err == nil {
+		if parsed, err := uuid.FromString(hhID); err == nil {
 			var exists bool
-			_ = client.Raw().QueryRow(`SELECT EXISTS(SELECT 1 FROM households WHERE id=$1)`, parsed).Scan(&exists)
+			if err := client.Raw().QueryRow(`SELECT EXISTS(SELECT 1 FROM households WHERE id=$1)`, parsed).Scan(&exists); err != nil {
+				log.Printf("CreateHouseholdInvite household lookup error: %v", err)
+				http.Error(w, "Failed to create invite", http.StatusInternalServerError)
+				return
+			}
 			if exists {
+				if !requireHouseholdMember(w, client.Raw(), parsed.String(), userID) {
+					log.Printf("CreateHouseholdInvite forbidden: user=%s not member of household=%s", userID, parsed)
+					return
+				}
 				householdUUID = parsed
 			}
 		}
@@ -82,14 +98,47 @@ func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /households/accept
+// C038: allow accept when the user has an empty solo (discard) or non-empty solo
+// (migrate with confirm_migrate:true). Bank-cap and multi-member remain blocked.
 func AcceptHouseholdInvite(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Code   string `json:"code"`
-		UserID string `json:"user_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Code == "" || body.UserID == "" {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
 		return
+	}
+
+	var code, claimedUserID string
+	if v, ok := raw["code"]; ok {
+		_ = json.Unmarshal(v, &code)
+	}
+	if v, ok := raw["user_id"]; ok {
+		_ = json.Unmarshal(v, &claimedUserID)
+	}
+	if code == "" {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	userID, ok := resolveInviteActor(w, r, claimedUserID)
+	if !ok {
+		return
+	}
+
+	confirm := false
+	if v, ok := raw["confirm_migrate"]; ok && string(v) != "null" {
+		var b bool
+		if err := json.Unmarshal(v, &b); err != nil {
+			// Spec: not boolean-true → 409 migrate_confirmation_required
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":   "migrate_confirmation_required",
+				"code":    "migrate_confirmation_required",
+				"message": "Accepting this invite moves your existing household data into the partner household. Confirm to continue.",
+			})
+			return
+		}
+		confirm = b
 	}
 
 	client, err := householdDBFactory()
@@ -99,48 +148,67 @@ func AcceptHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	// Prevent joining multiple households
-	var existing uuid.UUID
-	err = client.Raw().QueryRow(`SELECT household_id FROM household_members WHERE user_id = $1 LIMIT 1`, body.UserID).Scan(&existing)
-	if err == nil && existing != uuid.Nil {
-		http.Error(w, "User already in a household", http.StatusBadRequest)
+	result, conflict, err := households.AcceptInvite(client.Raw(), households.AcceptRequest{
+		Code:           code,
+		UserID:         userID,
+		ConfirmMigrate: confirm,
+	})
+	if conflict != nil {
+		writeAcceptConflict(w, conflict)
+		return
+	}
+	if err != nil {
+		writeAcceptError(w, err)
 		return
 	}
 
-	var hhID string
-	var expires time.Time
-	var inviteeEmail *string
-	err = client.Raw().QueryRow(`SELECT household_id, expires_at, invitee_email FROM household_invites WHERE code = $1`, body.Code).Scan(&hhID, &expires, &inviteeEmail)
-	if err != nil {
+	resp := map[string]any{
+		"household_id": result.HouseholdID,
+		"action":       result.Action,
+		"plan":         result.Plan,
+	}
+	if result.AlreadyMember {
+		resp["already_member"] = true
+	}
+	if ent, err := entitlements.ResolveForHousehold(client.Raw(), result.HouseholdID); err == nil {
+		resp["entitlements"] = ent
+	} else {
+		log.Printf("AcceptHouseholdInvite entitlements: %v", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func writeAcceptConflict(w http.ResponseWriter, c *households.AcceptConflict) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	payload := map[string]any{
+		"error":   c.ErrLabel,
+		"code":    c.Code,
+		"message": c.Message,
+	}
+	if c.AcceptPreview != nil {
+		payload["accept_preview"] = c.AcceptPreview
+	}
+	if c.Blockers != nil {
+		payload["blockers"] = c.Blockers
+	}
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeAcceptError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, households.ErrInvalidInvite):
 		http.Error(w, "Invalid invite", http.StatusBadRequest)
-		return
-	}
-	if !expires.IsZero() && expires.Before(time.Now()) {
+	case errors.Is(err, households.ErrInviteExpired):
 		http.Error(w, "Invite expired", http.StatusBadRequest)
-		return
+	case errors.Is(err, households.ErrInviteWrongEmail):
+		http.Error(w, "Invite not intended for this user", http.StatusForbidden)
+	case errors.Is(err, households.ErrUserNotFound):
+		http.Error(w, "User not found", http.StatusBadRequest)
+	default:
+		log.Printf("AcceptHouseholdInvite: %v", err)
+		http.Error(w, "Failed to join household", households.StatusForAcceptError(err))
 	}
-
-	// Enforce invitee email match when present
-	if inviteeEmail != nil && *inviteeEmail != "" {
-		var userEmail string
-		if err := client.Raw().QueryRow(`SELECT email FROM users WHERE id = $1`, body.UserID).Scan(&userEmail); err != nil {
-			http.Error(w, "User not found", http.StatusBadRequest)
-			return
-		}
-		if strings.ToLower(userEmail) != strings.ToLower(*inviteeEmail) {
-			http.Error(w, "Invite not intended for this user", http.StatusForbidden)
-			return
-		}
-	}
-
-	_, err = client.Exec(`INSERT INTO household_members (household_id, user_id, role) VALUES ($1,$2,'member') ON CONFLICT DO NOTHING`, hhID, body.UserID)
-	if err != nil {
-		http.Error(w, "Failed to join household", http.StatusInternalServerError)
-		return
-	}
-
-	// Delete the accepted invite so it no longer appears in pending lists
-	_, _ = client.Exec(`DELETE FROM household_invites WHERE code = $1`, body.Code)
-
-	json.NewEncoder(w).Encode(map[string]any{"household_id": hhID})
 }

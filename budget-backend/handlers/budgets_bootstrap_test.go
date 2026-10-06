@@ -45,7 +45,7 @@ func TestBootstrapBudgets_CreatesExpensesAndIncome(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b))
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b)), "11111111-1111-1111-1111-111111111111")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
@@ -93,7 +93,7 @@ func TestBootstrapBudgets_IdempotentUpdatesExisting(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b))
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b)), "11111111-1111-1111-1111-111111111111")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
@@ -125,7 +125,7 @@ func TestBootstrapBudgets_RejectsEmpty(t *testing.T) {
 		"expenses": []map[string]any{},
 	}
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b))
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b)), "11111111-1111-1111-1111-111111111111")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
@@ -162,7 +162,7 @@ func TestBootstrapBudgets_EnsuresHouseholdWhenMissing(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b))
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/budgets/bootstrap", bytes.NewReader(b)), "11111111-1111-1111-1111-111111111111")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 

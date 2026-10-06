@@ -25,7 +25,7 @@ func TestCreateHousehold_CreatesWhenMissing(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(1, 1))
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/households", strings.NewReader(body))
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/households", strings.NewReader(body)), "u1")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	CreateHousehold(rr, req)
@@ -54,7 +54,7 @@ func TestCreateHousehold_IdempotentWhenExists(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(existing))
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/households", strings.NewReader(body))
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/households", strings.NewReader(body)), "u1")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	CreateHousehold(rr, req)

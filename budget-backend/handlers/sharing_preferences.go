@@ -15,12 +15,13 @@ var sharingDBFactory = func() (db.DBTX, error) {
 	return db.New()
 }
 
-// GET /auth/sharing-preferences?user_id=...&household_id=...
+// GET /auth/sharing-preferences[?user_id=...][&household_id=...]
+// C038 N1: always the authenticated user's preferences; user_id must match the session/JWT
+// user and household_id (if given) must be a household the caller belongs to.
 func GetSharingPreferences(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
 	householdID := r.URL.Query().Get("household_id")
-	if userID == "" {
-		http.Error(w, "missing user_id", http.StatusBadRequest)
+	userID, ok := resolveSessionActor(w, r, r.URL.Query().Get("user_id"))
+	if !ok {
 		return
 	}
 
@@ -30,6 +31,10 @@ func GetSharingPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
+
+	if householdID != "" && !requireSharingHouseholdMember(w, client.Raw(), householdID, userID) {
+		return
+	}
 
 	// Try lookup; if not found, return defaults.
 	// Convert empty household_id to nil for proper NULL comparison.
@@ -99,10 +104,16 @@ func UpsertSharingPreferences(w http.ResponseWriter, r *http.Request) {
 		ShareNotes        *bool   `json:"share_notes"`
 		NotifyPartner     *bool   `json:"notify_partner"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.UserID == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	// C038 N1: write only the authenticated user's preferences.
+	actor, ok := resolveSessionActor(w, r, body.UserID)
+	if !ok {
+		return
+	}
+	body.UserID = actor
 
 	client, err := sharingDBFactory()
 	if err != nil {
@@ -110,6 +121,12 @@ func UpsertSharingPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
+
+	if hh := nullableString(body.HouseholdID); hh != nil {
+		if !requireSharingHouseholdMember(w, client.Raw(), hh.(string), actor) {
+			return
+		}
+	}
 
 	// Existing row?
 	row := client.QueryRow(`
@@ -176,6 +193,15 @@ func UpsertSharingPreferences(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": existingID, "updated_at": now})
+}
+
+// requireSharingHouseholdMember validates a client-supplied household_id (UUID + membership).
+func requireSharingHouseholdMember(w http.ResponseWriter, conn *sql.DB, householdID, userID string) bool {
+	if _, err := uuid.FromString(householdID); err != nil {
+		http.Error(w, "invalid household_id", http.StatusBadRequest)
+		return false
+	}
+	return requireHouseholdMember(w, conn, householdID, userID)
 }
 
 func nullableString(val *string) interface{} {

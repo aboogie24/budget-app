@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,11 @@ import (
 	"github.com/aboogie/budget-backend/auth"
 	"github.com/gorilla/sessions"
 )
+
+type contextKey string
+
+// UserIDContextKey is the request-context key for the authenticated user id.
+const UserIDContextKey contextKey = "auth_user_id"
 
 var (
 	store     *sessions.CookieStore
@@ -32,11 +38,38 @@ func GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, erro
 	return getStore().Get(r, "budget-session")
 }
 
+// WithAuthenticatedUserID injects a user id into the request context (tests / invite handlers).
+func WithAuthenticatedUserID(r *http.Request, userID string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), UserIDContextKey, userID))
+}
+
+// AuthenticatedUserID returns the session or JWT user id for the request.
+// Prefers an explicit context value (set by RequireAuth or tests), then session, then Bearer JWT.
+func AuthenticatedUserID(r *http.Request) string {
+	if v, ok := r.Context().Value(UserIDContextKey).(string); ok && v != "" {
+		return v
+	}
+	session, err := getStore().Get(r, "budget-session")
+	if err == nil {
+		if uid, ok := session.Values["user_id"].(string); ok && uid != "" {
+			return uid
+		}
+	}
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		token := strings.TrimSpace(authHeader[len("bearer "):])
+		if userID, err := auth.ValidateToken(token); err == nil && userID != "" {
+			return userID
+		}
+	}
+	return ""
+}
+
 func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, _ := GetSession(w, r)
-		if _, ok := session.Values["user_id"]; ok {
-			next.ServeHTTP(w, r)
+		if uid, ok := session.Values["user_id"].(string); ok && uid != "" {
+			next.ServeHTTP(w, WithAuthenticatedUserID(r, uid))
 			return
 		}
 
@@ -45,7 +78,7 @@ func RequireAuth(next http.Handler) http.Handler {
 		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 			token := strings.TrimSpace(authHeader[len("bearer "):])
 			if userID, err := auth.ValidateToken(token); err == nil && userID != "" {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, WithAuthenticatedUserID(r, userID))
 				return
 			}
 		}

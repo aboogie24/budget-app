@@ -125,3 +125,7 @@ Adds `households.plan` (`free`|`plus`, default `free`) and `plan_updated_at`.
 ## Non-goals
 
 Payment rails, receipt validation, dunning, fake checkout success, rewriting the AI model stack, Expo UI.
+
+## C038 — Plan on invite accept
+
+When a partner accepts an invite and leaves a solo household, the target household plan becomes **max(solo, target)** where `plus > free`. Solo Plus + target Free → target upgraded to Plus (`plan_updated_at = NOW()`). Free bank-cap conflicts still reject the accept (`banks_limit_conflict`) rather than auto-upgrading.
