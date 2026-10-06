@@ -8,19 +8,24 @@ import (
 
 // DataBlockers counts real-data rows that make a solo non-empty.
 type DataBlockers struct {
-	LinkedAccounts    int `json:"linked_accounts"`
-	Transactions      int `json:"transactions"`
-	NonStarterBudgets int `json:"non_starter_budgets"`
-	Debts             int `json:"debts"`
-	SavingsGoals      int `json:"savings_goals"`
-	Bills             int `json:"bills"`
-	Properties        int `json:"properties"`
+	LinkedAccounts      int `json:"linked_accounts"`
+	Transactions        int `json:"transactions"`
+	NonStarterBudgets   int `json:"non_starter_budgets"`
+	Debts               int `json:"debts"`
+	SavingsGoals        int `json:"savings_goals"`
+	Bills               int `json:"bills"`
+	Properties          int `json:"properties"`
+	Categories          int `json:"categories"`
+	FinancialPriorities int `json:"financial_priorities"`
+	Trips               int `json:"trips"`
+	FinancialPlans      int `json:"financial_plans"`
 }
 
 // Total returns the sum of blocker counts (starters excluded).
 func (b DataBlockers) Total() int {
 	return b.LinkedAccounts + b.Transactions + b.NonStarterBudgets +
-		b.Debts + b.SavingsGoals + b.Bills + b.Properties
+		b.Debts + b.SavingsGoals + b.Bills + b.Properties +
+		b.Categories + b.FinancialPriorities + b.Trips + b.FinancialPlans
 }
 
 // IsEmpty is true when there is no real user data (starter budgets alone OK).
@@ -31,6 +36,7 @@ func (b DataBlockers) IsEmpty() bool {
 // MembershipInfo describes the accepting user's current household membership.
 type MembershipInfo struct {
 	HouseholdID string
+	Role        string
 	MemberCount int
 	IsSolo      bool // sole member and that member is the accepting user
 }
@@ -39,11 +45,11 @@ type MembershipInfo struct {
 // When forUpdate is true, locks the membership row (SELECT … FOR UPDATE).
 func LookupMembership(q Querier, userID string, forUpdate bool) (MembershipInfo, error) {
 	var info MembershipInfo
-	query := `SELECT household_id FROM household_members WHERE user_id = $1 LIMIT 1`
+	query := `SELECT household_id, COALESCE(role, '') FROM household_members WHERE user_id = $1 LIMIT 1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
-	err := q.QueryRow(query, userID).Scan(&info.HouseholdID)
+	err := q.QueryRow(query, userID).Scan(&info.HouseholdID, &info.Role)
 	if err == sql.ErrNoRows {
 		return info, nil
 	}
@@ -95,6 +101,19 @@ func ClassifySoloEmptiness(q Querier, userID, soloID string) (DataBlockers, erro
 		{&b.Properties, `
 			SELECT COUNT(*) FROM properties
 			WHERE user_id = $1 OR household_id = $2`, []any{userID, soloID}},
+		// Custom household-scoped rows that would otherwise block DELETE or be silently lost.
+		{&b.Categories, `
+			SELECT COUNT(*) FROM categories
+			WHERE household_id = $1 OR (user_id = $2 AND household_id IS NOT NULL)`, []any{soloID, userID}},
+		{&b.FinancialPriorities, `
+			SELECT COUNT(*) FROM financial_priorities
+			WHERE user_id = $1 OR household_id = $2`, []any{userID, soloID}},
+		{&b.Trips, `
+			SELECT COUNT(*) FROM trips
+			WHERE user_id = $1 OR household_id = $2`, []any{userID, soloID}},
+		{&b.FinancialPlans, `
+			SELECT COUNT(*) FROM financial_plans
+			WHERE household_id = $1 OR created_by = $2`, []any{soloID, userID}},
 	}
 	for _, cq := range queries {
 		if err := q.QueryRow(cq.sql, cq.args...).Scan(cq.dest); err != nil {
@@ -102,16 +121,6 @@ func ClassifySoloEmptiness(q Querier, userID, soloID string) (DataBlockers, erro
 		}
 	}
 	return b, nil
-}
-
-// CountUserLinkedAccounts counts banks owned by the user (migrating set).
-func CountUserLinkedAccounts(q Querier, userID, soloID string) (int, error) {
-	var n int
-	err := q.QueryRow(`
-		SELECT COUNT(*) FROM linked_accounts
-		WHERE user_id = $1 OR household_id = $2
-	`, userID, soloID).Scan(&n)
-	return n, err
 }
 
 // CountHouseholdLinkedAccounts mirrors entitlements helper for use with Querier/Tx.

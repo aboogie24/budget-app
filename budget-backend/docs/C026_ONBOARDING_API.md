@@ -87,7 +87,9 @@ Login / OAuth already return `user.onboarding_complete`. Register returns `onboa
 
 After OB1, every user has a household. `POST /auth/households/accept` therefore must handle an existing solo:
 
-Body: `{ "code", "user_id", "confirm_migrate"?: boolean }`
+Body: `{ "code", "user_id"?, "confirm_migrate"?: boolean }`
+
+**Auth binding (C038 / helm):** for `POST /households/invite`, `POST /households/accept`, and `GET /households/invites`, the actor `user_id` comes from the authenticated session/JWT only. A body/query `user_id` that does not match the authenticated user returns **403**. Invitee email on accept must still match the authenticated user when set on the invite.
 
 | Current state | Behavior |
 |---|---|

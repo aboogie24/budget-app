@@ -47,6 +47,22 @@ type AcceptConflict struct {
 
 func (c *AcceptConflict) Error() string { return c.Code }
 
+func alreadyMemberResult(tx *sql.Tx, householdID string) (*AcceptResult, *AcceptConflict, error) {
+	plan, err := GetPlan(tx, householdID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return &AcceptResult{
+		HouseholdID:   householdID,
+		AlreadyMember: true,
+		Action:        ActionAlreadyMember,
+		Plan:          plan,
+	}, nil, nil
+}
+
 // AcceptInvite runs the full C038 accept flow in one transaction.
 func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict, error) {
 	if req.Code == "" || req.UserID == "" {
@@ -59,7 +75,7 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Lock invite row
+	// Soft-read invite (no lock yet) so we can lock households in UUID order first (M5).
 	var targetID string
 	var expires time.Time
 	var inviteeEmail sql.NullString
@@ -67,9 +83,47 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 		SELECT household_id, expires_at, invitee_email
 		FROM household_invites
 		WHERE code = $1
+	`, req.Code).Scan(&targetID, &expires, &inviteeEmail)
+	if err == sql.ErrNoRows {
+		// M4: invite missing/consumed — idempotent if user is already a member (role=member).
+		mem, mErr := LookupMembership(tx, req.UserID, true)
+		if mErr != nil {
+			return nil, nil, mErr
+		}
+		if mem.HouseholdID != "" && strings.EqualFold(mem.Role, "member") {
+			return alreadyMemberResult(tx, mem.HouseholdID)
+		}
+		return nil, nil, ErrInvalidInvite
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Peek membership so we can lock solo + target in fixed order before invite FOR UPDATE.
+	memPeek, err := LookupMembership(tx, req.UserID, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := LockHouseholdsForUpdate(tx, targetID, memPeek.HouseholdID); err != nil {
+		return nil, nil, err
+	}
+
+	// Re-lock invite row now that household locks are held.
+	err = tx.QueryRow(`
+		SELECT household_id, expires_at, invitee_email
+		FROM household_invites
+		WHERE code = $1
 		FOR UPDATE
 	`, req.Code).Scan(&targetID, &expires, &inviteeEmail)
 	if err == sql.ErrNoRows {
+		// Race: invite consumed between soft-read and lock (parallel double-accept).
+		mem, mErr := LookupMembership(tx, req.UserID, true)
+		if mErr != nil {
+			return nil, nil, mErr
+		}
+		if mem.HouseholdID != "" && strings.EqualFold(mem.Role, "member") {
+			return alreadyMemberResult(tx, mem.HouseholdID)
+		}
 		return nil, nil, ErrInvalidInvite
 	}
 	if err != nil {
@@ -100,17 +154,10 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 
 	// Already on target — idempotent
 	if mem.HouseholdID != "" && mem.HouseholdID == targetID {
-		_ = DeleteInviteByCode(tx, req.Code)
-		plan, _ := GetPlan(tx, targetID)
-		if err := tx.Commit(); err != nil {
+		if err := DeleteInviteByCode(tx, req.Code); err != nil {
 			return nil, nil, err
 		}
-		return &AcceptResult{
-			HouseholdID:   targetID,
-			AlreadyMember: true,
-			Action:        ActionAlreadyMember,
-			Plan:          plan,
-		}, nil, nil
+		return alreadyMemberResult(tx, targetID)
 	}
 
 	preview, err := BuildAcceptPreview(tx, req.UserID, targetID)
@@ -199,6 +246,9 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 			return nil, nil, err
 		}
 	case ActionDiscardSolo:
+		if err := DiscardSpendingAlertsForStarters(tx, req.UserID, soloID); err != nil {
+			return nil, nil, fmt.Errorf("discard spending alerts: %w", err)
+		}
 		if err := DiscardStarterBudgets(tx, req.UserID); err != nil {
 			return nil, nil, fmt.Errorf("discard starters: %w", err)
 		}
@@ -208,11 +258,16 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 		if err := MoveMembership(tx, req.UserID, soloID, targetID); err != nil {
 			return nil, nil, err
 		}
-		_, _ = tx.Exec(`DELETE FROM sharing_preferences WHERE household_id = $1`, soloID)
+		if _, err := tx.Exec(`DELETE FROM sharing_preferences WHERE household_id = $1`, soloID); err != nil {
+			return nil, nil, fmt.Errorf("delete sharing_preferences: %w", err)
+		}
 		if err := DeleteHouseholdIfEmpty(tx, soloID); err != nil {
 			return nil, nil, err
 		}
 	case ActionMigrateSolo:
+		if err := DiscardSpendingAlertsForStarters(tx, req.UserID, soloID); err != nil {
+			return nil, nil, fmt.Errorf("discard spending alerts: %w", err)
+		}
 		if err := DiscardStarterBudgets(tx, req.UserID); err != nil {
 			return nil, nil, fmt.Errorf("discard starters: %w", err)
 		}
@@ -225,7 +280,9 @@ func AcceptInvite(db *sql.DB, req AcceptRequest) (*AcceptResult, *AcceptConflict
 		if err := MoveMembership(tx, req.UserID, soloID, targetID); err != nil {
 			return nil, nil, err
 		}
-		_, _ = tx.Exec(`DELETE FROM sharing_preferences WHERE household_id = $1`, soloID)
+		if _, err := tx.Exec(`DELETE FROM sharing_preferences WHERE household_id = $1`, soloID); err != nil {
+			return nil, nil, fmt.Errorf("delete sharing_preferences: %w", err)
+		}
 		if err := DeleteHouseholdIfEmpty(tx, soloID); err != nil {
 			return nil, nil, err
 		}

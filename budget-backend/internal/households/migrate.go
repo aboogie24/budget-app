@@ -2,9 +2,26 @@ package households
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/lib/pq"
 )
+
+// DiscardSpendingAlertsForStarters removes alerts tied to starter budgets or the solo household
+// before starter budgets / the solo household are deleted (spending_alerts has no ON DELETE CASCADE).
+func DiscardSpendingAlertsForStarters(q Querier, userID, soloID string) error {
+	_, err := q.Exec(`
+		DELETE FROM spending_alerts
+		WHERE household_id = $1
+		   OR budget_id IN (
+		        SELECT id FROM budgets
+		        WHERE user_id = $2
+		          AND category_id IS NULL
+		          AND LOWER(TRIM(name)) = ANY($3)
+		   )
+	`, soloID, userID, pq.Array(StarterBudgetNameList()))
+	return err
+}
 
 // DiscardStarterBudgets deletes onboarding starter budgets for the user (category_id IS NULL).
 func DiscardStarterBudgets(q Querier, userID string) error {
@@ -17,10 +34,22 @@ func DiscardStarterBudgets(q Querier, userID string) error {
 	return err
 }
 
-// MigrateSoloToHousehold re-points solo/user-scoped rows to target and cleans solo.
+func repointByUserOrHousehold(q Querier, table, userID, soloID, targetID string) error {
+	_, err := q.Exec(fmt.Sprintf(`
+		UPDATE %s SET household_id = $1
+		WHERE household_id = $2
+		   OR (household_id IS NULL AND user_id = $3)
+		   OR user_id = $3
+	`, table), targetID, soloID, userID)
+	if err != nil {
+		return fmt.Errorf("migrate %s: %w", table, err)
+	}
+	return nil
+}
+
+// MigrateSoloToHousehold re-points solo/user-scoped rows to target.
 // Caller must already have discarded starters and validated eligibility.
 func MigrateSoloToHousehold(q Querier, userID, soloID, targetID string) error {
-	// Non-starter budgets: re-point household_id
 	if _, err := q.Exec(`
 		UPDATE budgets SET household_id = $1
 		WHERE user_id = $2 AND (household_id = $3 OR household_id IS NULL)
@@ -28,7 +57,6 @@ func MigrateSoloToHousehold(q Querier, userID, soloID, targetID string) error {
 		return fmt.Errorf("migrate budgets: %w", err)
 	}
 
-	// Transactions
 	if _, err := q.Exec(`
 		UPDATE transactions SET household_id = $1
 		WHERE household_id = $2
@@ -37,57 +65,44 @@ func MigrateSoloToHousehold(q Querier, userID, soloID, targetID string) error {
 		return fmt.Errorf("migrate transactions: %w", err)
 	}
 
-	// Linked banks
-	if _, err := q.Exec(`
-		UPDATE linked_accounts SET household_id = $1
-		WHERE household_id = $2
-		   OR (household_id IS NULL AND user_id = $3)
-		   OR user_id = $3
-	`, targetID, soloID, userID); err != nil {
-		return fmt.Errorf("migrate linked_accounts: %w", err)
+	for _, table := range []string{
+		"linked_accounts",
+		"debt_accounts",
+		"savings_goals",
+		"bills",
+		"properties",
+		"categories",
+		"financial_priorities",
+		"trips",
+		"investment_holdings",
+		"liabilities",
+		"bill_payments",
+		"account_balances",
+		"category_mapping_rules",
+		"advisor_memories",
+	} {
+		if err := repointByUserOrHousehold(q, table, userID, soloID, targetID); err != nil {
+			return err
+		}
 	}
 
-	// Debts
+	// financial_plans uses created_by rather than user_id
 	if _, err := q.Exec(`
-		UPDATE debt_accounts SET household_id = $1
+		UPDATE financial_plans SET household_id = $1
 		WHERE household_id = $2
-		   OR (household_id IS NULL AND user_id = $3)
-		   OR user_id = $3
+		   OR (household_id IS NULL AND created_by = $3)
+		   OR created_by = $3
 	`, targetID, soloID, userID); err != nil {
-		return fmt.Errorf("migrate debt_accounts: %w", err)
+		return fmt.Errorf("migrate financial_plans: %w", err)
 	}
 
-	// Savings
+	// spending_alerts: household-scoped only (no user_id)
 	if _, err := q.Exec(`
-		UPDATE savings_goals SET household_id = $1
-		WHERE household_id = $2
-		   OR (household_id IS NULL AND user_id = $3)
-		   OR user_id = $3
-	`, targetID, soloID, userID); err != nil {
-		return fmt.Errorf("migrate savings_goals: %w", err)
+		UPDATE spending_alerts SET household_id = $1 WHERE household_id = $2
+	`, targetID, soloID); err != nil {
+		return fmt.Errorf("migrate spending_alerts: %w", err)
 	}
 
-	// Bills
-	if _, err := q.Exec(`
-		UPDATE bills SET household_id = $1
-		WHERE household_id = $2
-		   OR (household_id IS NULL AND user_id = $3)
-		   OR user_id = $3
-	`, targetID, soloID, userID); err != nil {
-		return fmt.Errorf("migrate bills: %w", err)
-	}
-
-	// Properties
-	if _, err := q.Exec(`
-		UPDATE properties SET household_id = $1
-		WHERE household_id = $2
-		   OR (household_id IS NULL AND user_id = $3)
-		   OR user_id = $3
-	`, targetID, soloID, userID); err != nil {
-		return fmt.Errorf("migrate properties: %w", err)
-	}
-
-	// AI conversations
 	if _, err := q.Exec(`
 		UPDATE ai_conversations SET household_id = $1
 		WHERE user_id = $2 AND (household_id = $3 OR household_id IS NULL)
@@ -95,7 +110,6 @@ func MigrateSoloToHousehold(q Querier, userID, soloID, targetID string) error {
 		return fmt.Errorf("migrate ai_conversations: %w", err)
 	}
 
-	// Sharing preferences — re-point to target
 	if _, err := q.Exec(`
 		UPDATE sharing_preferences SET household_id = $1
 		WHERE user_id = $2 AND (household_id = $3 OR household_id IS NULL)
@@ -103,6 +117,30 @@ func MigrateSoloToHousehold(q Querier, userID, soloID, targetID string) error {
 		return fmt.Errorf("migrate sharing_preferences: %w", err)
 	}
 
+	return nil
+}
+
+// LockHouseholdsForUpdate locks household rows in ascending UUID order to avoid deadlocks.
+func LockHouseholdsForUpdate(q Querier, ids ...string) error {
+	seen := map[string]struct{}{}
+	var uniq []string
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniq = append(uniq, id)
+	}
+	sort.Strings(uniq)
+	for _, id := range uniq {
+		var locked string
+		if err := q.QueryRow(`SELECT id FROM households WHERE id = $1 FOR UPDATE`, id).Scan(&locked); err != nil {
+			return fmt.Errorf("lock household %s: %w", id, err)
+		}
+	}
 	return nil
 }
 
@@ -153,17 +191,4 @@ func JoinAsMember(q Querier, userID, targetID string) error {
 func DeleteInviteByCode(q Querier, code string) error {
 	_, err := q.Exec(`DELETE FROM household_invites WHERE code = $1`, code)
 	return err
-}
-
-// CleanupSoloAfterMove discards leftovers and deletes the empty solo household.
-func CleanupSoloAfterMove(q Querier, userID, soloID string) error {
-	if err := DiscardStarterBudgets(q, userID); err != nil {
-		return err
-	}
-	if err := DeleteOutboundInvites(q, soloID); err != nil {
-		return err
-	}
-	// Drop any leftover solo-scoped sharing prefs that did not re-point
-	_, _ = q.Exec(`DELETE FROM sharing_preferences WHERE household_id = $1`, soloID)
-	return DeleteHouseholdIfEmpty(q, soloID)
 }

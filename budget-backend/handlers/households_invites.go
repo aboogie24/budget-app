@@ -10,8 +10,24 @@ import (
 	"github.com/aboogie/budget-backend/db"
 	"github.com/aboogie/budget-backend/internal/entitlements"
 	"github.com/aboogie/budget-backend/internal/households"
+	"github.com/aboogie/budget-backend/middleware"
 	"github.com/gofrs/uuid"
 )
+
+// resolveInviteActor binds household-invite routes to the authenticated session/JWT user.
+// Body/query user_id is never trusted: mismatch → 403; missing auth → 401.
+func resolveInviteActor(w http.ResponseWriter, r *http.Request, claimedUserID string) (string, bool) {
+	authUID := middleware.AuthenticatedUserID(r)
+	if authUID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return "", false
+	}
+	if claimedUserID != "" && claimedUserID != authUID {
+		http.Error(w, "user_id does not match authenticated user", http.StatusForbidden)
+		return "", false
+	}
+	return authUID, true
+}
 
 // POST /households/{id}/invites
 func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
@@ -31,13 +47,17 @@ func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 	if body.InviteeEmail == "" {
 		body.InviteeEmail = r.URL.Query().Get("invitee_email")
 	}
-	if body.UserID == "" || body.InviteeEmail == "" {
-		log.Printf("CreateHouseholdInvite missing fields user_id=%s invitee=%s", body.UserID, body.InviteeEmail)
-		http.Error(w, "Missing user_id or invitee_email", http.StatusBadRequest)
+
+	userID, ok := resolveInviteActor(w, r, body.UserID)
+	if !ok {
+		return
+	}
+	if body.InviteeEmail == "" {
+		log.Printf("CreateHouseholdInvite missing invitee_email user_id=%s", userID)
+		http.Error(w, "Missing invitee_email", http.StatusBadRequest)
 		return
 	}
 	hhID := body.HouseholdID
-	userID := body.UserID
 
 	client, err := householdDBFactory()
 	if err != nil {
@@ -87,14 +107,44 @@ func CreateHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 // C038: allow accept when the user has an empty solo (discard) or non-empty solo
 // (migrate with confirm_migrate:true). Bank-cap and multi-member remain blocked.
 func AcceptHouseholdInvite(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Code           string `json:"code"`
-		UserID         string `json:"user_id"`
-		ConfirmMigrate *bool  `json:"confirm_migrate"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Code == "" || body.UserID == "" {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
 		return
+	}
+
+	var code, claimedUserID string
+	if v, ok := raw["code"]; ok {
+		_ = json.Unmarshal(v, &code)
+	}
+	if v, ok := raw["user_id"]; ok {
+		_ = json.Unmarshal(v, &claimedUserID)
+	}
+	if code == "" {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	userID, ok := resolveInviteActor(w, r, claimedUserID)
+	if !ok {
+		return
+	}
+
+	confirm := false
+	if v, ok := raw["confirm_migrate"]; ok && string(v) != "null" {
+		var b bool
+		if err := json.Unmarshal(v, &b); err != nil {
+			// Spec: not boolean-true → 409 migrate_confirmation_required
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":   "migrate_confirmation_required",
+				"code":    "migrate_confirmation_required",
+				"message": "Accepting this invite moves your existing household data into the partner household. Confirm to continue.",
+			})
+			return
+		}
+		confirm = b
 	}
 
 	client, err := householdDBFactory()
@@ -104,10 +154,9 @@ func AcceptHouseholdInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
-	confirm := body.ConfirmMigrate != nil && *body.ConfirmMigrate
 	result, conflict, err := households.AcceptInvite(client.Raw(), households.AcceptRequest{
-		Code:           body.Code,
-		UserID:         body.UserID,
+		Code:           code,
+		UserID:         userID,
 		ConfirmMigrate: confirm,
 	})
 	if conflict != nil {

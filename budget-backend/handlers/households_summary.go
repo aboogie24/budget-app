@@ -16,9 +16,9 @@ import (
 // C038: keep returning invites for users who already have a household; enrich
 // each with accept_preview so C037 can render discard/migrate/blocked states.
 func ListHouseholdInvites(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
+	claimed := r.URL.Query().Get("user_id")
+	userID, ok := resolveInviteActor(w, r, claimed)
+	if !ok {
 		return
 	}
 

@@ -2,6 +2,7 @@ package households
 
 import (
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestClassifySoloEmptiness_Empty(t *testing.T) {
 	defer db.Close()
 
 	userID, soloID := "u1", "solo1"
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 11; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -104,7 +105,7 @@ func TestClassifySoloEmptiness_HasTxn(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM transactions`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 10; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -119,7 +120,7 @@ func TestClassifySoloEmptiness_HasTxn(t *testing.T) {
 }
 
 func expectEmptinessAllZero(mock sqlmock.Sqlmock) {
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 11; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -130,7 +131,7 @@ func expectEmptinessWithBanks(mock sqlmock.Sqlmock, banks int) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM linked_accounts`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(banks))
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 9; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -139,7 +140,7 @@ func expectEmptinessWithBanks(mock sqlmock.Sqlmock, banks int) {
 func expectEmptinessWithTxns(mock sqlmock.Sqlmock, txns int) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM transactions`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(txns))
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 10; i++ {
 		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	}
@@ -162,7 +163,7 @@ func TestBuildAcceptPreview_Table(t *testing.T) {
 		{
 			name: "join_no_household",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
 					WillReturnError(sql.ErrNoRows)
 				mock.ExpectQuery(`SELECT COALESCE\(plan`).
@@ -174,9 +175,9 @@ func TestBuildAcceptPreview_Table(t *testing.T) {
 		{
 			name: "already_member",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(targetID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(targetID, "member"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(targetID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
@@ -189,9 +190,9 @@ func TestBuildAcceptPreview_Table(t *testing.T) {
 		{
 			name: "discard_solo",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(soloID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -208,9 +209,9 @@ func TestBuildAcceptPreview_Table(t *testing.T) {
 		{
 			name: "migrate_solo",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(soloID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -231,9 +232,9 @@ func TestBuildAcceptPreview_Table(t *testing.T) {
 		{
 			name: "blocked_banks_limit",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(soloID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -253,9 +254,9 @@ func TestBuildAcceptPreview_Table(t *testing.T) {
 		{
 			name: "blocked_multi_member",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(otherID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(otherID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(otherID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
@@ -295,6 +296,73 @@ func TestBuildAcceptPreview_Table(t *testing.T) {
 	}
 }
 
+func expectHouseholdLocks(mock sqlmock.Sqlmock, ids ...string) {
+	uniq := append([]string{}, ids...)
+	// sort like LockHouseholdsForUpdate
+	for i := 0; i < len(uniq); i++ {
+		for j := i + 1; j < len(uniq); j++ {
+			if uniq[j] < uniq[i] {
+				uniq[i], uniq[j] = uniq[j], uniq[i]
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, id := range uniq {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		mock.ExpectQuery(`SELECT id FROM households WHERE id`).
+			WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(id))
+	}
+}
+
+func expectAcceptInviteLockSequence(mock sqlmock.Sqlmock, code, targetID, userID, memHH, role string, memberCount int, expires time.Time, inviteeEmail any) {
+	expectAcceptInviteLockSequenceOpts(mock, code, targetID, userID, memHH, role, memberCount, expires, inviteeEmail, true)
+}
+
+func expectAcceptInviteLockSequenceOpts(mock sqlmock.Sqlmock, code, targetID, userID, memHH, role string, memberCount int, expires time.Time, inviteeEmail any, lockMember bool) {
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+		WithArgs(code).
+		WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
+			AddRow(targetID, expires, inviteeEmail))
+	if memHH == "" {
+		mock.ExpectQuery(`SELECT household_id`).
+			WithArgs(userID).
+			WillReturnError(sql.ErrNoRows)
+		expectHouseholdLocks(mock, targetID)
+	} else {
+		mock.ExpectQuery(`SELECT household_id`).
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(memHH, role))
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
+			WithArgs(memHH).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(memberCount))
+		expectHouseholdLocks(mock, targetID, memHH)
+	}
+	mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+		WithArgs(code).
+		WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
+			AddRow(targetID, expires, inviteeEmail))
+	if !lockMember {
+		return
+	}
+	if memHH == "" {
+		mock.ExpectQuery(`SELECT household_id`).
+			WithArgs(userID).
+			WillReturnError(sql.ErrNoRows)
+	} else {
+		mock.ExpectQuery(`SELECT household_id`).
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(memHH, role))
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
+			WithArgs(memHH).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(memberCount))
+	}
+}
+
 func TestAcceptInvite_Table(t *testing.T) {
 	const (
 		userID   = "11111111-1111-1111-1111-111111111111"
@@ -310,6 +378,7 @@ func TestAcceptInvite_Table(t *testing.T) {
 		alreadyMember bool
 		action        string
 		conflictCode  string
+		errIs         error
 	}
 
 	tests := []struct {
@@ -321,21 +390,11 @@ func TestAcceptInvite_Table(t *testing.T) {
 		{
 			name: "empty_discard",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
-					WithArgs(code).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-						AddRow(targetID, expires, nil))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
-					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
-					WithArgs(soloID).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+				expectAcceptInviteLockSequence(mock, code, targetID, userID, soloID, "owner", 1, expires, nil)
 				// BuildAcceptPreview
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(soloID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -350,6 +409,8 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectQuery(`SELECT COALESCE\(plan`).WithArgs(targetID).
 					WillReturnRows(sqlmock.NewRows([]string{"plan"}).AddRow("free"))
 				expectEmptinessAllZero(mock)
+				mock.ExpectExec(`DELETE FROM spending_alerts`).
+					WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`DELETE FROM budgets`).
 					WithArgs(userID, pq.Array(StarterBudgetNameList())).
 					WillReturnResult(sqlmock.NewResult(0, 3))
@@ -379,20 +440,10 @@ func TestAcceptInvite_Table(t *testing.T) {
 			name:    "migrate_with_confirm",
 			confirm: true,
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
-					WithArgs(code).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-						AddRow(targetID, expires, nil))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				expectAcceptInviteLockSequence(mock, code, targetID, userID, soloID, "owner", 1, expires, nil)
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
-					WithArgs(soloID).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
-					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(soloID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -412,10 +463,12 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM linked_accounts la`).
 					WithArgs(targetID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+				mock.ExpectExec(`DELETE FROM spending_alerts`).
+					WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`DELETE FROM budgets`).
 					WillReturnResult(sqlmock.NewResult(0, 0))
-				// migrate updates (budgets, txns, banks, debts, savings, bills, properties, ai, sharing)
-				for i := 0; i < 9; i++ {
+				// migrate updates: budgets, txns, 14 user/hh tables, financial_plans, spending_alerts, ai, sharing = 20
+				for i := 0; i < 20; i++ {
 					mock.ExpectExec(`UPDATE`).
 						WillReturnResult(sqlmock.NewResult(0, 1))
 				}
@@ -442,20 +495,10 @@ func TestAcceptInvite_Table(t *testing.T) {
 			name:    "migrate_without_confirm",
 			confirm: false,
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
-					WithArgs(code).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-						AddRow(targetID, expires, nil))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				expectAcceptInviteLockSequence(mock, code, targetID, userID, soloID, "owner", 1, expires, nil)
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
-					WithArgs(soloID).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
-					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(soloID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -483,20 +526,10 @@ func TestAcceptInvite_Table(t *testing.T) {
 			name:    "banks_limit_conflict",
 			confirm: true,
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
-					WithArgs(code).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-						AddRow(targetID, expires, nil))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				expectAcceptInviteLockSequence(mock, code, targetID, userID, soloID, "owner", 1, expires, nil)
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
-					WithArgs(soloID).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
-					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(soloID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(soloID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(soloID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -523,17 +556,7 @@ func TestAcceptInvite_Table(t *testing.T) {
 		{
 			name: "already_member",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
-					WithArgs(code).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-						AddRow(targetID, expires, nil))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
-					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(targetID))
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
-					WithArgs(targetID).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+				expectAcceptInviteLockSequence(mock, code, targetID, userID, targetID, "member", 2, expires, nil)
 				mock.ExpectExec(`DELETE FROM household_invites WHERE code`).
 					WithArgs(code).
 					WillReturnResult(sqlmock.NewResult(0, 1))
@@ -546,20 +569,10 @@ func TestAcceptInvite_Table(t *testing.T) {
 		{
 			name: "multi_member_409",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
-					WithArgs(code).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id", "expires_at", "invitee_email"}).
-						AddRow(targetID, expires, nil))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
+				expectAcceptInviteLockSequence(mock, code, targetID, userID, otherID, "owner", 2, expires, nil)
+				mock.ExpectQuery(`SELECT household_id`).
 					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(otherID))
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
-					WithArgs(otherID).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
-				mock.ExpectQuery(`SELECT household_id FROM household_members`).
-					WithArgs(userID).
-					WillReturnRows(sqlmock.NewRows([]string{"household_id"}).AddRow(otherID))
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(otherID, "owner"))
 				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
 					WithArgs(otherID).
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
@@ -570,6 +583,59 @@ func TestAcceptInvite_Table(t *testing.T) {
 				mock.ExpectRollback()
 			},
 			want: want{conflictCode: ActionBlockedMultiMember},
+		},
+		{
+			name: "unknown_code_400",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+					WithArgs(code).
+					WillReturnError(sql.ErrNoRows)
+				mock.ExpectQuery(`SELECT household_id`).
+					WithArgs(userID).
+					WillReturnError(sql.ErrNoRows)
+				mock.ExpectRollback()
+			},
+			want: want{errIs: ErrInvalidInvite},
+		},
+		{
+			name: "reaccept_consumed_invite_already_member",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery(`SELECT household_id, expires_at, invitee_email`).
+					WithArgs(code).
+					WillReturnError(sql.ErrNoRows)
+				mock.ExpectQuery(`SELECT household_id`).
+					WithArgs(userID).
+					WillReturnRows(sqlmock.NewRows([]string{"household_id", "role"}).AddRow(targetID, "member"))
+				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM household_members`).
+					WithArgs(targetID).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+				mock.ExpectQuery(`SELECT COALESCE\(plan`).WithArgs(targetID).
+					WillReturnRows(sqlmock.NewRows([]string{"plan"}).AddRow("plus"))
+				mock.ExpectCommit()
+			},
+			want: want{statusOK: true, alreadyMember: true, action: ActionAlreadyMember},
+		},
+		{
+			name: "expired_400",
+			setup: func(mock sqlmock.Sqlmock) {
+				past := time.Now().Add(-time.Hour)
+				expectAcceptInviteLockSequenceOpts(mock, code, targetID, userID, soloID, "owner", 1, past, nil, false)
+				mock.ExpectRollback()
+			},
+			want: want{errIs: ErrInviteExpired},
+		},
+		{
+			name: "email_mismatch_403",
+			setup: func(mock sqlmock.Sqlmock) {
+				expectAcceptInviteLockSequenceOpts(mock, code, targetID, userID, soloID, "owner", 1, expires, "other@example.com", false)
+				mock.ExpectQuery(`SELECT email FROM users`).
+					WithArgs(userID).
+					WillReturnRows(sqlmock.NewRows([]string{"email"}).AddRow("b@example.com"))
+				mock.ExpectRollback()
+			},
+			want: want{errIs: ErrInviteWrongEmail},
 		},
 	}
 
@@ -587,7 +653,11 @@ func TestAcceptInvite_Table(t *testing.T) {
 				UserID:         userID,
 				ConfirmMigrate: tc.confirm,
 			})
-			if tc.want.conflictCode != "" {
+			if tc.want.errIs != nil {
+				if !errors.Is(err, tc.want.errIs) {
+					t.Fatalf("err=%v want %v conflict=%v result=%v", err, tc.want.errIs, conflict, result)
+				}
+			} else if tc.want.conflictCode != "" {
 				if conflict == nil {
 					t.Fatalf("expected conflict %s, err=%v result=%v", tc.want.conflictCode, err, result)
 				}

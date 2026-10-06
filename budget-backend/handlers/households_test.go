@@ -10,6 +10,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aboogie/budget-backend/db"
+	"github.com/aboogie/budget-backend/middleware"
 )
 
 // mockDB adapts sqlmock to db.DBTX.
@@ -56,6 +57,7 @@ func TestCreateHouseholdInviteSuccess(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/households/invite", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = middleware.WithAuthenticatedUserID(req, "u1")
 	rr := httptest.NewRecorder()
 
 	CreateHouseholdInvite(rr, req)
@@ -79,6 +81,7 @@ func TestCreateHouseholdInviteMissingHousehold(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/households/invite", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = middleware.WithAuthenticatedUserID(req, "u1")
 	rr := httptest.NewRecorder()
 
 	CreateHouseholdInvite(rr, req)
@@ -102,11 +105,24 @@ func TestCreateHouseholdInviteResolveHouseholdFromMembership(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/households/invite", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = middleware.WithAuthenticatedUserID(req, "u1")
 	rr := httptest.NewRecorder()
 
 	CreateHouseholdInvite(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateHouseholdInvite_UserIDMismatchForbidden(t *testing.T) {
+	body := `{"user_id":"victim","invitee_email":"friend@example.com","household_id":"11111111-1111-1111-1111-111111111111"}`
+	req := httptest.NewRequest(http.MethodPost, "/households/invite", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = middleware.WithAuthenticatedUserID(req, "attacker")
+	rr := httptest.NewRecorder()
+	CreateHouseholdInvite(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
