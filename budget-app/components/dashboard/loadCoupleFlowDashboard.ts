@@ -12,6 +12,7 @@ import {
   type DashboardStatusResponse,
 } from '@/utils/api';
 import { api } from '@/utils/apiClient';
+import { isSentInvitePending } from '@/utils/householdInvites';
 import { getCurrentUser } from '@/utils/storage';
 import { colors } from '@/utils/design-system';
 import { type Scope } from '@/components/dashboard/ScopeToggle';
@@ -97,7 +98,7 @@ export async function loadCoupleFlowDashboard(
       }
       try {
         const sent = await api.get<any[]>(`/auth/households/invites/sent`, { user_id: user.id });
-        const pending = Array.isArray(sent) && sent.some((i) => !i.accepted_at && !i.accepted);
+        const pending = Array.isArray(sent) && sent.some((i) => isSentInvitePending(i));
         result.invitePending = !!pending && (!Array.isArray(members) || members.length < 2);
       } catch {
         result.invitePending = false;
